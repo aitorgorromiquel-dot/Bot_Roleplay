@@ -1,0 +1,29 @@
+{
+  "1059183337832468510": {
+    "numero": "64868498B",
+    "nombre": "Victor",
+    "apellidos": "Volkov",
+    "edad": "22",
+    "sexo": "*M*",
+    "nacionalidad": "*Esp*",
+    "estado_civil": "*Barcelona*",
+    "sangre": "*A+*",
+    "altura": "*2,20*",
+    "ojos": "*azules*",
+    "profesion": "*Policia*",
+    "direccion": "*Amparo*",
+    "fecha_emision": "20/03/2026 16:00"
+  },
+  "729054497233436775": {
+    "nombre": "Alex",
+    "apellidos": "Tortillas",
+    "edad": 26,
+    "genero": "Masculino",
+    "nacionalidad": "Estados Unidos",
+    "color_ojos": "Verdes",
+    "altura": "1.87m",
+    "profesion": "Politica",
+    "numero": "89982358S",
+    "fecha_creacion": "2026-03-24T18:24:49.280815"
+  }
+}

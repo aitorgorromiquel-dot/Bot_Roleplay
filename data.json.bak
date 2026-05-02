@@ -1,0 +1,113 @@
+{
+  "economia": {
+    "1059183337832468510": 598976,
+    "729054497233436775": 0,
+    "1091748893559103579": 56751
+  },
+  "dinero_negro": {
+    "1059183337832468510": 0,
+    "729054497233436775": 0
+  },
+  "inventarios": {
+    "personal": {
+      "729054497233436775": {},
+      "1091748893559103579": {
+        "9mm": 1,
+        "Ganzúa": 1,
+        "Heroína": 1
+      },
+      "1059183337832468510": {}
+    }
+  },
+  "estado_usuarios": {
+    "1059183337832468510": {
+      "banned": false,
+      "ban_reason": "gr",
+      "banned_by": 729054497233436775,
+      "ban_date": "2026-03-21T14:44:56.301831",
+      "phone_number": null,
+      "airplane_mode": false,
+      "wifi_connected": true,
+      "ig_public": true,
+      "tw_public": true,
+      "ig_bio": "",
+      "tw_bio": "",
+      "placa": "LSPD-1345",
+      "rango": "Comandante"
+    },
+    "729054497233436775": {
+      "banned": false,
+      "ban_reason": null,
+      "banned_by": null,
+      "ban_date": null,
+      "phone_number": null,
+      "airplane_mode": false,
+      "wifi_connected": true,
+      "ig_public": true,
+      "tw_public": true,
+      "ig_bio": "",
+      "tw_bio": "",
+      "placa": "LSPD-4218",
+      "rango": "Agente"
+    },
+    "1091748893559103579": {
+      "banned": false,
+      "ban_reason": null,
+      "banned_by": null,
+      "ban_date": null,
+      "phone_number": null,
+      "airplane_mode": false,
+      "wifi_connected": true,
+      "ig_public": true,
+      "tw_public": true,
+      "ig_bio": "",
+      "tw_bio": "",
+      "placa": null,
+      "rango": null
+    }
+  },
+  "prefixes": {},
+  "posts_ig": {
+    "1091748893559103579": [],
+    "1059183337832468510": [],
+    "729054497233436775": [
+      {
+        "id": "28bbfb35",
+        "text": "fffffff",
+        "likes": [],
+        "time": "2026-03-21T14:47:02.023469"
+      }
+    ]
+  },
+  "posts_tw": {},
+  "seg_ig": {
+    "1091748893559103579": {},
+    "1059183337832468510": {},
+    "729054497233436775": {}
+  },
+  "seg_tw": {},
+  "pda_agentes": {
+    "LSPD-1345": {
+      "nombre": "pablo_xf",
+      "rango": "Comandante",
+      "uid": 1059183337832468510
+    }
+  },
+  "pda_detenidos": [
+    {
+      "nombre": "pablo_xf",
+      "uid": 1059183337832468510,
+      "motivo": "trafico de droga",
+      "fecha": "2026-03-20T21:50:51.741125",
+      "agente": "LSPD-4218"
+    }
+  ],
+  "pda_rangos": [
+    "Cadete",
+    "Oficial",
+    "Sargento",
+    "Teniente",
+    "Capitán",
+    "Comandante"
+  ]
+}
