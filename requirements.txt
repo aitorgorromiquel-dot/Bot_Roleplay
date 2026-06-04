@@ -2,3 +2,4 @@ discord.py
 flask
 aiosqlite
 python-dotenv
+Werkzeug==2.3.7
