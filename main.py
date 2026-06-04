@@ -1,14 +1,15 @@
 """
-Nova Agora RP Bot — Edición Ultra 10.7 (5/5 estrellas)
-=======================================================
-- Todos los cogs incluidos (28) con implementación completa.
-- Robos: badu, lico, ammu, yellowjack, yate, pacific, jugador.
-- Sistema de tickets con valoración, PDA, tablet policial, DNI, economía, niveles.
-- Comando -bot corregido (solo owners, muestra estado y renueva).
-- Base de datos optimizada con caché y migraciones automáticas.
-- Panel web con estadísticas y blacklist.
-- Tienda actualizada con nuevos items (armas, licencias, etc.)
-- Código completamente depurado y listo para producción.
+NOVA AGORA BOT — ACTUALIZACIÓN MAYOR (PACIFIC BANK + PREPARATORIAS + CIERRE ROL + ROLES TRABAJOS)
+==================================================================================================
+- Renombrado Humane Labs a Pacific Bank.
+- Preparatorias I, II, III obligatorias en orden para -rob pacific.
+- Avisos automáticos a LSPD antes de cada preparatoria.
+- Comando -cierre-rol con ping a @everyone y rol usuario.
+- Sistema -dispo mejorado (textos específicos para lspd, lsmd, lssd).
+- Ayuda reorganizada en 8 categorías.
+- Rol Usuario (1450592205898252381) para comandos públicos.
+- Roles específicos para trabajos: MINERO, AUTOBUSERO, CHATARRERO.
+- Todos los cogs originales intactos.
 """
 
 import os
@@ -23,7 +24,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import aiosqlite
-from flask import Flask, render_template_string, jsonify, request, abort, redirect, url_for
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, session, flash
+from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,12 +33,12 @@ load_dotenv()
 # ====================================================
 # CONFIGURACIÓN GLOBAL
 # ====================================================
-TOKEN = os.getenv("DISCORD_TOKEN") or "MTQ4NDE2MTczNDIyNTk1MzAzMA.GVF9Rn.42O8-xXDVv-ejUyzYn4njjBSafvLulPsl2YZak"
+TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
-    raise ValueError("No se ha configurado DISCORD_TOKEN")
+    raise ValueError("No se ha configurado DISCORD_TOKEN. Crea un archivo .env con DISCORD_TOKEN=tu_token")
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", secrets.token_urlsafe(16))
-print(f"🔐 Panel web token: {ADMIN_TOKEN} (guárdalo para acceder a /blacklist)")
+print(f"🔐 Panel web token: {ADMIN_TOKEN} (guárdalo para acceder a /blacklist y /owner/emojis)")
 
 DEFAULT_PREFIX = '-'
 LOGS_DIR = 'logs'
@@ -44,81 +46,223 @@ CANAL_LOGS = 0
 CANAL_PERIODICO = 0
 CANAL_VOICE_CATEGORY = 0
 ROL_POLICIA_DEFAULT = 0
-OWNER_IDS = [1059183337832468510, 729054497233436775]  # IDs de los dueños
+ROL_LSPD_ID = 1450592202165321759
+OWNER_IDS = [1059183337832468510, 729054497233436775]  # Cámbialos por los tuyos
 
-# Datos estáticos
+# IDs de roles para permisos específicos
+ROL_INICIADOR_ID = 1450592126491558131      # Puede usar -status y -votacion
+ROL_EQUIPO_ESPECIAL_ID = 1450592064365658134 # Puede usar comandos de admin
+ROL_DASHBOARD_ID = 1450592204849418294       # Puede usar /dashboard
+ROL_LSPD_OPERATIVO_ID = 1450592202165321759  # Puede usar -alerta-robo (solo LSPD)
+ROL_LSMD_ID = 1450592186600128567            # Rol LSMD (para futuros comandos)
+ROL_SHERIFF_ID = 1511846976889815232         # Rol Sheriff (para futuros comandos)
+ROL_USUARIO_ID = 1450592204849418294         # Rol Usuario (para comandos públicos)
+
+# Roles específicos para trabajos
+ROL_MINERO_ID = 1450592196351885344          # Para usar -minar
+ROL_AUTOBUSERO_ID = 1450592190089920563      # Para usar -bus
+ROL_CHATARRERO_ID = 1450592178018455738      # Para usar -chatarrero
+
+# Precios de drogas base
 PRECIOS_DROGAS_BASE = {
-    "Marihuana": {"compra": 50, "venta": 100, "categoria": "cannabis"},
-    "Cocaína": {"compra": 250, "venta": 500, "categoria": "estimulante"},
-    "Meta": {"compra": 150, "venta": 300, "categoria": "estimulante"},
-    "Éxtasis": {"compra": 75, "venta": 150, "categoria": "sintetica"},
-    "Heroína": {"compra": 400, "venta": 800, "categoria": "opioide"},
+    "Marihuana": {"compra": 50,  "venta": 100, "categoria": "cannabis"},
+    "Cocaína":   {"compra": 250, "venta": 500, "categoria": "estimulante"},
+    "Meta":      {"compra": 150, "venta": 300, "categoria": "estimulante"},
+    "Éxtasis":   {"compra": 75,  "venta": 150, "categoria": "sintetica"},
+    "Heroína":   {"compra": 400, "venta": 800, "categoria": "opioide"},
 }
-TIPOS_ARMAS = {
-    "Pistola": {"emoji": "🔫", "municion_tipo": "9mm", "durabilidad_max": 100, "licencia": "licencia_pistola"},
-    "Escopeta": {"emoji": "🔫", "municion_tipo": "12gauge", "durabilidad_max": 80, "licencia": "licencia_escopeta"},
-    "Rifle": {"emoji": "🔫", "municion_tipo": "556mm", "durabilidad_max": 150, "licencia": "licencia_rifle"},
-    # Nuevas armas que se pueden equipar (se añadirán a TIPOS_ARMAS dinámicamente o se manejarán con genéricas)
-}
-TIPOS_MUNICION = {"9mm": {"emoji": "🔹", "precio": 5}, "12gauge": {"emoji": "🔸", "precio": 15}, "556mm": {"emoji": "🔺", "precio": 25}}
 
-# Nueva tienda actualizada con todos los items solicitados
-TIENDA_ITEMS = [
-    # Blancas
-    ("Hacha", 4000, "🪓"), ("Machete", 5000, "🔪"), ("Puño americano", 5000, "👊"),
-    # Cortas
-    ("SNS", 18000, "🔫"), ("Normal", 20000, "🔫"), ("Vintage", 25000, "🔫"),
-    ("Calibre .50", 30000, "🔫"), ("Pesada", 35000, "🔫"), ("Revólver Pesado", 65000, "🔫"),
-    ("Perforante", 85000, "🔫"),
-    # Medias
-    ("Mini SMG", 120000, "🔫"), ("Micro Uzi", 150000, "🔫"), ("Subfusil", 180000, "🔫"),
-    ("Subfusil de asalto", 200000, "🔫"), ("ADP", 250000, "🔫"),
-    # Largas
-    ("Mosquete", 100000, "🔫"), ("Escopeta recortada", 200000, "🔫"), ("MiniAk47", 220000, "🔫"),
-    ("Escopeta corredera", 230000, "🔫"), ("Ak47", 280000, "🔫"), ("Rifle bullpup", 300000, "🔫"),
-    # Arrojadizas
-    ("Coctel molotov", 6000, "🔥"), ("Granada casera", 12000, "💣"), ("Granada", 15000, "💣"),
-    ("C4", 20000, "🧨"),
-    # Licencias de conducción
-    ("Licencia de camión", 1250, "🚚"), ("Licencia de coche", 1500, "🚗"), ("Licencia de moto", 2000, "🏍️"),
-    # Licencias de armas
-    ("Licencia de armas blancas", 5000, "🔪"), ("Licencia de armas cortas", 12000, "🔫"),
-    # Items existentes que se mantienen (algunos pueden duplicarse, se reemplazan los similares)
-    ("Sprunk", 5, "🥤"), ("Hotdog", 10, "🌭"), ("Cigs", 20, "🚬"),
-    ("Phone", 500, "📱"), ("Kit", 150, "🔧"), ("Botiquin", 75, "🩹"),
-    ("9mm", 1200, "🔫"), ("Burger", 15, "🍔"), ("E-Cola", 5, "🥤"),
-    ("Mascara", 50, "🎭"), ("Gasolina", 100, "⛽"), ("Linterna", 25, "🔦"),
-    ("Mochila", 200, "🎒"), ("GPS", 300, "🚗"), ("Ganzúa", 80, "🔑"),
-    ("Radio", 150, "📻"), ("Pizza", 12, "🍕"), ("Agua", 3, "🧃"),
-    ("Encendedor", 5, "🚬"), ("Auriculares", 75, "🎧"), ("Cámara", 400, "📷"),
-    ("Guantes", 30, "🧤"), ("Zapatillas", 120, "👟"), ("Chaqueta", 250, "🧥"),
-    ("Dinero Negro", 500, "💶"),
-    ("Papas", 3, "🍟"), ("Gaseosa", 4, "🥤"), ("Empanada", 8, "🥟"), ("Chocolate", 2, "🍫"),
-    ("Bolsas Atraco", 300, "🛍️"), ("Pasamontañas", 75, "😷"), ("Esposas", 500, "⛓️"),
-    ("Llave Inglesa", 100, "🔧"), ("Herramientas", 150, "🔧"),
-    ("Desfibrilador", 800, "🩺"), ("Traje Ignifugo", 600, "🔥"), ("Hacha", 200, "🪓"),  # ya está arriba, pero se reemplaza
-    ("Manguera", 180, "💧"), ("Placa Policial", 0, "🪪"), ("Kit Médico", 500, "💊"),
+TIPOS_ARMAS = {
+    "Pistola":  {"emoji": "🔫", "municion_tipo": "9mm",    "durabilidad_max": 100, "licencia": "licencia_pistola"},
+    "Escopeta": {"emoji": "🔫", "municion_tipo": "12gauge", "durabilidad_max": 80,  "licencia": "licencia_escopeta"},
+    "Rifle":    {"emoji": "🔫", "municion_tipo": "556mm",   "durabilidad_max": 150, "licencia": "licencia_rifle"},
+}
+
+TIPOS_MUNICION = {
+    "9mm":    {"emoji": "🔹", "precio": 5},
+    "12gauge":{"emoji": "🔸", "precio": 15},
+    "556mm":  {"emoji": "🔺", "precio": 25},
+}
+
+# Items de la tienda con descripciones (estilo FiveM)
+TIENDA_ITEMS_BASE = [
+    ("Hacha", 750, "🪓", "Arma blanca básica para combate cuerpo a cuerpo. Ideal para leñadores o defensa personal."),
+    ("Machete", 1500, "🔪", "Arma cortante de hoja larga, perfecta para jungla o combate cerrado."),
+    ("Puño americano", 2225, "👊", "Aumenta el daño de tus golpes. Pequeño y fácil de ocultar."),
+    ("SNS", 16000, "🔫", "Pistola compacta de fácil ocultación. Buena para principiantes."),
+    ("Normal", 18500, "🔫", "Pistola estándar de la policía. Fiable y precisa."),
+    ("Vintage", 22000, "🔫", "Pistola de colección con gran precisión y estilo retro."),
+    ("Calibre .50", 25100, "🔫", "Alto poder de penetración. Ideal para enfrentamientos armados."),
+    ("Pesada", 28000, "🔫", "Gran retroceso pero mucho daño. No apta para inexpertos."),
+    ("Revólver Pesado", 34000, "🔫", "Revólver de gran calibre, lento pero devastador."),
+    ("Perforante", 36850, "🔫", "Atraviesa chalecos antibalas. Muy buscada en el mercado negro."),
+    ("Mini SMG", 120000, "🔫", "Subfusil ligero de alta cadencia. Perfecto para asaltos rápidos."),
+    ("Micro Uzi", 150000, "🔫", "Extremadamente rápido, ideal para espacios cerrados."),
+    ("Subfusil", 180000, "🔫", "Equilibrio entre daño y movilidad. Arma versátil."),
+    ("Subfusil de asalto", 200000, "🔫", "Versátil y letal. Usada por fuerzas especiales."),
+    ("ADP", 250000, "🔫", "Pistola avanzada de diseño táctico. Precisión milimétrica."),
+    ("Mosquete", 100000, "🔫", "Arma antigua pero devastadora. Un solo disparo, pero mortal."),
+    ("Escopeta recortada", 200000, "🔫", "Ideal para espacios cerrados. Dispersión letal."),
+    ("MiniAk47", 220000, "🔫", "Versión reducida del AK. Potencia en un tamaño pequeño."),
+    ("Escopeta corredera", 230000, "🔫", "Alto poder de parada. Perfecta para asaltos."),
+    ("Ak47", 283000, "🔫", "El rifle de asalto por excelencia. Robusto y mortal."),
+    ("Rifle bullpup", 297110, "🔫", "Preciso y moderno. Ideal para francotiradores urbanos."),
+    ("Coctel molotov", 6000, "🔥", "Incendia el área. Peligroso pero efectivo."),
+    ("Granada casera", 12000, "💣", "Explosión moderada. Hecha con materiales comunes."),
+    ("Granada", 15000, "💣", "Explosión letal. Munición militar."),
+    ("C4", 20000, "🧨", "Demolición controlada. Para sabotajes profesionales."),
+    ("Licencia de camión", 1600, "🚚", "Permiso para conducir camiones. Obligatorio para transportistas."),
+    ("Licencia de vehiculo", 3000, "🚗", "Permiso para coches. Necesario para circular legalmente."),
+    ("Licencia de moto", 2500, "🏍️", "Permiso para motocicletas. Para los amantes de las dos ruedas."),
+    ("Licencia de armas blancas", 5000, "🔪", "Legaliza cuchillos y hachas. Para cazadores y chefs."),
+    ("Licencia de armas cortas", 12000, "🔫", "Legaliza pistolas. Imprescindible para portación."),
+    ("DNI", 500, "🪪", "Documento nacional de identidad. Necesario para muchas actividades."),
+    ("Sprunk", 8, "🥤", "Refresco energético. Recupera algo de energía."),
+    ("Hotdog", 10, "🌭", "Comida rápida callejera. Satisface el hambre."),
+    ("Burger", 15, "🍔", "Hamburguesa completa. Ideal para una comida rápida."),
+    ("Pizza", 12, "🍕", "Porción de pizza. Deliciosa y calórica."),
+    ("Papas", 5, "🍟", "Patatas fritas. Acompañamiento perfecto."),
+    ("Empanada", 8, "🥟", "Empanada de carne. Comida tradicional."),
+    ("Chocolate", 11, "🍫", "Tableta de chocolate. Energía instantánea."),
+    ("Agua", 3, "🧃", "Agua embotellada. Hidratación básica."),
+    ("Gaseosa", 9, "🥤", "Refresco carbonatado. Mejora el ánimo."),
+    ("E-Cola", 5, "🥤", "Bebida energética. Aumenta la resistencia."),
+    ("Cigs", 20, "🚬", "Paquete de cigarrillos. Alivia el estrés."),
+    ("Encendedor", 25, "🚬", "Prende fuego. Útil para muchas cosas."),
+    ("Botiquin", 75, "🩹", "Cura heridas leves. Imprescindible en cualquier botiquín."),
+    ("Kit", 150, "🔧", "Herramientas básicas. Para reparaciones simples."),
+    ("Gasolina", 100, "⛽", "Combustible para vehículos. Mantén tu coche en marcha."),
+    ("Phone", 500, "📱", "Teléfono móvil básico. Permite comunicarte."),
+    ("Linterna", 25, "🔦", "Ilumina la oscuridad. Útil en túneles y noche."),
+    ("Mochila", 200, "🎒", "Aumenta capacidad de inventario. Lleva más objetos."),
+    ("GPS", 300, "🚗", "Navegación satelital. No te pierdas nunca."),
+    ("Radio", 150, "📻", "Comunicación de largo alcance. Para coordinación."),
+    ("Auriculares", 75, "🎧", "Escucha música. Bloquea el ruido ambiental."),
+    ("Cámara", 400, "📷", "Toma fotografías. Documenta tus aventuras."),
+    ("Guantes", 30, "🧤", "Protege las manos. Evita dejar huellas."),
+    ("Zapatillas", 120, "👟", "Calzado deportivo. Aumenta la velocidad."),
+    ("Chaqueta", 250, "🧥", "Abrigo ligero. Protege del frío."),
+    ("Mascara", 50, "🎭", "Oculta tu identidad. Ideal para actividades ilícitas."),
+    ("Ganzúa", 650, "🔑", "Abre cerraduras simples. Para hurtos menores."),
+    ("Llave Inglesa", 100, "🔧", "Aprieta tuercas. Herramienta multiusos."),
+    ("Herramientas", 150, "🔧", "Kit multiusos. Para reparaciones avanzadas."),
+    ("9mm", 1200, "🔫", "Munición para pistolas. Calibre estándar."),
+    ("Tarjeta de crédito", 300, "💳", "Clonada, para compras ilegales. Alto riesgo."),
+    ("Bolsas Atraco", 300, "🛍️", "Transporta botines. Necesarias para atracos."),
+    ("Pasamontañas", 75, "😷", "Oculta el rostro. Para mantener el anonimato."),
+    ("Esposas", 500, "⛓️", "Inmoviliza a un sospechoso. Uso policial."),
+    ("Dispositivo de hackeo", 1800, "🛠️", "Desactiva alarmas. Para robos tecnológicos."),
+    ("Termita", 700, "🔥", "Funde metales. Abre cajas fuertes."),
+    ("Gas lacrimógeno", 450, "😷", "Ahuyenta multitudes. Control de masas."),
+    ("Desfibrilador", 800, "🩺", "Reanima a un paciente. Equipo médico."),
+    ("Traje Ignifugo", 600, "🔥", "Resiste el fuego. Para bomberos o situaciones extremas."),
+    ("Manguera", 180, "💧", "Apaga incendios. Útil para emergencias."),
+    ("Kit Médico", 500, "💊", "Cura heridas graves. Imprescindible en combate."),
+    ("Placa Policial", 0, "🪪", "Identifica a un oficial. Símbolo de autoridad."),
 ]
+
+CUSTOM_ITEMS_FILE = "custom_items.json"
+_custom_items = []
+if os.path.exists(CUSTOM_ITEMS_FILE):
+    try:
+        with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+            _custom_items = json.load(f)
+    except:
+        pass
+
+TIENDA_ITEMS_FULL = []
+for item in TIENDA_ITEMS_BASE:
+    if len(item) == 4:
+        TIENDA_ITEMS_FULL.append(item)
+    else:
+        TIENDA_ITEMS_FULL.append((item[0], item[1], item[2], "Sin descripción."))
+for custom in _custom_items:
+    if len(custom) == 3:
+        custom.append("Item personalizado sin descripción.")
+    TIENDA_ITEMS_FULL.append(tuple(custom))
+
+TIENDA_ITEMS_DICT = {name.lower(): (name, precio, emoji, desc) for name, precio, emoji, desc in TIENDA_ITEMS_FULL}
+
+ILLEGAL_TIENDA_ITEMS = {
+    "dispositivo de hackeo", "termita", "tarjeta de crédito", "gas lacrimógeno",
+    "pasamontañas", "bolsas atraco", "ganzúa", "mascaras",
+}
+
+HEIST_DEFINITIONS = {
+    "badu": {"nombre": "Badu", "cooldown": 600, "items": ["Bolsas Atraco", "Pasamontañas"], "police": "2 policías en rol", "reward": (1200, 2800), "black_money": True, "min_level": 1, "description": "Atraco básico con riesgo mínimo."},
+    "yellowjack": {"nombre": "Yellow Jack", "cooldown": 1800, "items": ["Mascaras", "Ganzúa"], "police": "3 policías en rol", "reward": (3000, 5500), "black_money": True, "min_level": 5, "description": "Atraco de tienda nocturna."},
+    "ammu": {"nombre": "Ammu-Nation", "cooldown": 3600, "items": ["Dispositivo de hackeo", "Gas lacrimógeno"], "police": "4 policías en rol", "reward": (6000, 12000), "black_money": True, "min_level": 10, "description": "Asalto a tienda de armas."},
+    "vanilla": {"nombre": "Vanilla Unicorn", "cooldown": 7200, "items": ["Termita", "Pasamontañas"], "police": "5 policías en rol", "reward": (12000, 18000), "black_money": True, "min_level": 15, "description": "Atraco a club nocturno."},
+    "yate": {"nombre": "Yate", "cooldown": 9000, "items": ["Tarjeta de crédito", "Mascaras"], "police": "5 policías en rol", "reward": (18000, 26000), "black_money": True, "min_level": 20, "description": "Emboscada en alta mar."},
+    "centro": {"nombre": "Centro Comercial", "cooldown": 10800, "items": ["Termita", "Gas lacrimógeno", "Pasamontañas"], "police": "6 policías en rol", "reward": (22000, 32000), "black_money": True, "min_level": 25, "description": "Atraco a centro comercial."},
+    "joyeria": {"nombre": "Joyería", "cooldown": 259200, "items": ["Ganzúa", "Termita", "Mascaras"], "police": "7 policías en rol", "reward": (45000, 65000), "black_money": True, "min_level": 30, "description": "Robo de joyería."},
+    "pacific": {"nombre": "Pacific Bank", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías en rol", "reward": (250000, 350000), "black_money": True, "min_level": 60, "description": "Golpe maestro al banco central. Requiere las 3 preparatorias."},
+    "paleto": {"nombre": "Banco Paleto", "cooldown": 1036800, "items": ["Dispositivo de hackeo", "Pasamontañas", "Bolsas Atraco"], "police": "8 policías en rol", "reward": (120000, 160000), "black_money": True, "min_level": 50, "description": "Atraco rural a banco."},
+    "central": {"nombre": "Banco Central", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías en rol", "reward": (180000, 240000), "black_money": True, "min_level": 60, "description": "Operación final."},
+}
 
 APUESTA_MIN = 100
 APUESTA_MAX = 50000
 MAX_DROGA_POR_COMPRA = 27
 
-CANAL_LOG_ECONOMIA = 0
+CANAL_LOG_ECONOMIA  = 0
 CANAL_LOG_SANCIONES = 0
-ROL_MUTED = 0
-CATEGORIA_TICKETS = 0
-ROL_STAFF = 0
-TICKET_PANEL_CHANNEL = 0
+ROL_MUTED           = 0
+CATEGORIA_TICKETS   = 0
+ROL_STAFF           = 0
+TICKET_PANEL_CHANNEL= 0
 
-XP_POR_MENSAJE = random.randint(15, 25)
-XP_POR_COMANDO = random.randint(5, 10)
+# Sistema de niveles (cooldown de 14 días entre subidas)
+MENSAJES_POR_NIVEL = 300
+COOLDOWN_MENSAJE_XP = 500
+COOLDOWN_COMANDO_XP = 3000
 XP_POR_TIEMPO = 10
-COOLDOWN_XP = 60
+DIAS_PARA_SUBIR_NIVEL = 14
 ROLES_POR_NIVEL = {5: 0, 10: 0, 15: 0, 20: 0, 25: 0, 30: 0}
 
+# Minerales para -minar (12 tipos con probabilidad)
+MINERALES = {
+    "Carbón": {"probabilidad": 25, "valor": 5, "emoji": "⚫"},
+    "Hierro": {"probabilidad": 20, "valor": 15, "emoji": "⚙️"},
+    "Cobre": {"probabilidad": 18, "valor": 20, "emoji": "🔶"},
+    "Estaño": {"probabilidad": 12, "valor": 25, "emoji": "🔘"},
+    "Plata": {"probabilidad": 10, "valor": 50, "emoji": "🥈"},
+    "Oro": {"probabilidad": 7, "valor": 100, "emoji": "🥇"},
+    "Platino": {"probabilidad": 4, "valor": 200, "emoji": "⚪"},
+    "Rubí": {"probabilidad": 2, "valor": 500, "emoji": "🔴"},
+    "Zafiro": {"probabilidad": 1.2, "valor": 800, "emoji": "🔵"},
+    "Esmeralda": {"probabilidad": 0.6, "valor": 1200, "emoji": "🟢"},
+    "Diamante": {"probabilidad": 0.2, "valor": 3000, "emoji": "💎"},
+    "Fragmento Estelar": {"probabilidad": 0.05, "valor": 10000, "emoji": "✨"},
+}
+
+# Emojis globales personalizables por el owner
+DEFAULT_EMOJIS = {
+    "money": "💰",
+    "bank": "🏦",
+    "black_money": "💶",
+    "inventory": "🎒",
+    "shop": "🏪",
+    "work": "⚙️",
+    "rob": "💰",
+    "casino": "🎰",
+    "drugs": "💊",
+    "vehicle": "🚗",
+    "weapon": "🔫",
+    "pda": "🚨",
+    "phone": "📱",
+    "ig": "📸",
+    "twitter": "🐦",
+    "facebook": "📘",
+    "deepweb": "🕸️",
+    "whatsapp": "💬",
+    "ticket": "📩",
+    "admin": "🔧",
+    "mod": "🔨",
+}
+
 # ====================================================
-# FUNCIONES AUXILIARES DE EMBED
+# FUNCIONES AUXILIARES DE EMBED Y EMOJIS
 # ====================================================
 def embed_error(msg: str) -> discord.Embed:
     return discord.Embed(title="❌ Error", description=msg, color=0xFF0000)
@@ -138,8 +282,15 @@ def embed_help(comando: str, descripcion: str, uso: str, ejemplo: str, permisos:
         embed.add_field(name="🔒 Permisos", value=permisos, inline=False)
     return embed
 
+async def get_emoji(key: str) -> str:
+    """Devuelve el emoji personalizado para la clave, o el predeterminado si no existe."""
+    row = await db.fetchone("SELECT emoji FROM emoji_settings WHERE key = ?", (key,))
+    if row and row[0]:
+        return row[0]
+    return DEFAULT_EMOJIS.get(key, "⚙️")
+
 # ====================================================
-# BASE DE DATOS UNIFICADA (OPTIMIZADA + MIGRACIONES)
+# BASE DE DATOS UNIFICADA (con migraciones automáticas)
 # ====================================================
 class Database:
     def __init__(self, db_path="nova.db"):
@@ -155,7 +306,7 @@ class Database:
             expiry = (datetime.now() + timedelta(days=30)).isoformat()
             await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('expiry', ?)", (expiry,))
 
-            # Usuarios (incluye datos de DNI)
+            # Usuarios
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -183,14 +334,14 @@ class Database:
                     dni_fecha_creacion TEXT
                 )
             """)
-            # Migración: agregar columnas faltantes (si la tabla ya existía sin ellas)
+            # Añadir columnas faltantes
+            cur = await db.execute("PRAGMA table_info(users)")
+            existing_cols = [row[1] for row in await cur.fetchall()]
             columnas_dni = [
                 "dni_nombre TEXT", "dni_apellidos TEXT", "dni_edad INTEGER", "dni_genero TEXT",
                 "dni_nacionalidad TEXT", "dni_color_ojos TEXT", "dni_altura TEXT", "dni_profesion TEXT",
                 "dni_numero TEXT", "dni_fecha_creacion TEXT"
             ]
-            cur = await db.execute("PRAGMA table_info(users)")
-            existing_cols = [row[1] for row in await cur.fetchall()]
             for col_def in columnas_dni:
                 col_name = col_def.split()[0]
                 if col_name not in existing_cols:
@@ -200,7 +351,7 @@ class Database:
                     except Exception as e:
                         print(f"⚠️ No se pudo añadir {col_name}: {e}")
 
-            # Tabla para licencias de conducción
+            # Licencias conducción
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS licencias_conduccion (
                     user_id INTEGER,
@@ -229,6 +380,17 @@ class Database:
                     PRIMARY KEY (user_id, inv_type, item)
                 )
             """)
+            # Evidencia
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS evidence (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agente_id INTEGER,
+                    target_id INTEGER,
+                    item TEXT,
+                    quantity INTEGER,
+                    fecha TEXT
+                )
+            """)
             # Armas
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS armas_licencias (user_id INTEGER, licencia TEXT, tiene BOOLEAN, PRIMARY KEY (user_id, licencia))
@@ -243,7 +405,7 @@ class Database:
                     PRIMARY KEY (user_id, matricula)
                 )
             """)
-            # Multas
+            # Multas y caja
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS multas (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -265,6 +427,32 @@ class Database:
                     id TEXT PRIMARY KEY, vendedor INTEGER, item TEXT, descripcion TEXT, precio INTEGER, fecha TEXT
                 )
             """)
+            # DeepWeb
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS deepweb (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender INTEGER,
+                    receiver INTEGER,
+                    message TEXT,
+                    sent_at TEXT,
+                    anonymous BOOLEAN DEFAULT 1,
+                    decoded_by INTEGER,
+                    decoded_at TEXT
+                )
+            """)
+            # Atracos logs
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS atracos_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    heist TEXT,
+                    result TEXT,
+                    reward INTEGER,
+                    black_reward INTEGER,
+                    items TEXT,
+                    timestamp TEXT
+                )
+            """)
             # Redes sociales
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS posts_ig (id TEXT PRIMARY KEY, user_id INTEGER, texto TEXT, tiempo TEXT, likes TEXT)
@@ -276,6 +464,34 @@ class Database:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS wa_chats (id INTEGER PRIMARY KEY AUTOINCREMENT, de INTEGER, para INTEGER, mensaje TEXT, tiempo TEXT)
             """)
+            # Twitter DMs
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS twitter_dms (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    from_user INTEGER,
+                    to_user INTEGER,
+                    message TEXT,
+                    sent_at TEXT
+                )
+            """)
+            # Web users y PDA
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS web_users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE,
+                    password_hash TEXT,
+                    discord_id INTEGER,
+                    is_staff BOOLEAN DEFAULT 0,
+                    created_at TEXT
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS pda_permissions (
+                    user_id INTEGER PRIMARY KEY,
+                    granted_by INTEGER,
+                    granted_at TEXT
+                )
+            """)
             # Precios drogas
             await db.execute("CREATE TABLE IF NOT EXISTS precios_drogas (droga TEXT PRIMARY KEY, precio_compra INTEGER, precio_venta INTEGER)")
             for droga, datos in PRECIOS_DROGAS_BASE.items():
@@ -286,7 +502,7 @@ class Database:
             await db.execute("CREATE TABLE IF NOT EXISTS seguidores_tw (follower INTEGER, following INTEGER, since TEXT, PRIMARY KEY (follower, following))")
             await db.execute("CREATE TABLE IF NOT EXISTS posts_fb (id TEXT PRIMARY KEY, user_id INTEGER, texto TEXT, tiempo TEXT)")
 
-            # Tablas de moderación
+            # Moderación
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS warnings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,6 +539,7 @@ class Database:
                     staff_id INTEGER
                 )
             """)
+            # Niveles (con columna last_level_up)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS niveles (
                     user_id INTEGER PRIMARY KEY,
@@ -330,10 +547,23 @@ class Database:
                     nivel INTEGER DEFAULT 0,
                     last_message_time TEXT,
                     last_command_time TEXT,
-                    last_time_time TEXT
+                    last_time_time TEXT,
+                    mensajes INTEGER DEFAULT 0,
+                    last_message_content TEXT,
+                    last_level_up TEXT
                 )
             """)
-            # BLACKLIST GLOBAL
+            # Migración: añadir columna last_level_up si no existe
+            cur = await db.execute("PRAGMA table_info(niveles)")
+            niveles_cols = [row[1] for row in await cur.fetchall()]
+            if 'last_level_up' not in niveles_cols:
+                try:
+                    await db.execute("ALTER TABLE niveles ADD COLUMN last_level_up TEXT")
+                    print("✅ Columna 'last_level_up' añadida a la tabla niveles (migración).")
+                except Exception as e:
+                    print(f"⚠️ No se pudo añadir last_level_up: {e}")
+
+            # Blacklist y antiraid
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS blacklist (
                     user_id INTEGER PRIMARY KEY,
@@ -342,7 +572,6 @@ class Database:
                     ban_date TEXT
                 )
             """)
-            # ANTIRAID: registro de acciones
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS antiraid_actions (
                     user_id INTEGER,
@@ -351,8 +580,28 @@ class Database:
                     guild_id INTEGER
                 )
             """)
+            # Emojis personalizables (globales)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS emoji_settings (
+                    key TEXT PRIMARY KEY,
+                    emoji TEXT
+                )
+            """)
+            # Insertar emojis por defecto
+            for key, emoji in DEFAULT_EMOJIS.items():
+                await db.execute("INSERT OR IGNORE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
 
-            # Índices para rendimiento
+            # Preparatorias de atracos (para Pacific Bank)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS heist_prep (
+                    user_id INTEGER PRIMARY KEY,
+                    pacific_prep1 BOOLEAN DEFAULT 0,
+                    pacific_prep2 BOOLEAN DEFAULT 0,
+                    pacific_prep3 BOOLEAN DEFAULT 0
+                )
+            """)
+
+            # Índices
             await db.execute("CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_warnings_user ON warnings(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id)")
@@ -360,8 +609,9 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_niveles_nivel ON niveles(nivel)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_user ON antiraid_actions(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_timestamp ON antiraid_actions(timestamp)")
+
             await db.commit()
-            print("✅ Base de datos inicializada con índices optimizados y migraciones aplicadas.")
+            print("✅ Base de datos inicializada con todas las tablas e índices.")
 
     async def execute(self, query, params=()):
         async with aiosqlite.connect(self.db_path) as db:
@@ -377,26 +627,6 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(query, params)
             return await cur.fetchall()
-
-    async def _cached_fetchone(self, query, params=(), ttl=30):
-        key = (query, str(params))
-        now = datetime.now().timestamp()
-        if key in self._cache and (now - self._cache_time.get(key, 0)) < ttl:
-            return self._cache[key]
-        row = await self.fetchone(query, params)
-        self._cache[key] = row
-        self._cache_time[key] = now
-        return row
-
-    async def _cached_fetchall(self, query, params=(), ttl=30):
-        key = (query, str(params))
-        now = datetime.now().timestamp()
-        if key in self._cache and (now - self._cache_time.get(key, 0)) < ttl:
-            return self._cache[key]
-        rows = await self.fetchall(query, params)
-        self._cache[key] = rows
-        self._cache_time[key] = now
-        return rows
 
     async def invalidate_cache(self, pattern=None):
         if pattern is None:
@@ -419,7 +649,7 @@ class Database:
 
     # Economía
     async def get_economy(self, user_id: int) -> dict:
-        row = await self._cached_fetchone("SELECT cash, bank, black_money FROM economy WHERE user_id = ?", (user_id,), ttl=10)
+        row = await self.fetchone("SELECT cash, bank, black_money FROM economy WHERE user_id = ?", (user_id,))
         if row:
             return {"cash": row[0], "bank": row[1], "black_money": row[2]}
         else:
@@ -460,46 +690,52 @@ class Database:
         await self.invalidate_cache("inventory")
 
     async def remove_item(self, user_id: int, inv_type: str, item: str, cantidad: int = 1) -> int:
-        row = await self.fetchone(
-            "SELECT quantity FROM inventory WHERE user_id = ? AND inv_type = ? AND item = ?",
-            (user_id, inv_type, item)
-        )
+        row = await self.fetchone("SELECT quantity FROM inventory WHERE user_id = ? AND inv_type = ? AND item = ?", (user_id, inv_type, item))
         if not row or row[0] < cantidad:
             return 0
         if row[0] == cantidad:
-            await self.execute("DELETE FROM inventory WHERE user_id = ? AND inv_type = ? AND item = ?",
-                               (user_id, inv_type, item))
+            await self.execute("DELETE FROM inventory WHERE user_id = ? AND inv_type = ? AND item = ?", (user_id, inv_type, item))
         else:
-            await self.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND inv_type = ? AND item = ?",
-                               (cantidad, user_id, inv_type, item))
+            await self.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND inv_type = ? AND item = ?", (cantidad, user_id, inv_type, item))
         await self.invalidate_cache("inventory")
         return cantidad
 
     async def get_inventory(self, user_id: int, inv_type: str) -> dict:
-        rows = await self._cached_fetchall(
-            "SELECT item, quantity FROM inventory WHERE user_id = ? AND inv_type = ?",
-            (user_id, inv_type), ttl=10
-        )
+        rows = await self.fetchall("SELECT item, quantity FROM inventory WHERE user_id = ? AND inv_type = ?", (user_id, inv_type))
         return {item: qty for item, qty in rows}
 
-    # Estado de usuario (con cache de columnas)
+    # Evidencia
+    async def add_evidence(self, agente_id: int, target_id: int, item: str, quantity: int = 1):
+        fecha = datetime.now().isoformat()
+        await self.execute("INSERT INTO evidence (agente_id, target_id, item, quantity, fecha) VALUES (?, ?, ?, ?, ?)",
+                           (agente_id, target_id, item, quantity, fecha))
+
+    async def get_evidence(self, target_id: int) -> List[dict]:
+        rows = await self.fetchall("SELECT id, agente_id, item, quantity, fecha FROM evidence WHERE target_id = ?", (target_id,))
+        return [{"id": r[0], "agente_id": r[1], "item": r[2], "quantity": r[3], "fecha": r[4]} for r in rows]
+
+    # Estado de usuario
     async def _get_user_columns(self):
         if self._user_columns is None:
             async with aiosqlite.connect(self.db_path) as db:
                 cur = await db.execute("PRAGMA table_info(users)")
-                self._user_columns = [desc[0] for desc in await cur.fetchall()]
+                rows = await cur.fetchall()
+                self._user_columns = [desc[1] for desc in rows]
         return self._user_columns
 
     async def get_user_state(self, user_id: int) -> dict:
-        row = await self._cached_fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,), ttl=60)
+        row = await self.fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,))
         if not row:
             await self.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
             row = await self.fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,))
         columns = await self._get_user_columns()
-        return {col: row[i] for i, col in enumerate(columns)}
+        return {col: row[i] for i, col in enumerate(columns)} if row else {}
 
     async def update_user_state(self, user_id: int, **kwargs):
+        VALID_COLUMNS = {'banned', 'encarcelado_hasta', 'placa', 'airplane_mode', 'wifi_connected', 'phone_number', 'rango', 'ban_reason', 'banned_by', 'ban_date'}
         for key, value in kwargs.items():
+            if key not in VALID_COLUMNS:
+                raise ValueError(f"Columna no valida: {key}")
             await self.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
         await self.invalidate_cache("users")
 
@@ -508,56 +744,40 @@ class Database:
         row = await self.fetchone("SELECT dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad, dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion FROM users WHERE user_id = ?", (user_id,))
         if row and row[0]:
             return {
-                "nombre": row[0],
-                "apellidos": row[1],
-                "edad": row[2],
-                "genero": row[3],
-                "nacionalidad": row[4],
-                "color_ojos": row[5],
-                "altura": row[6],
-                "profesion": row[7],
-                "numero": row[8],
-                "fecha_creacion": row[9]
+                "nombre": row[0], "apellidos": row[1], "edad": row[2], "genero": row[3],
+                "nacionalidad": row[4], "color_ojos": row[5], "altura": row[6],
+                "profesion": row[7], "numero": row[8], "fecha_creacion": row[9]
             }
         return None
 
     async def set_dni(self, user_id: int, data: dict):
         await self.execute("""
-            UPDATE users SET dni_nombre = ?, dni_apellidos = ?, dni_edad = ?, dni_genero = ?, dni_nacionalidad = ?,
-            dni_color_ojos = ?, dni_altura = ?, dni_profesion = ?, dni_numero = ?, dni_fecha_creacion = ?
-            WHERE user_id = ?
+            UPDATE users SET dni_nombre=?, dni_apellidos=?, dni_edad=?, dni_genero=?, dni_nacionalidad=?,
+            dni_color_ojos=?, dni_altura=?, dni_profesion=?, dni_numero=?, dni_fecha_creacion=?
+            WHERE user_id=?
         """, (data["nombre"], data["apellidos"], data["edad"], data["genero"], data["nacionalidad"],
               data["color_ojos"], data["altura"], data["profesion"], data["numero"], data["fecha_creacion"], user_id))
-        await self.invalidate_cache("users")
 
     async def delete_dni(self, user_id: int):
         await self.execute("""
-            UPDATE users SET dni_nombre = NULL, dni_apellidos = NULL, dni_edad = NULL, dni_genero = NULL,
-            dni_color_ojos = NULL, dni_altura = NULL, dni_profesion = NULL,
-            dni_numero = NULL, dni_fecha_creacion = NULL WHERE user_id = ?
+            UPDATE users SET dni_nombre=NULL, dni_apellidos=NULL, dni_edad=NULL, dni_genero=NULL,
+            dni_color_ojos=NULL, dni_altura=NULL, dni_profesion=NULL,
+            dni_numero=NULL, dni_fecha_creacion=NULL WHERE user_id=?
         """, (user_id,))
-        await self.invalidate_cache("users")
 
-    # Multas y caja
+    # Multas
     async def add_multa(self, user_id: int, cantidad: int, motivo: str, agente: str, placa_agente: str):
         fecha = datetime.now().isoformat()
-        await self.execute("""
-            INSERT INTO multas (user_id, cantidad, motivo, fecha, agente, placa_agente)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, cantidad, motivo, fecha, agente, placa_agente))
+        await self.execute("INSERT INTO multas (user_id, cantidad, motivo, fecha, agente, placa_agente) VALUES (?, ?, ?, ?, ?, ?)",
+                           (user_id, cantidad, motivo, fecha, agente, placa_agente))
         await self.execute("UPDATE caja_municipal SET monto = monto + ? WHERE id = 1", (cantidad,))
-        await self.invalidate_cache("multas")
 
     async def get_multas_pendientes(self, user_id: int) -> List[dict]:
-        rows = await self.fetchall(
-            "SELECT id, cantidad, motivo, fecha, agente FROM multas WHERE user_id = ? AND pagada = 0",
-            (user_id,)
-        )
+        rows = await self.fetchall("SELECT id, cantidad, motivo, fecha, agente FROM multas WHERE user_id = ? AND pagada = 0", (user_id,))
         return [{"id": r[0], "cantidad": r[1], "motivo": r[2], "fecha": r[3], "agente": r[4]} for r in rows]
 
     async def pagar_multa(self, multa_id: int):
         await self.execute("UPDATE multas SET pagada = 1 WHERE id = ?", (multa_id,))
-        await self.invalidate_cache("multas")
 
     async def get_caja_municipal(self) -> int:
         row = await self.fetchone("SELECT monto FROM caja_municipal WHERE id = 1")
@@ -565,11 +785,8 @@ class Database:
 
     # Vehículos
     async def add_vehiculo(self, user_id: int, matricula: str, modelo: str):
-        await self.execute("""
-            INSERT INTO vehiculos (user_id, matricula, modelo, seguro, itv, combustible)
-            VALUES (?, ?, ?, 1, ?, 100)
-        """, (user_id, matricula, modelo, (datetime.now() + timedelta(days=30)).isoformat()))
-        await self.invalidate_cache("vehiculos")
+        await self.execute("INSERT INTO vehiculos (user_id, matricula, modelo, seguro, itv, combustible) VALUES (?, ?, ?, 1, ?, 100)",
+                           (user_id, matricula, modelo, (datetime.now() + timedelta(days=30)).isoformat()))
 
     async def get_vehiculos(self, user_id: int) -> dict:
         rows = await self.fetchall("SELECT matricula, modelo, seguro, itv, combustible FROM vehiculos WHERE user_id = ?", (user_id,))
@@ -578,19 +795,14 @@ class Database:
     async def update_vehiculo(self, user_id: int, matricula: str, **kwargs):
         for key, value in kwargs.items():
             await self.execute(f"UPDATE vehiculos SET {key} = ? WHERE user_id = ? AND matricula = ?", (value, user_id, matricula))
-        await self.invalidate_cache("vehiculos")
 
     # Armas y licencias
     async def dar_licencia(self, user_id: int, licencia: str):
-        await self.execute("""
-            INSERT INTO armas_licencias (user_id, licencia, tiene) VALUES (?, ?, 1)
-            ON CONFLICT(user_id, licencia) DO UPDATE SET tiene = 1
-        """, (user_id, licencia))
-        await self.invalidate_cache("armas")
+        await self.execute("INSERT INTO armas_licencias (user_id, licencia, tiene) VALUES (?, ?, 1) ON CONFLICT(user_id, licencia) DO UPDATE SET tiene = 1",
+                           (user_id, licencia))
 
     async def quitar_licencia(self, user_id: int, licencia: str):
         await self.execute("UPDATE armas_licencias SET tiene = 0 WHERE user_id = ? AND licencia = ?", (user_id, licencia))
-        await self.invalidate_cache("armas")
 
     async def get_licencias(self, user_id: int) -> dict:
         rows = await self.fetchall("SELECT licencia, tiene FROM armas_licencias WHERE user_id = ?", (user_id,))
@@ -600,15 +812,17 @@ class Database:
         rows = await self.fetchall("SELECT arma, durabilidad, municion FROM armas_equipadas WHERE user_id = ?", (user_id,))
         return {r[0]: {"durabilidad": r[1], "municion": r[2]} for r in rows}
 
-    # Licencias de conducción
     async def dar_licencia_conduccion(self, user_id: int, tipo: str):
         await self.execute("INSERT OR REPLACE INTO licencias_conduccion (user_id, tipo, fecha_obtencion) VALUES (?, ?, ?)",
                            (user_id, tipo, datetime.now().isoformat()))
-        await self.invalidate_cache("licencias_conduccion")
 
     async def tiene_licencia_conduccion(self, user_id: int, tipo: str) -> bool:
         row = await self.fetchone("SELECT 1 FROM licencias_conduccion WHERE user_id = ? AND tipo = ?", (user_id, tipo))
         return row is not None
+
+    async def get_licencias_conduccion(self, user_id: int) -> List[dict]:
+        rows = await self.fetchall("SELECT tipo, fecha_obtencion FROM licencias_conduccion WHERE user_id = ?", (user_id,))
+        return [{"tipo": r[0], "fecha_obtencion": r[1]} for r in rows]
 
     # Cooldowns
     async def check_cooldown(self, user_id: int, comando: str, segundos: int) -> Tuple[bool, int]:
@@ -617,14 +831,33 @@ class Database:
         if row and row[0]:
             expires = datetime.fromisoformat(row[0])
             if expires > ahora:
-                restante = int((expires - ahora).total_seconds())
-                return False, restante
+                return False, int((expires - ahora).total_seconds())
         nueva_expira = ahora + timedelta(seconds=segundos)
-        await self.execute("""
-            INSERT INTO cooldowns (user_id, comando, expires) VALUES (?, ?, ?)
-            ON CONFLICT(user_id, comando) DO UPDATE SET expires = ?
-        """, (user_id, comando, nueva_expira.isoformat(), nueva_expira.isoformat()))
+        await self.execute("INSERT INTO cooldowns (user_id, comando, expires) VALUES (?, ?, ?) ON CONFLICT(user_id, comando) DO UPDATE SET expires = ?",
+                           (user_id, comando, nueva_expira.isoformat(), nueva_expira.isoformat()))
         return True, 0
+
+    # DeepWeb
+    async def add_deepweb_message(self, sender: int, receiver: int, message: str) -> int:
+        sent_at = datetime.now().isoformat()
+        await self.execute("INSERT INTO deepweb (sender, receiver, message, sent_at) VALUES (?, ?, ?, ?)", (sender, receiver, message, sent_at))
+        row = await self.fetchone("SELECT last_insert_rowid()")
+        return int(row[0]) if row else 0
+
+    async def decode_deepweb_message(self, message_id: int, decoder_id: int) -> dict:
+        row = await self.fetchone("SELECT sender, message, anonymous FROM deepweb WHERE id = ?", (message_id,))
+        if not row:
+            return None
+        if random.randint(1, 10) == 1:
+            await self.execute("UPDATE deepweb SET anonymous = 0, decoded_by = ?, decoded_at = ? WHERE id = ?",
+                               (decoder_id, datetime.now().isoformat(), message_id))
+            return {"sender": row[0], "message": row[1], "anonymous": False, "decoded": True}
+        return {"sender": row[0], "message": row[1], "anonymous": bool(row[2]), "decoded": False}
+
+    # Atracos logs
+    async def add_heist_log(self, user_id: int, heist: str, result: str, reward: int, black_reward: int, items: str):
+        await self.execute("INSERT INTO atracos_logs (user_id, heist, result, reward, black_reward, items, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (user_id, heist, result, reward, black_reward, items, datetime.now().isoformat()))
 
     # Rachas casino
     async def actualizar_racha(self, user_id: int, ganado: bool):
@@ -634,10 +867,8 @@ class Database:
             nueva_racha = row[0] + 1
         else:
             nueva_racha = 1
-        await self.execute("""
-            INSERT INTO rachas (user_id, racha, tipo) VALUES (?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET racha = ?, tipo = ?
-        """, (user_id, nueva_racha, tipo, nueva_racha, tipo))
+        await self.execute("INSERT INTO rachas (user_id, racha, tipo) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET racha = ?, tipo = ?",
+                           (user_id, nueva_racha, tipo, nueva_racha, tipo))
 
     async def get_racha(self, user_id: int) -> dict:
         row = await self.fetchone("SELECT racha, tipo FROM rachas WHERE user_id = ?", (user_id,))
@@ -667,7 +898,7 @@ class Database:
         rows = await self.fetchall("SELECT id, texto, tiempo, likes FROM posts_ig WHERE user_id = ? ORDER BY tiempo DESC", (user_id,))
         return [{"id": r[0], "texto": r[1], "tiempo": r[2], "likes": json.loads(r[3]) if r[3] else []} for r in rows]
 
-    async def add_like_ig(self, post_id: str, user_id: int):
+    async def add_like_ig(self, post_id: str, user_id: int) -> bool:
         row = await self.fetchone("SELECT likes FROM posts_ig WHERE id = ?", (post_id,))
         if row:
             likes = json.loads(row[0]) if row[0] else []
@@ -697,8 +928,7 @@ class Database:
 
     async def add_post_tw(self, user_id: int, texto: str) -> str:
         pid = ''.join(random.choices('0123456789abcdef', k=8))
-        await self.execute("INSERT INTO posts_tw (id, user_id, texto, tiempo) VALUES (?, ?, ?, ?)",
-                           (pid, user_id, texto, datetime.now().isoformat()))
+        await self.execute("INSERT INTO posts_tw (id, user_id, texto, tiempo) VALUES (?, ?, ?, ?)", (pid, user_id, texto, datetime.now().isoformat()))
         return pid
 
     async def follow_tw(self, follower: int, following: int):
@@ -718,10 +948,10 @@ class Database:
 
     async def add_post_fb(self, user_id: int, texto: str) -> str:
         pid = ''.join(random.choices('0123456789abcdef', k=8))
-        await self.execute("INSERT INTO posts_fb (id, user_id, texto, tiempo) VALUES (?, ?, ?, ?)",
-                           (pid, user_id, texto, datetime.now().isoformat()))
+        await self.execute("INSERT INTO posts_fb (id, user_id, texto, tiempo) VALUES (?, ?, ?, ?)", (pid, user_id, texto, datetime.now().isoformat()))
         return pid
 
+    # WhatsApp
     async def add_wa_contact(self, user_id: int, numero: str, nombre: str):
         await self.execute("INSERT OR IGNORE INTO wa_contactos (user_id, numero, nombre) VALUES (?, ?, ?)", (user_id, numero, nombre))
 
@@ -741,6 +971,7 @@ class Database:
         """, (user1, user2, user2, user1))
         return [{"de": r[0], "mensaje": r[1], "tiempo": r[2]} for r in rows]
 
+    # Precios drogas
     async def get_precio_droga(self, droga: str, es_compra: bool = True) -> int:
         row = await self.fetchone("SELECT precio_compra, precio_venta FROM precios_drogas WHERE droga = ?", (droga,))
         if row:
@@ -748,8 +979,10 @@ class Database:
         return PRECIOS_DROGAS_BASE[droga]["compra"] if es_compra else PRECIOS_DROGAS_BASE[droga]["venta"]
 
     async def actualizar_precio_droga(self, droga: str, cantidad_vendida: int):
+        # Lógica de precios dinámicos (placeholder)
         pass
 
+    # Mercado
     async def add_mercado(self, pub_id: str, vendedor: int, item: str, descripcion: str, precio: int):
         await self.execute("INSERT INTO mercado (id, vendedor, item, descripcion, precio, fecha) VALUES (?, ?, ?, ?, ?, ?)",
                            (pub_id, vendedor, item, descripcion, precio, datetime.now().isoformat()))
@@ -764,15 +997,19 @@ class Database:
     async def get_mercado_by_id(self, pub_id: str):
         return await self.fetchone("SELECT vendedor, item, precio FROM mercado WHERE id = ?", (pub_id,))
 
-    # Niveles
+    # Niveles (con cooldown de 14 días)
     async def add_xp(self, user_id: int, xp: int, tipo: str = "message"):
         now = datetime.now().isoformat()
-        row = await self.fetchone("SELECT xp, nivel, last_message_time, last_command_time, last_time_time FROM niveles WHERE user_id = ?", (user_id,))
+        row = await self.fetchone("SELECT xp, nivel, last_message_time, last_command_time, last_time_time, last_level_up FROM niveles WHERE user_id = ?", (user_id,))
         if not row:
-            await self.execute("INSERT INTO niveles (user_id, xp, nivel) VALUES (?, ?, 0)", (user_id, xp))
+            await self.execute("INSERT INTO niveles (user_id, xp, nivel, last_level_up) VALUES (?, ?, 0, ?)", (user_id, xp, now))
             xp_actual = xp
+            nivel_actual = 0
+            last_level_up = None
         else:
             xp_actual = row[0] + xp
+            nivel_actual = row[1]
+            last_level_up = row[5]  # puede ser None
             await self.execute("UPDATE niveles SET xp = ? WHERE user_id = ?", (xp_actual, user_id))
             if tipo == "message":
                 await self.execute("UPDATE niveles SET last_message_time = ? WHERE user_id = ?", (now, user_id))
@@ -782,22 +1019,32 @@ class Database:
                 await self.execute("UPDATE niveles SET last_time_time = ? WHERE user_id = ?", (now, user_id))
 
         nuevo_nivel = int((xp_actual ** 0.5) / 10)
-        if nuevo_nivel > (row[1] if row else 0):
-            await self.execute("UPDATE niveles SET nivel = ? WHERE user_id = ?", (nuevo_nivel, user_id))
-            return nuevo_nivel
+        if nuevo_nivel > nivel_actual:
+            # Verificar cooldown de 14 días
+            puede_subir = True
+            if last_level_up:
+                ultima_subida = datetime.fromisoformat(last_level_up)
+                dias_desde = (datetime.now() - ultima_subida).days
+                if dias_desde < DIAS_PARA_SUBIR_NIVEL:
+                    puede_subir = False
+            if puede_subir:
+                await self.execute("UPDATE niveles SET nivel = ?, last_level_up = ? WHERE user_id = ?", (nuevo_nivel, now, user_id))
+                return nuevo_nivel
+            else:
+                # No sube de nivel, pero se queda con el XP acumulado
+                return None
         return None
 
     async def get_nivel(self, user_id: int) -> dict:
-        row = await self._cached_fetchone("SELECT xp, nivel FROM niveles WHERE user_id = ?", (user_id,), ttl=30)
+        row = await self.fetchone("SELECT xp, nivel, last_level_up FROM niveles WHERE user_id = ?", (user_id,))
         if row:
-            return {"xp": row[0], "nivel": row[1]}
-        return {"xp": 0, "nivel": 0}
+            return {"xp": row[0], "nivel": row[1], "last_level_up": row[2]}
+        return {"xp": 0, "nivel": 0, "last_level_up": None}
 
     async def get_ranking_niveles(self, limit=10) -> List[Tuple[int, int, int]]:
-        rows = await self.fetchall("SELECT user_id, xp, nivel FROM niveles ORDER BY xp DESC LIMIT ?", (limit,))
-        return rows
+        return await self.fetchall("SELECT user_id, xp, nivel FROM niveles ORDER BY xp DESC LIMIT ?", (limit,))
 
-    # BLACKLIST
+    # Blacklist
     async def add_to_blacklist(self, user_id: int, reason: str, banned_by: int):
         await self.execute("INSERT OR IGNORE INTO blacklist (user_id, reason, banned_by, ban_date) VALUES (?, ?, ?, ?)",
                            (user_id, reason, banned_by, datetime.now().isoformat()))
@@ -813,7 +1060,46 @@ class Database:
         rows = await self.fetchall("SELECT user_id, reason, banned_by, ban_date FROM blacklist")
         return [{"user_id": r[0], "reason": r[1], "banned_by": r[2], "ban_date": r[3]} for r in rows]
 
-    # ANTIRAID: registrar acción
+    # Web users
+    async def create_web_user(self, username: str, password_hash: str, discord_id: int = None, is_staff: bool = False):
+        await self.execute("INSERT INTO web_users (username, password_hash, discord_id, is_staff, created_at) VALUES (?, ?, ?, ?, ?)",
+                           (username, password_hash, discord_id, is_staff, datetime.now().isoformat()))
+
+    async def get_web_user(self, username: str) -> dict:
+        row = await self.fetchone("SELECT id, username, password_hash, discord_id, is_staff FROM web_users WHERE username = ?", (username,))
+        if row:
+            return {"id": row[0], "username": row[1], "password_hash": row[2], "discord_id": row[3], "is_staff": bool(row[4])}
+        return None
+
+    async def get_web_user_by_id(self, user_id: int) -> dict:
+        row = await self.fetchone("SELECT id, username, password_hash, discord_id, is_staff FROM web_users WHERE id = ?", (user_id,))
+        if row:
+            return {"id": row[0], "username": row[1], "password_hash": row[2], "discord_id": row[3], "is_staff": bool(row[4])}
+        return None
+
+    async def get_web_user_by_discord(self, discord_id: int) -> dict:
+        row = await self.fetchone("SELECT id, username, password_hash, is_staff FROM web_users WHERE discord_id = ?", (discord_id,))
+        if row:
+            return {"id": row[0], "username": row[1], "password_hash": row[2], "is_staff": bool(row[3])}
+        return None
+
+    # PDA permissions
+    async def grant_pda_permission(self, user_id: int, granted_by: int):
+        await self.execute("INSERT OR REPLACE INTO pda_permissions (user_id, granted_by, granted_at) VALUES (?, ?, ?)",
+                           (user_id, granted_by, datetime.now().isoformat()))
+
+    async def revoke_pda_permission(self, user_id: int):
+        await self.execute("DELETE FROM pda_permissions WHERE user_id = ?", (user_id,))
+
+    async def has_pda_permission(self, user_id: int) -> bool:
+        row = await self.fetchone("SELECT 1 FROM pda_permissions WHERE user_id = ?", (user_id,))
+        return row is not None
+
+    async def get_pda_permissions(self) -> List[dict]:
+        rows = await self.fetchall("SELECT user_id, granted_by, granted_at FROM pda_permissions")
+        return [{"user_id": r[0], "granted_by": r[1], "granted_at": r[2]} for r in rows]
+
+    # Antiraid
     async def log_antiraid_action(self, user_id: int, action_type: str, guild_id: int):
         await self.execute("INSERT INTO antiraid_actions (user_id, action_type, timestamp, guild_id) VALUES (?, ?, ?, ?)",
                            (user_id, action_type, datetime.now().isoformat(), guild_id))
@@ -823,6 +1109,44 @@ class Database:
         row = await self.fetchone("SELECT COUNT(*) FROM antiraid_actions WHERE user_id = ? AND action_type = ? AND guild_id = ? AND timestamp > ?",
                                    (user_id, action_type, guild_id, cutoff.isoformat()))
         return row[0] if row else 0
+
+    # Emojis personalizables
+    async def set_emoji(self, key: str, emoji: str):
+        await self.execute("INSERT OR REPLACE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
+
+    async def get_emoji(self, key: str) -> str:
+        row = await self.fetchone("SELECT emoji FROM emoji_settings WHERE key = ?", (key,))
+        if row and row[0]:
+            return row[0]
+        return DEFAULT_EMOJIS.get(key, "⚙️")
+
+    async def get_all_emojis(self) -> dict:
+        rows = await self.fetchall("SELECT key, emoji FROM emoji_settings")
+        return {row[0]: row[1] for row in rows}
+
+    # Twitter DMs
+    async def add_twitter_dm(self, from_user: int, to_user: int, message: str):
+        await self.execute("INSERT INTO twitter_dms (from_user, to_user, message, sent_at) VALUES (?, ?, ?, ?)",
+                           (from_user, to_user, message, datetime.now().isoformat()))
+
+    async def get_twitter_dms(self, user1: int, user2: int) -> List[dict]:
+        rows = await self.fetchall("""
+            SELECT from_user, message, sent_at FROM twitter_dms
+            WHERE (from_user = ? AND to_user = ?) OR (from_user = ? AND to_user = ?)
+            ORDER BY sent_at ASC
+        """, (user1, user2, user2, user1))
+        return [{"from": r[0], "message": r[1], "sent_at": r[2]} for r in rows]
+
+    # Preparatorias de atracos (Pacific Bank)
+    async def get_heist_prep(self, user_id: int) -> dict:
+        row = await self.fetchone("SELECT pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep WHERE user_id = ?", (user_id,))
+        if row:
+            return {"pacific_prep1": bool(row[0]), "pacific_prep2": bool(row[1]), "pacific_prep3": bool(row[2])}
+        return {"pacific_prep1": False, "pacific_prep2": False, "pacific_prep3": False}
+
+    async def set_heist_prep(self, user_id: int, prep: str, value: bool):
+        await self.execute(f"INSERT INTO heist_prep (user_id, {prep}) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET {prep} = ?",
+                           (user_id, value, value))
 
 db = Database()
 
@@ -886,9 +1210,75 @@ def is_owner():
         return True
     return commands.check(predicate)
 
-# ====================================================
-# VISTA DE CONFIRMACIÓN
-# ====================================================
+def tiene_rol_o_owner(role_id):
+    async def predicate(ctx):
+        if ctx.author.id in OWNER_IDS:
+            return True
+        role = ctx.guild.get_role(role_id)
+        if role and role in ctx.author.roles:
+            return True
+        await ctx.send(embed=embed_error("No tienes el rol necesario para usar este comando."))
+        return False
+    return commands.check(predicate)
+
+def tiene_rol_iniciador():
+    return tiene_rol_o_owner(ROL_INICIADOR_ID)
+
+def tiene_rol_equipo_especial():
+    return tiene_rol_o_owner(ROL_EQUIPO_ESPECIAL_ID)
+
+def tiene_rol_dashboard():
+    return tiene_rol_o_owner(ROL_DASHBOARD_ID)
+
+def tiene_rol_lspd_operativo():
+    return tiene_rol_o_owner(ROL_LSPD_OPERATIVO_ID)
+
+# Permiso para usuario normal (cualquiera con el rol Usuario o sin restricción)
+def tiene_rol_usuario():
+    async def predicate(ctx):
+        if ctx.author.id in OWNER_IDS:
+            return True
+        role = ctx.guild.get_role(ROL_USUARIO_ID)
+        if role and role in ctx.author.roles:
+            return True
+        # Si no existe el rol, permitir a todos (fallback)
+        return True
+    return commands.check(predicate)
+
+# Decoradores específicos para trabajos (requieren el rol correspondiente)
+def tiene_rol_minero():
+    async def predicate(ctx):
+        if ctx.author.id in OWNER_IDS:
+            return True
+        role = ctx.guild.get_role(ROL_MINERO_ID)
+        if role and role in ctx.author.roles:
+            return True
+        await ctx.send(embed=embed_error("Necesitas el rol **MINERO** para usar este comando."))
+        return False
+    return commands.check(predicate)
+
+def tiene_rol_autobusero():
+    async def predicate(ctx):
+        if ctx.author.id in OWNER_IDS:
+            return True
+        role = ctx.guild.get_role(ROL_AUTOBUSERO_ID)
+        if role and role in ctx.author.roles:
+            return True
+        await ctx.send(embed=embed_error("Necesitas el rol **AUTOBUSERO** para usar este comando."))
+        return False
+    return commands.check(predicate)
+
+def tiene_rol_chatarrero():
+    async def predicate(ctx):
+        if ctx.author.id in OWNER_IDS:
+            return True
+        role = ctx.guild.get_role(ROL_CHATARRERO_ID)
+        if role and role in ctx.author.roles:
+            return True
+        await ctx.send(embed=embed_error("Necesitas el rol **CHATARRERO** para usar este comando."))
+        return False
+    return commands.check(predicate)
+
 class ConfirmView(discord.ui.View):
     def __init__(self, user_id: int, timeout: int = 30):
         super().__init__(timeout=timeout)
@@ -970,9 +1360,8 @@ class BaseCog(commands.Cog):
         await canal.send(embed=embed)
 
 # ====================================================
-# COGS (28 en total)
+# COG: Principal (comandos básicos, tienda, inventario, etc.)
 # ====================================================
-
 class Principal(BaseCog):
     @commands.hybrid_command(name='inv', description="Ver inventario")
     @check_ban()
@@ -985,29 +1374,17 @@ class Principal(BaseCog):
         if t not in ['personal', 'vehiculo', 'propiedad', 'negocios']:
             return await ctx.send(embed=embed_error("Tipos: personal, vehiculo, propiedad, negocios"))
         inv = await db.get_inventory(uid, t)
-        txt = "\n".join([f"📦 **{it}** x{c}" for it, c in sorted(inv.items())]) if inv else "*Vacío*"
+        txt = "\n".join([f"{await get_emoji('inventory')} **{it}** x{c}" for it, c in sorted(inv.items())]) if inv else "*Vacío*"
         embed = discord.Embed(title=f"{t.capitalize()}", description=txt, color=0x3498DB)
         economy = await db.get_economy(uid)
-        embed.set_footer(text=f"💰 Saldo: **${economy['cash']:,}** | 🏦 Banco: **${economy['bank']:,}**")
+        emoji_money = await get_emoji('money')
+        emoji_bank = await get_emoji('bank')
+        embed.set_footer(text=f"{emoji_money} Saldo: **${economy['cash']:,}** | {emoji_bank} Banco: **${economy['bank']:,}**")
         await ctx.send(embed=embed)
-
-    @commands.hybrid_command(name='balance', aliases=['bal'], description="Ver saldo")
-    @check_ban()
-    async def bal(self, ctx):
-        uid = ctx.author.id
-        eco = await db.get_economy(uid)
-        embed = discord.Embed(
-            title="💰 Tu Cartera",
-            description=(
-                f"**{ctx.author.name}**\n\n"
-                f"💵 En mano: **${eco['cash']:,}**\n"
-                f"🏦 En banco: **${eco['bank']:,}**\n"
-                f"💶 Dinero negro: **${eco['black_money']:,}** *(blanquea con `-blanquear`)*"
-            ),
-            color=0xFFD700
-        )
-        embed.set_thumbnail(url=ctx.author.display_avatar.url)
-        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='balance-top')
     async def bal_top(self, ctx, pagina: int = 1):
@@ -1039,44 +1416,182 @@ class Principal(BaseCog):
         saldo_autor = eco_autor['cash'] + eco_autor['bank']
         pos_autor = next((i+1 for i, (u, _) in enumerate(totales) if u == uid_autor), "?")
         embed = discord.Embed(
-            title="💵 TOP DINERO — Nova Agora RP",
+            title=f"{await get_emoji('money')} TOP DINERO — Nova Agora",
             description=desc or "*Sin datos*",
             color=0xFFD700,
             timestamp=datetime.now()
         )
         embed.add_field(name="📊 Tu posición:", value=f"```\n#{pos_autor} — ${saldo_autor:,}\n```", inline=False)
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
-        embed.set_footer(text=f"Página {pagina}/{total_pags}  ·  {len(totales)} usuarios  ·  NOVA AGORA RP")
+        embed.set_footer(text=f"Página {pagina}/{total_pags}  ·  {len(totales)} usuarios  ·  NOVA AGORA")
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.hybrid_command(name='tienda', description="Abrir tienda")
     @check_ban()
-    @check_encarcelado()
     async def shop(self, ctx):
         view = TiendaPaginator(ctx.author.id)
         await view.send(ctx)
 
     @commands.command(name='comprar')
     @check_ban()
-    @check_encarcelado()
-    async def comprar(self, ctx, item: str, cantidad: int = 1):
+    async def comprar(self, ctx, *, pedido: str):
         uid = ctx.author.id
-        item_norm = next((n for n, _, _ in TIENDA_ITEMS if n.lower() == item.lower()), None)
-        if not item_norm:
+        texto = pedido.strip()
+        if not texto:
+            return await ctx.send(embed=embed_error("Debes especificar el artículo a comprar."))
+
+        cantidad = 1
+        partes = texto.split()
+        if partes[0].isdigit() and len(partes) > 1:
+            cantidad = int(partes[0])
+            texto = " ".join(partes[1:])
+        elif partes[-1].isdigit() and len(partes) > 1:
+            cantidad = int(partes[-1])
+            texto = " ".join(partes[:-1])
+
+        item_data = TIENDA_ITEMS_DICT.get(texto.lower())
+        if not item_data:
             return await ctx.send(embed=embed_error("Artículo no encontrado."))
-        precio = next(pr for n, pr, _ in TIENDA_ITEMS if n == item_norm) * cantidad
+        item_norm, precio_unitario, emoji, desc = item_data
+        precio = precio_unitario * cantidad
         eco = await db.get_economy(uid)
-        if eco['cash'] < precio:
-            return await ctx.send(embed=embed_error(f"Necesitas **${precio:,}**. Tienes: **${eco['cash']:,}**"))
-        await db.add_cash(uid, -precio)
+        use_black = item_norm.lower() in ILLEGAL_TIENDA_ITEMS
+
+        if use_black:
+            if eco['black_money'] < precio:
+                return await ctx.send(embed=embed_error(f"Necesitas **${precio:,}** en dinero negro. Tienes: **${eco['black_money']:,}**"))
+            await db.add_black(uid, -precio)
+            metodo = "dinero negro"
+        else:
+            if eco['cash'] < precio:
+                return await ctx.send(embed=embed_error(f"Necesitas **${precio:,}**. Tienes: **${eco['cash']:,}**"))
+            await db.add_cash(uid, -precio)
+            metodo = "efectivo"
+
         await db.add_item(uid, "personal", item_norm, cantidad)
-        embed = discord.Embed(title="✅ Compra realizada", description=f"{cantidad}x {item_norm} por **${precio:,}**", color=0x00FF00)
+        embed = discord.Embed(
+            title="✅ Compra realizada",
+            description=f"{cantidad}x {item_norm} por **${precio:,}** ({metodo}).\n*{desc}*",
+            color=0x00FF00
+        )
         await ctx.send(embed=embed)
-        await self.log("COMPRA", f"{ctx.author.name} compró {cantidad}x {item_norm} por ${precio:,}")
+        await self.log("COMPRA", f"{ctx.author.name} compró {cantidad}x {item_norm} por ${precio:,} ({metodo})")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='comprar-licencia')
+    @check_ban()
+    async def comprar_licencia(self, ctx, *, pedido: str = None):
+        if not pedido:
+            return await ctx.send(embed=embed_help(
+                "comprar-licencia",
+                "Compra una licencia directamente desde la tienda.",
+                "-comprar-licencia <tipo_licencia> [cantidad]",
+                "-comprar-licencia coche 1\n-comprar-licencia armas_cortas",
+                ""
+            ))
+
+        partes = pedido.split()
+        cantidad = 1
+        if partes[-1].isdigit():
+            cantidad = int(partes[-1])
+            partes = partes[:-1]
+
+        tipo = " ".join(partes).strip().lower()
+        if cantidad <= 0:
+            return await ctx.send(embed=embed_error("La cantidad debe ser al menos 1."))
+        if cantidad != 1:
+            return await ctx.send(embed=embed_error("Solo puedes comprar una licencia por comando."))
+
+        aliases = {
+            "camion": ("Licencia de camión", "conduccion", "camion"),
+            "coche": ("Licencia de coche", "conduccion", "coche"),
+            "moto": ("Licencia de moto", "conduccion", "moto"),
+            "armas blancas": ("Licencia de armas blancas", "armas", "licencia_blanca"),
+            "armas cortas": ("Licencia de armas cortas", "armas", "licencia_corta"),
+            "licencia de camión": ("Licencia de camión", "conduccion", "camion"),
+            "licencia de coche": ("Licencia de coche", "conduccion", "coche"),
+            "licencia de moto": ("Licencia de moto", "conduccion", "moto"),
+            "licencia de armas blancas": ("Licencia de armas blancas", "armas", "licencia_blanca"),
+            "licencia de armas cortas": ("Licencia de armas cortas", "armas", "licencia_corta"),
+        }
+
+        if tipo not in aliases:
+            return await ctx.send(embed=embed_error("Tipo de licencia no válido. Usa: coche, moto, camion, armas blancas, armas cortas."))
+
+        item_name, categoria, clave = aliases[tipo]
+        precio_unitario = TIENDA_ITEMS_DICT[item_name.lower()][1]
+        precio_total = precio_unitario * cantidad
+        eco = await db.get_economy(ctx.author.id)
+        if eco['cash'] < precio_total:
+            return await ctx.send(embed=embed_error(f"Necesitas **${precio_total:,}**. Tienes: **${eco['cash']:,}**"))
+
+        await db.add_cash(ctx.author.id, -precio_total)
+        if categoria == "conduccion":
+            await db.dar_licencia_conduccion(ctx.author.id, clave)
+            descripcion = f"Has comprado {cantidad}x {item_name} y ahora tienes la licencia de {clave}."
+        else:
+            await db.dar_licencia(ctx.author.id, clave)
+            descripcion = f"Has comprado {cantidad}x {item_name} y ahora tienes la licencia {clave}."
+
+        embed = discord.Embed(
+            title="✅ Licencia comprada",
+            description=f"{descripcion}\nCosto: **${precio_total:,}**",
+            color=0x00FF00
+        )
+        await ctx.send(embed=embed)
+        await self.log("COMPRA_LICENCIA", f"{ctx.author.name} compró {cantidad}x {item_name} por ${precio_total:,}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='licencia')
+    @check_ban()
+    async def licencia(self, ctx, usuario: discord.Member = None):
+        if usuario is None:
+            usuario = ctx.author
+
+        uid = usuario.id
+        dni = await db.get_dni(uid)
+        licencias_armas = await db.get_licencias(uid)
+        licencias_conduccion = await db.get_licencias_conduccion(uid)
+
+        txt_dni = "✅ Registrado" if dni else "❌ No registrado"
+        if usuario != ctx.author:
+            txt_dni = f"{txt_dni} ({usuario.display_name})"
+
+        txt_armas = "\n".join([
+            f"{'✅' if tiene else '❌'} {lic.replace('_', ' ').title()}"
+            for lic, tiene in licencias_armas.items()
+        ]) if licencias_armas else "Ninguna"
+        txt_conduccion = "\n".join([
+            f"✅ {lic['tipo'].title()} (obtenida: {lic['fecha_obtencion'][:10]})"
+            for lic in licencias_conduccion
+        ]) if licencias_conduccion else "Ninguna"
+
+        embed = discord.Embed(
+            title="📜 Licencias",
+            description=f"DNI: {txt_dni}",
+            color=0x3498DB
+        )
+        embed.add_field(name="🚗 Licencias de conducción", value=txt_conduccion, inline=False)
+        embed.add_field(name="🔪 Licencias de armas", value=txt_armas, inline=False)
+        embed.set_footer(text="Usa -comprar-licencia <tipo> [cantidad] para comprar una licencia directamente")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='use')
     @check_ban()
-    @check_encarcelado()
     async def use_item(self, ctx, *, item: str):
         uid = ctx.author.id
         if item.lower() in ('dinero negro', 'dinero_negro', 'blackmoney'):
@@ -1101,8 +1616,7 @@ class Principal(BaseCog):
         item_real = next((k for k in inv if k.lower() == item.lower()), None)
         if not item_real:
             return await ctx.send(embed=embed_error("No tienes ese artículo."))
-        
-        # Manejo especial para licencias
+
         if item_real.startswith("Licencia de"):
             if "armas blancas" in item_real.lower():
                 await db.dar_licencia(uid, "licencia_blanca")
@@ -1127,7 +1641,6 @@ class Principal(BaseCog):
             await self.log("USE_LICENCIA", f"{ctx.author.name} usó {item_real}")
             return
 
-        # Efectos normales para otros items
         efectos = {
             "sprunk": "bebe un Sprunk refrescante.", "ecola": "bebe una E-Cola.", "agua": "bebe agua y se hidrata.",
             "hotdog": "se come un hotdog.", "burger": "devora una hamburguesa.", "pizza": "se come una pizza.",
@@ -1146,18 +1659,6 @@ class Principal(BaseCog):
             "traje ignifugo": "se pone el traje ignífugo.", "hacha": "empuña el hacha.",
             "manguera": "usa la manguera.", "placa policial": "muestra su placa policial.",
             "kit médico": "usa el kit médico para curar heridas graves.",
-            # Nuevos items (armas, etc.) no tienen efecto especial por ahora
-            "hacha": "empuña el hacha con fuerza.", "machete": "blande el machete.", "puño americano": "se coloca el puño americano.",
-            "sns": "saca la pistola SNS.", "normal": "saca la pistola normal.", "vintage": "saca la pistola vintage.",
-            "calibre .50": "prepara la pistola Calibre .50.", "pesada": "saca la pistola pesada.",
-            "revólver pesado": "carga el revólver pesado.", "perforante": "prepara la pistola perforante.",
-            "mini smg": "saca la Mini SMG.", "micro uzi": "saca la Micro Uzi.", "subfusil": "saca el subfusil.",
-            "subfusil de asalto": "prepara el subfusil de asalto.", "adp": "saca el ADP.",
-            "mosquete": "prepara el mosquete.", "escopeta recortada": "saca la escopeta recortada.",
-            "miniak47": "saca la MiniAK47.", "escopeta corredera": "prepara la escopeta corredera.",
-            "ak47": "empuña la AK47.", "rifle bullpup": "prepara el rifle bullpup.",
-            "coctel molotov": "prepara un coctel molotov.", "granada casera": "prepara una granada casera.",
-            "granada": "prepara una granada.", "c4": "prepara el explosivo C4."
         }
         accion = efectos.get(item_real.lower(), f"usa {item_real}.")
         await db.remove_item(uid, "personal", item_real, 1)
@@ -1166,12 +1667,49 @@ class Principal(BaseCog):
         embed.set_author(name="🎮 Acción de Item", icon_url=ctx.author.display_avatar.url)
         await ctx.send(embed=embed)
         await self.log("USE_ITEM", f"{ctx.author.name} usó {item_real}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='blanquear', aliases=['lavar'])
     @check_ban()
-    @check_encarcelado()
     async def blanquear(self, ctx):
         await self.use_item(ctx, item="dinero negro")
+
+    @commands.command(name='tienda-ilegal', aliases=['ilegal-shop', 'tiendailegal'])
+    @check_ban()
+    async def tienda_ilegal(self, ctx):
+        ITEMS_ILEGALES = [
+            ("Dispositivo de hackeo", 1800, "🛠️", "Permite hackear sistemas de seguridad."),
+            ("Termita", 700, "🔥", "Funde cerraduras y cajas fuertes."),
+            ("Tarjeta de crédito", 120, "💳", "Clonada, para compras ilegales."),
+            ("Gas lacrimógeno", 450, "😷", "Control de masas."),
+            ("Pasamontañas", 75, "😷", "Oculta tu identidad."),
+            ("Bolsas Atraco", 300, "🛍️", "Transporta dinero sucio."),
+            ("Ganzúa", 80, "🔑", "Abre cerraduras sencillas."),
+            ("Mascaras", 50, "🎭", "Disfraza tu rostro."),
+        ]
+
+        desc = ""
+        for nombre, precio, emoji, desc_item in ITEMS_ILEGALES:
+            desc += f"{emoji} **{nombre}** — **${precio}**\n*{desc_item}*\n"
+
+        embed = discord.Embed(
+            title="🔓 TIENDA ILEGAL — Operación Encubierta",
+            description=desc,
+            color=0x1a1a1a
+        )
+        embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3124/3124564.png")
+        embed.set_footer(text="⚠️ Usa -comprar <item> [cantidad] para adquirir | TOTALMENTE ANÓNIMO")
+        embed.add_field(name="⚠️ ADVERTENCIA", value="Estos items son para actividades ilegales. Trae dinero negro. 💶", inline=False)
+
+        await ctx.send(embed=embed)
+        await self.log("TIENDA_ILEGAL", f"{ctx.author.name} abrió la tienda ilegal")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='intercambio')
     @check_ban()
@@ -1195,6 +1733,10 @@ class Principal(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("INTERCAMBIO", f"{ctx.author.name} dio {cantidad}x {item_real} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='mover')
     @check_ban()
@@ -1211,17 +1753,25 @@ class Principal(BaseCog):
         await db.remove_item(uid, o, item, cantidad)
         await db.add_item(uid, d, item, cantidad)
         await ctx.send(embed=embed_success("✅ Movido", f"{cantidad}x {item} de {o} a {d}."))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='trabajo')
     @check_encarcelado()
     async def trabajo_cmd(self, ctx):
-        view = TrabajoView()
         embed = discord.Embed(
-            title="⚙️ SISTEMA DE TRABAJO",
-            description="✅ **Entrar a trabajar** — Inicia tu turno\n⏹️ **Salir del trabajo** — Cobra $50/min",
+            title=f"{await get_emoji('work')} SISTEMA DE TRABAJO",
+            description="✅ **Entrar a trabajar** — Simula tu jornada laboral (sin remuneración, solo roleplay)\n⏹️ **Salir del trabajo** — Finaliza tu turno",
             color=discord.Color.blue()
         )
+        view = TrabajoView()
         await ctx.send(embed=embed, view=view)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
 class TrabajoView(discord.ui.View):
     trabajo_data = {}
@@ -1237,7 +1787,7 @@ class TrabajoView(discord.ui.View):
         self.trabajo_data[uid] = {'estado': 'trabajando', 'inicio': datetime.now()}
         embed = discord.Embed(
             title="✅ ¡BIENVENIDO AL TRABAJO!",
-            description="Ganas $50/min\nPulsa **Salir** cuando termines.",
+            description="Estás en horario laboral (roleplay).\nPulsa **Salir** cuando termines tu jornada.",
             color=discord.Color.green()
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
@@ -1249,15 +1799,13 @@ class TrabajoView(discord.ui.View):
         if uid not in self.trabajo_data or self.trabajo_data[uid]['estado'] != 'trabajando':
             return await interaction.response.send_message(embed=embed_error("Primero debes entrar a trabajar."), ephemeral=True)
         minutos = max(1, (datetime.now() - self.trabajo_data[uid]['inicio']).total_seconds() / 60)
-        sueldo = int(minutos * 50)
-        await db.add_cash(int(uid), sueldo)
-        del self.trabajo_data[uid]
         embed = discord.Embed(
-            title="💰 ¡FIN DEL TURNO!",
-            description=f"Tiempo: {minutos:.1f} min\nSueldo: **${sueldo:,}**",
+            title="⌛ FIN DEL TURNO",
+            description=f"Has trabajado durante {minutos:.1f} minutos. ¡Gracias por tu esfuerzo! (Sin remuneración económica)",
             color=discord.Color.gold()
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        del self.trabajo_data[uid]
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class TiendaPaginator(discord.ui.View):
@@ -1266,21 +1814,21 @@ class TiendaPaginator(discord.ui.View):
         self.user_id = user_id
         self.items_por_pagina = items_por_pagina
         self.pagina_actual = 0
-        self.total_items = len(TIENDA_ITEMS)
+        self.total_items = len(TIENDA_ITEMS_FULL)
         self.total_paginas = (self.total_items + items_por_pagina - 1) // items_por_pagina
         self.message = None
         self.update_buttons()
 
-    def get_embed(self):
+    async def get_embed(self):
+        emoji_shop = await get_emoji('shop')
         inicio = self.pagina_actual * self.items_por_pagina
         fin = min(inicio + self.items_por_pagina, self.total_items)
-        items_pagina = TIENDA_ITEMS[inicio:fin]
-
+        items_pagina = TIENDA_ITEMS_FULL[inicio:fin]
         desc = ""
-        for nombre, precio, emoji in items_pagina:
-            desc += f"{emoji} **{nombre}** — **${precio}**\n"
+        for nombre, precio, emoji, descripcion in items_pagina:
+            desc += f"「{emoji}」 **{nombre}** — **${precio}**\n*{descripcion}*\n\n"
         embed = discord.Embed(
-            title=f"🏪 TIENDA RP — Página {self.pagina_actual + 1}/{self.total_paginas}",
+            title=f"{emoji_shop} TIENDA NOVA AGORA — Página {self.pagina_actual + 1}/{self.total_paginas}",
             description=desc if desc else "*No hay items en esta página*",
             color=0xFFD700
         )
@@ -1309,7 +1857,8 @@ class TiendaPaginator(discord.ui.View):
                 pass
 
     async def send(self, ctx):
-        self.message = await ctx.send(embed=self.get_embed(), view=self)
+        embed = await self.get_embed()
+        self.message = await ctx.send(embed=embed, view=self)
 
 class TiendaBoton(discord.ui.Button):
     def __init__(self, label, pagina):
@@ -1320,7 +1869,8 @@ class TiendaBoton(discord.ui.Button):
         view = self.view
         view.pagina_actual = self.pagina
         view.update_buttons()
-        await interaction.response.edit_message(embed=view.get_embed(), view=view)
+        embed = await view.get_embed()
+        await interaction.response.edit_message(embed=embed, view=view)
 
 class TiendaBotonCerrar(discord.ui.Button):
     def __init__(self):
@@ -1330,9 +1880,9 @@ class TiendaBotonCerrar(discord.ui.Button):
         await interaction.response.edit_message(content="Tienda cerrada.", embed=None, view=None)
         self.view.stop()
 
-# ------------------------------------------------
+# ====================================================
 # COG: Drogas
-# ------------------------------------------------
+# ====================================================
 class Drogas(BaseCog):
     EMOJIS_DROGA = {"Marihuana": "🌿", "Cocaína": "❄️", "Meta": "💊", "Éxtasis": "🔵", "Heroína": "💉"}
 
@@ -1340,7 +1890,7 @@ class Drogas(BaseCog):
     @check_ban()
     @check_encarcelado()
     async def droga(self, ctx):
-        embed = discord.Embed(title="💊 Mercado de Drogas (Precios Dinámicos)", color=discord.Color.dark_green())
+        embed = discord.Embed(title=f"{await get_emoji('drugs')} Mercado de Drogas (Precios Dinámicos)", color=discord.Color.dark_green())
         for droga in self.EMOJIS_DROGA:
             precio_compra = await db.get_precio_droga(droga, True)
             precio_venta = await db.get_precio_droga(droga, False)
@@ -1351,6 +1901,10 @@ class Drogas(BaseCog):
             )
         embed.set_footer(text="Precios dinámicos según oferta/demanda")
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @droga.command(name='comprar')
     @check_ban()
@@ -1372,6 +1926,10 @@ class Drogas(BaseCog):
         embed = discord.Embed(title="✅ Compra realizada", description=f"{cantidad}x {tipo_norm} por **${costo:,}**", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("COMPRA_DROGA", f"{ctx.author.name}: {cantidad}x {tipo_norm} -> -${costo:,}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @droga.command(name='vender')
     @check_ban()
@@ -1392,10 +1950,14 @@ class Drogas(BaseCog):
         embed = discord.Embed(title="✅ Venta realizada", description=f"{cantidad}x {tipo_norm} por **${ganancia:,}**", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("VENTA_DROGA", f"{ctx.author.name}: {cantidad}x {tipo_norm} -> +${ganancia:,}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
+# ====================================================
 # COG: Vehiculos
-# ------------------------------------------------
+# ====================================================
 class Vehiculos(BaseCog):
     @commands.group(name='vehiculo', aliases=['coche', 'car'], invoke_without_command=True)
     @check_ban()
@@ -1404,8 +1966,8 @@ class Vehiculos(BaseCog):
         uid = ctx.author.id
         vehiculos = await db.get_vehiculos(uid)
         if not vehiculos:
-            return await ctx.send(embed=embed_info("🚗 Vehículos", "No tienes vehículos."))
-        embed = discord.Embed(title="🚗 MIS VEHÍCULOS", color=discord.Color.blue())
+            return await ctx.send(embed=embed_info(f"{await get_emoji('vehicle')} Vehículos", "No tienes vehículos."))
+        embed = discord.Embed(title=f"{await get_emoji('vehicle')} MIS VEHÍCULOS", color=discord.Color.blue())
         for mat, info in vehiculos.items():
             seguro = "✅" if info['seguro'] else "❌"
             itv = "✅" if info['itv'] and datetime.fromisoformat(info['itv']) > datetime.now() else "❌"
@@ -1415,6 +1977,10 @@ class Vehiculos(BaseCog):
                 inline=False
             )
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @vehiculo.command(name='conducir')
     @check_ban()
@@ -1439,6 +2005,10 @@ class Vehiculos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("VEHICULO_CONDUCIR", f"{ctx.author.name}: {info['modelo']} ({matricula}), gas: {nuevo_comb}%")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @vehiculo.command(name='repostar')
     @check_ban()
@@ -1468,6 +2038,10 @@ class Vehiculos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("VEHICULO_REPOSTAR", f"{ctx.author.name}: {info['modelo']}, +{necesarios}%, ${costo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @vehiculo.command(name='itv')
     @check_ban()
@@ -1491,10 +2065,14 @@ class Vehiculos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("VEHICULO_ITV", f"{ctx.author.name}: {matricula}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
+# ====================================================
 # COG: Armas
-# ------------------------------------------------
+# ====================================================
 class Armas(BaseCog):
     @commands.group(name='arma', invoke_without_command=True)
     @check_ban()
@@ -1503,49 +2081,43 @@ class Armas(BaseCog):
         uid = ctx.author.id
         licencias = await db.get_licencias(uid)
         armas = await db.get_armas_equipadas(uid)
-        embed = discord.Embed(title="🔫 SISTEMA DE ARMAS", color=discord.Color.dark_red())
+        embed = discord.Embed(title=f"{await get_emoji('weapon')} SISTEMA DE ARMAS", color=discord.Color.dark_red())
         txt_lic = "\n".join([f"{'✅' if v else '❌'} {l.replace('_', ' ').title()}" for l, v in licencias.items()]) if licencias else "Ninguna"
         embed.add_field(name="📋 Licencias:", value=txt_lic, inline=False)
         txt_armas = "\n".join([f"🔫 {a} — Dur: {info['durabilidad']}% | Munición: {info['municion']}" for a, info in armas.items()]) if armas else "Ninguna"
         embed.add_field(name="🔫 Armas equipadas:", value=txt_armas, inline=False)
-        embed.add_field(
-            name="Comandos:",
-            value="`-arma equipar <tipo>`\n`-arma disparar`\n`-arma recargar <tipo> <cantidad>`",
-            inline=False
-        )
+        embed.add_field(name="Comandos:", value="`-arma equipar <tipo>`\n`-arma disparar`\n`-arma recargar <tipo> <cantidad>`", inline=False)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @arma.command(name='equipar')
     @check_ban()
     @check_encarcelado()
     async def arma_equipar(self, ctx, tipo_arma: str):
         tipo = tipo_arma.capitalize()
-        # Verificar si el arma está en el inventario personal
         inv = await db.get_inventory(ctx.author.id, "personal")
         if tipo not in inv:
             return await ctx.send(embed=embed_error(f"No tienes {tipo} en tu inventario."))
-        # Verificar licencia
         licencias = await db.get_licencias(ctx.author.id)
-        # Mapeo de tipos de arma a licencia necesaria
         licencia_necesaria = None
         if tipo in ["Hacha", "Machete", "Puño americano"]:
             licencia_necesaria = "licencia_blanca"
         elif tipo in ["SNS", "Normal", "Vintage", "Calibre .50", "Pesada", "Revólver Pesado", "Perforante", "9mm"]:
             licencia_necesaria = "licencia_corta"
         elif tipo in ["Mini SMG", "Micro Uzi", "Subfusil", "Subfusil de asalto", "ADP"]:
-            licencia_necesaria = "licencia_corta"  # o una específica
+            licencia_necesaria = "licencia_corta"
         elif tipo in ["Mosquete", "Escopeta recortada", "MiniAk47", "Escopeta corredera", "Ak47", "Rifle bullpup"]:
-            licencia_necesaria = "licencia_rifle"  # o largas
+            licencia_necesaria = "licencia_rifle"
         else:
-            # Para armas existentes
             for arma_tipo, datos in TIPOS_ARMAS.items():
                 if arma_tipo.lower() == tipo.lower():
                     licencia_necesaria = datos.get("licencia")
                     break
         if licencia_necesaria and not licencias.get(licencia_necesaria, False):
             return await ctx.send(embed=embed_error("No tienes la licencia necesaria para equipar esta arma."))
-        # Si no hay licencia específica, permitir (ejemplo: armas sin licencia)
-        # Añadir a armas_equipadas con durabilidad y munición por defecto
         durabilidad = 100
         municion = 0
         await db.execute("INSERT OR REPLACE INTO armas_equipadas (user_id, arma, durabilidad, municion) VALUES (?, ?, ?, ?)",
@@ -1553,6 +2125,10 @@ class Armas(BaseCog):
         embed = discord.Embed(title="🔫 ARMA EQUIPADA", description=f"**{tipo}** equipada.", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("ARMA_EQUIPAR", f"{ctx.author.name}: {tipo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @arma.command(name='disparar')
     @check_ban()
@@ -1571,42 +2147,41 @@ class Armas(BaseCog):
         nueva_durabilidad = max(0, durabilidad - random.randint(1, 3))
         await db.execute("UPDATE armas_equipadas SET municion = ?, durabilidad = ? WHERE user_id = ? AND arma = ?",
                          (nueva_municion, nueva_durabilidad, uid, arma))
-        embed = discord.Embed(
-            title="💥 ¡DISPARO!",
-            description=f"**{ctx.author.display_name}** dispara con **{arma}**\nMunición restante: {nueva_municion}\nDurabilidad: {nueva_durabilidad}%",
-            color=0xFFA500
-        )
+        embed = discord.Embed(title="💥 ¡DISPARO!", description=f"**{ctx.author.display_name}** dispara con **{arma}**\nMunición restante: {nueva_municion}\nDurabilidad: {nueva_durabilidad}%", color=0xFFA500)
         await ctx.send(embed=embed)
         await self.log("ARMA_DISPARAR", f"{ctx.author.name}: {arma}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @arma.command(name='recargar')
     @check_ban()
     @check_encarcelado()
     async def arma_recargar(self, ctx, tipo_arma: str, cantidad: int):
         tipo = tipo_arma.capitalize()
-        # Verificar si el arma está equipada
         row = await db.fetchone("SELECT arma FROM armas_equipadas WHERE user_id = ? AND arma = ?", (ctx.author.id, tipo))
         if not row:
             return await ctx.send(embed=embed_error("Esa arma no está equipada."))
-        # Precio de munición genérico
         precio_por_bala = 10
         costo = precio_por_bala * cantidad
         eco = await db.get_economy(ctx.author.id)
         if eco['cash'] < costo:
             return await ctx.send(embed=embed_error(f"Necesitas **${costo:,}**."))
         await db.add_cash(ctx.author.id, -costo)
-        await db.execute("UPDATE armas_equipadas SET municion = municion + ? WHERE user_id = ? AND arma = ?", (cantidad, ctx.author.id, tipo))
-        embed = discord.Embed(
-            title="🔫 ARMA RECARGADA",
-            description=f"{tipo} recargada con {cantidad} balas.\nCosto: **${costo:,}**",
-            color=0x00FF00
-        )
+        await db.execute("UPDATE armas_equipadas SET municion = municion + ? WHERE user_id = ? AND arma = ?",
+                         (cantidad, ctx.author.id, tipo))
+        embed = discord.Embed(title="🔫 ARMA RECARGADA", description=f"{tipo} recargada con {cantidad} balas.\nCosto: **${costo:,}**", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("ARMA_RECARGAR", f"{ctx.author.name}: {tipo}, +{cantidad} balas")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
+# ====================================================
 # COG: Mercado
-# ------------------------------------------------
+# ====================================================
 class Mercado(BaseCog):
     @commands.group(name='mercado', invoke_without_command=True)
     @check_ban()
@@ -1626,6 +2201,10 @@ class Mercado(BaseCog):
             )
         embed.set_footer(text="Usa -mercado comprar <id> para comprar")
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @mercado.command(name='publicar')
     @check_ban()
@@ -1648,6 +2227,10 @@ class Mercado(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("MERCADO_PUBLICAR", f"{ctx.author.name}: {item_real} por ${precio:,}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @mercado.command(name='comprar')
     @check_ban()
@@ -1669,6 +2252,10 @@ class Mercado(BaseCog):
         embed = discord.Embed(title="✅ Compra realizada", description=f"Has comprado {item} por **${precio:,}**", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("MERCADO_COMPRA", f"{ctx.author.name} compró {item} a {vendedor} por ${precio:,}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @mercado.command(name='mispub')
     @check_ban()
@@ -1680,6 +2267,10 @@ class Mercado(BaseCog):
         for r in rows:
             embed.add_field(name=f"📦 ID: `{r[0]}` — {r[1]}", value=f"💵 **${r[2]:,}**\n📝 {r[3][:30]}...", inline=False)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @mercado.command(name='cancelar')
     @check_ban()
@@ -1693,10 +2284,14 @@ class Mercado(BaseCog):
         await db.remove_mercado(pub_id)
         embed = discord.Embed(title="✅ Publicación cancelada", description=f"Recuperaste {pub[1]}.", color=0x00FF00)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
+# ====================================================
 # COG: Casino
-# ------------------------------------------------
+# ====================================================
 class Casino(BaseCog):
     async def _validar_apuesta(self, uid, apuesta) -> Optional[str]:
         if apuesta <= 0:
@@ -1722,7 +2317,7 @@ class Casino(BaseCog):
     @check_encarcelado()
     async def casino(self, ctx):
         embed = discord.Embed(
-            title="🎰 Golden Coast · Legendary Casino's",
+            title=f"{await get_emoji('casino')} Golden Coast · Legendary Casino's",
             description=(
                 f"**Apuestas:** **${APUESTA_MIN:,}** — **${APUESTA_MAX:,}**\n\n"
                 "`-casino slots <apuesta>` — Tragaperras\n"
@@ -1735,8 +2330,12 @@ class Casino(BaseCog):
             color=discord.Color.gold()
         )
         eco = await db.get_economy(ctx.author.id)
-        embed.set_footer(text=f"💰 Saldo: **${eco['cash']:,}**  ·  NOVA AGORA RP")
+        embed.set_footer(text=f"💰 Saldo: **${eco['cash']:,}**  ·  NOVA AGORA")
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @casino.command(name='ruleta-info')
     async def ruleta_info(self, ctx):
@@ -1752,6 +2351,10 @@ class Casino(BaseCog):
             color=discord.Color.gold()
         )
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @casino.command(name='racha')
     async def ver_racha(self, ctx):
@@ -1760,8 +2363,17 @@ class Casino(BaseCog):
         if racha['racha'] == 0:
             return await ctx.send(embed=embed_info("📊 Racha", "Sin partidas aún."))
         tipo_txt = "victorias 🏆" if racha['tipo'] == "win" else "derrotas 💀"
-        embed = discord.Embed(title="📊 Tu racha", description=f"Racha: **{racha['racha']} {tipo_txt}**", color=discord.Color.green() if racha['tipo'] == "win" else discord.Color.red())
+        color = discord.Color.green() if racha['tipo'] == "win" else discord.Color.red()
+        embed = discord.Embed(
+            title="📊 Tu racha",
+            description=f"Racha: **{racha['racha']} {tipo_txt}**",
+            color=color
+        )
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @casino.command(name='slots')
     async def slots(self, ctx, apuesta: int):
@@ -1769,16 +2381,25 @@ class Casino(BaseCog):
         err = await self._validar_apuesta(uid, apuesta)
         if err:
             return await ctx.send(embed=embed_error(err))
+
         racha = await db.get_racha(uid)
         mult_racha = 1.0
         if racha['tipo'] == "win" and racha['racha'] >= 3:
-            mult_racha = 1.75 if racha['racha'] >= 5 else 2.5 if racha['racha'] >= 7 else 3.0
+            mult_racha = 3.0 if racha['racha'] >= 7 else (2.5 if racha['racha'] >= 5 else 1.75)
 
         await db.add_cash(uid, -apuesta)
+
         SIMBOLOS = ["🍒", "🍋", "🍊", "🍇", "⭐", "💎", "7️⃣", "🃏"]
         MULTS = {"💎": 15, "7️⃣": 10, "⭐": 7, "🍇": 5, "🍊": 4, "🍋": 3, "🍒": 2, "🃏": 20}
-        msg = await self._animacion_casino(ctx, ["🎰  GIRANDO...", "🎰  [ 🎲 | ??? | ??? | ??? ]",
-                                                 "🎰  [ 🍒 | 🎲  | ??? | ??? ]", "🎰  [ 🍒 | 🍋  | 🎲  | ??? ]", "🎰  Parando..."])
+
+        msg = await self._animacion_casino(ctx, [
+            "🎰  GIRANDO...",
+            "🎰  [ 🎲 | ??? | ??? | ??? ]",
+            "🎰  [ 🍒 | 🎲  | ??? | ??? ]",
+            "🎰  [ 🍒 | 🍋  | 🎲  | ??? ]",
+            "🎰  Parando...",
+        ])
+
         res = [random.choice(SIMBOLOS) for _ in range(4)]
         no_joker = [s for s in res if s != "🃏"]
         jokers = res.count("🃏")
@@ -1789,40 +2410,38 @@ class Casino(BaseCog):
             ganancia = int(apuesta * mult_fin)
             await db.add_cash(uid, ganancia)
             await db.actualizar_racha(uid, True)
-            titulo = "¡¡MEGA JACKPOT!! 🃏×4"
-            color = 0xFFD700
-            resultado = f"+${ganancia-apuesta:,}"
+            titulo, color, resultado = "¡¡MEGA JACKPOT!! 🃏×4", 0xFFD700, f"+${ganancia - apuesta:,}"
         elif len(set(no_joker)) == 1 and len(no_joker) >= 3:
             sym = no_joker[0]
             mult_fin = MULTS.get(sym, 3) * mult_racha * (1 + jokers * 0.5)
             ganancia = int(apuesta * mult_fin)
             await db.add_cash(uid, ganancia)
             await db.actualizar_racha(uid, True)
-            titulo = f"¡¡JACKPOT!! {sym}×{4-jokers}" + ("🃏" * jokers if jokers else "")
-            color = 0xFFD700
-            resultado = f"+${ganancia-apuesta:,}"
+            titulo, color, resultado = f"¡¡JACKPOT!! {sym}×{4 - jokers}" + ("🃏" * jokers if jokers else ""), 0xFFD700, f"+${ganancia - apuesta:,}"
         elif jokers >= 2:
             ganancia = int(apuesta * 3 * mult_racha)
             await db.add_cash(uid, ganancia)
             await db.actualizar_racha(uid, True)
-            titulo = "¡Doble comodín! 🃏🃏"
-            color = 0x00FF00
-            resultado = f"+${ganancia-apuesta:,}"
+            titulo, color, resultado = "¡Doble comodín! 🃏🃏", 0x00FF00, f"+${ganancia - apuesta:,}"
         elif len(set(no_joker)) <= 2 and (len(no_joker) + jokers) >= 3:
             ganancia = int((apuesta // 2) * mult_racha)
             await db.add_cash(uid, ganancia)
             await db.actualizar_racha(uid, True)
-            titulo = "¡Par!"
-            color = 0x00FF00
-            resultado = f"+${ganancia-apuesta:,}"
+            titulo, color, resultado = "¡Par!", 0x00FF00, f"+${ganancia - apuesta:,}"
         else:
             await db.actualizar_racha(uid, False)
-            titulo = "Sin suerte..."
-            color = 0xFF0000
-            resultado = f"-${apuesta:,}"
-        embed = discord.Embed(title=f"🎰 {titulo}", description=f"**{disp}**\n{resultado}", color=color)
+            titulo, color, resultado = "Sin suerte...", 0xFF0000, f"-${apuesta:,}"
+        embed = discord.Embed(
+            title=f"🎰 {titulo}",
+            description=f"**{disp}**\n{resultado}",
+            color=color
+        )
         await msg.edit(content=None, embed=embed)
         await self.log("CASINO_SLOTS", f"{ctx.author.name}: ${apuesta} → {disp}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @casino.command(name='ruleta')
     async def ruleta(self, ctx, apuesta: int, *, tipo: str):
@@ -1830,69 +2449,83 @@ class Casino(BaseCog):
         err = await self._validar_apuesta(uid, apuesta)
         if err:
             return await ctx.send(embed=embed_error(err))
+
         tipo_norm = tipo.lower().strip()
-        tipos_validos = ['rojo','negro','verde','par','impar','00',
-                         'col1','col2','col3','1-12','13-24','25-36'] + [str(i) for i in range(37)]
+        tipos_validos = ['rojo', 'negro', 'verde', 'par', 'impar', '00', 'col1', 'col2', 'col3', '1-12', '13-24', '25-36'] + [str(i) for i in range(37)]
         if tipo_norm not in tipos_validos:
-            return await ctx.send(embed=embed_error("Tipo no válido. Usa -casino ruleta-info"))
+            return await ctx.send(embed=embed_error("Tipo no válido. Usa `-casino ruleta-info`"))
+
         racha = await db.get_racha(uid)
         mult_racha = 1.0
         if racha['tipo'] == "win" and racha['racha'] >= 3:
-            mult_racha = 1.75 if racha['racha'] >= 5 else 2.5 if racha['racha'] >= 7 else 3.0
+            mult_racha = 3.0 if racha['racha'] >= 7 else (2.5 if racha['racha'] >= 5 else 1.75)
 
-        msg = await self._animacion_casino(ctx, ["🎡  LA RULETA GIRA...", "🎡  ●○○○○○○○○○○○○○○○○○○○○○",
-                                                 "🎡  ○○○○○●○○○○○○○○○○○○○○○○", "🎡  ○○○○○○○○○○●○○○○○○○○○○○",
-                                                 "🎡  ○○○○○○○○○○○○○○○●○○○○○○", "🎡  ○○○○○○○○○○○○○○○○○○○●○○", "🎡  Cayendo..."], delay=0.35)
+        msg = await self._animacion_casino(ctx, [
+            "🎡  LA RULETA GIRA...",
+            "🎡  ●○○○○○○○○○○○○○○○○○○○○○",
+            "🎡  ○○○○○●○○○○○○○○○○○○○○○○",
+            "🎡  ○○○○○○○○○○●○○○○○○○○○○○",
+            "🎡  ○○○○○○○○○○○○○○○●○○○○○○",
+            "🎡  ○○○○○○○○○○○○○○○○○○○●○○",
+            "🎡  Cayendo...",
+        ], delay=0.35)
+
         numero = random.randint(0, 37)
-        color_real = "verde" if numero in (0, 37) else "rojo" if numero in [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36] else "negro"
-        gano = False
-        multiplicador = 0
+        ROJOS = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
+        color_real = "verde" if numero in (0, 37) else ("rojo" if numero in ROJOS else "negro")
+
+        gano, multiplicador = False, 0
+
         if tipo_norm in ('rojo', 'negro', 'verde'):
             if tipo_norm == color_real:
-                gano = True
-                multiplicador = 14 if tipo_norm == 'verde' else 2
+                gano, multiplicador = True, 14 if tipo_norm == 'verde' else 2
         elif tipo_norm in ('par', 'impar'):
-            if numero != 0 and numero != 37:
+            if numero not in (0, 37):
                 if (tipo_norm == 'par' and numero % 2 == 0) or (tipo_norm == 'impar' and numero % 2 == 1):
-                    gano = True
-                    multiplicador = 2
+                    gano, multiplicador = True, 2
         elif tipo_norm == '00':
             if numero == 37:
-                gano = True
-                multiplicador = 34
+                gano, multiplicador = True, 34
         elif tipo_norm.isdigit():
-            n = int(tipo_norm)
-            if n == numero:
-                gano = True
-                multiplicador = 34
+            if int(tipo_norm) == numero:
+                gano, multiplicador = True, 34
         elif tipo_norm in ('col1', 'col2', 'col3'):
-            col = {'col1': [1,4,7,10,13,16,19,22,25,28,31,34],
-                   'col2': [2,5,8,11,14,17,20,23,26,29,32,35],
-                   'col3': [3,6,9,12,15,18,21,24,27,30,33,36]}
-            if numero in col[tipo_norm]:
-                gano = True
-                multiplicador = 3
+            COL = {
+                'col1': {1,4,7,10,13,16,19,22,25,28,31,34},
+                'col2': {2,5,8,11,14,17,20,23,26,29,32,35},
+                'col3': {3,6,9,12,15,18,21,24,27,30,33,36}
+            }
+            if numero in COL[tipo_norm]:
+                gano, multiplicador = True, 3
         elif tipo_norm in ('1-12', '13-24', '25-36'):
-            rangos = {'1-12': (1,12), '13-24': (13,24), '25-36': (25,36)}
-            if rangos[tipo_norm][0] <= numero <= rangos[tipo_norm][1]:
-                gano = True
-                multiplicador = 3
+            RANGOS = {'1-12': (1,12), '13-24': (13,24), '25-36': (25,36)}
+            lo, hi = RANGOS[tipo_norm]
+            if lo <= numero <= hi:
+                gano, multiplicador = True, 3
 
         await db.add_cash(uid, -apuesta)
+
         if gano:
             ganancia = int(apuesta * multiplicador * mult_racha - apuesta)
             await db.add_cash(uid, ganancia + apuesta)
             await db.actualizar_racha(uid, True)
-            resultado = f"+${ganancia:,}"
-            color = 0x00FF00
+            resultado, color = f"+${ganancia:,}", 0x00FF00
         else:
             await db.actualizar_racha(uid, False)
-            resultado = f"-${apuesta:,}"
-            color = 0xFF0000
+            resultado, color = f"-${apuesta:,}", 0xFF0000
+
         num_display = "00" if numero == 37 else str(numero)
-        embed = discord.Embed(title="🎡 Ruleta", description=f"Número: **{num_display}** ({color_real})\nResultado: {resultado}", color=color)
+        embed = discord.Embed(
+            title="🎡 Ruleta",
+            description=f"Número: **{num_display}** ({color_real})\nResultado: {resultado}",
+            color=color
+        )
         await msg.edit(content=None, embed=embed)
         await self.log("CASINO_RULETA", f"{ctx.author.name}: ${apuesta} → {num_display} {'WIN' if gano else 'LOSS'}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @casino.command(name='dados')
     async def dados(self, ctx, apuesta: int):
@@ -1900,37 +2533,46 @@ class Casino(BaseCog):
         err = await self._validar_apuesta(uid, apuesta)
         if err:
             return await ctx.send(embed=embed_error(err))
+
         racha = await db.get_racha(uid)
         mult_racha = 1.0
         if racha['tipo'] == "win" and racha['racha'] >= 3:
-            mult_racha = 1.75 if racha['racha'] >= 5 else 2.5 if racha['racha'] >= 7 else 3.0
+            mult_racha = 3.0 if racha['racha'] >= 7 else (2.5 if racha['racha'] >= 5 else 1.75)
 
-        msg = await self._animacion_casino(ctx, ["🎲  LANZANDO DADOS...", "🎲  [ ? | ? ]", "🎲  Parando..."])
-        d1, d2 = random.randint(1,6), random.randint(1,6)
+        msg = await self._animacion_casino(ctx, [
+            "🎲  LANZANDO DADOS...",
+            "🎲  [ ? | ? ]",
+            "🎲  Parando...",
+        ])
+
+        d1, d2 = random.randint(1, 6), random.randint(1, 6)
         total = d1 + d2
         await db.add_cash(uid, -apuesta)
+
         if d1 == d2:
             ganancia = int(apuesta * 3 * mult_racha - apuesta)
             await db.add_cash(uid, ganancia + apuesta)
             await db.actualizar_racha(uid, True)
-            resultado = f"+${ganancia:,}"
-            color = 0x00FF00
-            titulo = f"¡DOBLES! {d1}+{d2}={total}"
+            resultado, color, titulo = f"+${ganancia:,}", 0x00FF00, f"¡DOBLES! {d1}+{d2}={total}"
         elif total >= 10:
             ganancia = int(apuesta * 2 * mult_racha - apuesta)
             await db.add_cash(uid, ganancia + apuesta)
             await db.actualizar_racha(uid, True)
-            resultado = f"+${ganancia:,}"
-            color = 0x00FF00
-            titulo = f"¡Número alto! {d1}+{d2}={total}"
+            resultado, color, titulo = f"+${ganancia:,}", 0x00FF00, f"¡Número alto! {d1}+{d2}={total}"
         else:
             await db.actualizar_racha(uid, False)
-            resultado = f"-${apuesta:,}"
-            color = 0xFF0000
-            titulo = f"Sin suerte... {d1}+{d2}={total}"
-        embed = discord.Embed(title=f"🎲 {titulo}", description=f"Dados: {d1} + {d2} = {total}\nResultado: {resultado}", color=color)
+            resultado, color, titulo = f"-${apuesta:,}", 0xFF0000, f"Sin suerte... {d1}+{d2}={total}"
+        embed = discord.Embed(
+            title=f"🎲 {titulo}",
+            description=f"Dados: {d1} + {d2} = {total}\nResultado: {resultado}",
+            color=color
+        )
         await msg.edit(content=None, embed=embed)
         await self.log("CASINO_DADOS", f"{ctx.author.name}: ${apuesta} → {d1}+{d2}={total}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='bj')
     async def blackjack(self, ctx, apuesta: int):
@@ -1938,10 +2580,11 @@ class Casino(BaseCog):
         err = await self._validar_apuesta(uid, apuesta)
         if err:
             return await ctx.send(embed=embed_error(err))
+
         racha = await db.get_racha(uid)
         mult_racha = 1.0
         if racha['tipo'] == "win" and racha['racha'] >= 3:
-            mult_racha = 1.75 if racha['racha'] >= 5 else 2.5 if racha['racha'] >= 7 else 3.0
+            mult_racha = 3.0 if racha['racha'] >= 7 else (2.5 if racha['racha'] >= 5 else 1.75)
 
         cartas = [2,3,4,5,6,7,8,9,10,10,10,10,11] * 4
         random.shuffle(cartas)
@@ -1950,209 +2593,185 @@ class Casino(BaseCog):
         jugador = j1 + j2
         casa = c1 + c2
         await db.add_cash(uid, -apuesta)
+
         if jugador == 21:
             ganancia = int(apuesta * 2.5 * mult_racha - apuesta)
             await db.add_cash(uid, ganancia + apuesta)
             await db.actualizar_racha(uid, True)
-            resultado = f"🃏 **¡BLACKJACK!** +${ganancia:,}"
-            color = 0xFFD700
+            resultado, color = f"🃏 **¡BLACKJACK!** +${ganancia:,}", 0xFFD700
         elif casa == 21:
             await db.actualizar_racha(uid, False)
-            resultado = f"❌ **La casa tiene Blackjack.** -${apuesta:,}"
-            color = 0xFF0000
+            resultado, color = f"❌ **La casa tiene Blackjack.** -${apuesta:,}", 0xFF0000
         elif jugador > 21:
             await db.actualizar_racha(uid, False)
-            resultado = f"❌ **¡Te pasaste!** -${apuesta:,}"
-            color = 0xFF0000
+            resultado, color = f"❌ **¡Te pasaste!** -${apuesta:,}", 0xFF0000
         elif jugador > casa or casa > 21:
             ganancia = int(apuesta * 2 * mult_racha - apuesta)
             await db.add_cash(uid, ganancia + apuesta)
             await db.actualizar_racha(uid, True)
-            resultado = f"✅ **¡Ganaste!** +${ganancia:,}"
-            color = 0x00FF00
+            resultado, color = f"✅ **¡Ganaste!** +${ganancia:,}", 0x00FF00
         elif jugador == casa:
             await db.add_cash(uid, apuesta)
-            resultado = "🤝 **¡Empate!** Recuperas tu apuesta"
-            color = 0x3498DB
+            resultado, color = "🤝 **¡Empate!** Recuperas tu apuesta", 0x3498DB
         else:
             await db.actualizar_racha(uid, False)
-            resultado = f"❌ **La casa gana.** -${apuesta:,}"
-            color = 0xFF0000
-        embed = discord.Embed(title="🃏 Blackjack", description=f"Tu mano: {jugador}\nCasa: {casa}\n{resultado}", color=color)
+            resultado, color = f"❌ **La casa gana.** -${apuesta:,}", 0xFF0000
+        embed = discord.Embed(
+            title="🃏 Blackjack",
+            description=f"Tu mano: {jugador}\nCasa: {casa}\n{resultado}",
+            color=color
+        )
         await ctx.send(embed=embed)
         await self.log("CASINO_BJ", f"{ctx.author.name}: ${apuesta} → J:{jugador} C:{casa}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
-# COG: Atracos (todos los robos)
-# ------------------------------------------------
+# ====================================================
+# COG: Atracos (con Pacific Bank y verificaciones de preparatorias)
+# ====================================================
 class Atracos(BaseCog):
-    @commands.group(name='rob', invoke_without_command=True)
+    @commands.group(name='rob', aliases=['atraco'], invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
     async def rob(self, ctx):
-        embed = embed_help(
-            "rob",
-            "Realiza un atraco en diferentes ubicaciones.",
-            "-rob <badu|lico|ammu|yellowjack|yate|pacific|jugador>",
-            "-rob ammu\n-rob yate\n-rob jugador @Juan",
-            ""
-        )
+        embed = discord.Embed(title=f"{await get_emoji('rob')} SISTEMA PROFESIONAL DE ATRACOS", description="**Comandos disponibles:**", color=0xFF0000)
+        for heist_name, info in HEIST_DEFINITIONS.items():
+            nivel = f"Lv.{info['min_level']}+"
+            segundos = info['cooldown']
+            if segundos >= 86400:
+                cd = f"{segundos // 86400}d"
+            elif segundos >= 3600:
+                cd = f"{segundos // 3600}h"
+            else:
+                cd = f"{segundos // 60}m"
+            embed.add_field(
+                name=f"`-rob {heist_name}` — {info['nombre']}",
+                value=f"{info['description']}\n💰 ${info['reward'][0]:,}–${info['reward'][1]:,} | ⏱️ {cd} | {nivel}",
+                inline=False
+            )
+        embed.set_footer(text="Usa -rob <nombre> para iniciar | Requiere items en inventario")
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @rob.command(name='status')
+    async def rob_status(self, ctx):
+        uid = ctx.author.id
+        nivel = await db.get_nivel(uid)
+        eco = await db.get_economy(uid)
+        embed = discord.Embed(title="📊 Tu Estatus de Atracos", color=0x00FF00)
+        embed.add_field(name="Nivel", value=f"{nivel['nivel']}", inline=True)
+        embed.add_field(name="Dinero Negro", value=f"${eco['black_money']:,}", inline=True)
+        embed.add_field(name="Dinero Total", value=f"${eco['cash'] + eco['bank']:,}", inline=True)
+        atracos = await db.fetchone("SELECT COUNT(*) FROM atracos_logs WHERE user_id = ?", (uid,))
+        embed.add_field(name="Atracos Realizados", value=f"{atracos[0] if atracos else 0}", inline=True)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    async def validate_heist(self, ctx, heist_name: str) -> tuple:
+        # Owners bypass cooldown y items
+        if ctx.author.id in OWNER_IDS:
+            heist = HEIST_DEFINITIONS[heist_name]
+            return heist, ctx.author.id
+
+        if heist_name not in HEIST_DEFINITIONS:
+            await ctx.send(embed=embed_error("Atraco desconocido."))
+            return None, None
+        heist = HEIST_DEFINITIONS[heist_name]
+        uid = ctx.author.id
+
+        # Verificar preparatorias para Pacific Bank
+        if heist_name == "pacific":
+            preps = await db.get_heist_prep(uid)
+            if not (preps['pacific_prep1'] and preps['pacific_prep2'] and preps['pacific_prep3']):
+                await ctx.send(embed=embed_error("❌ Necesitas completar las 3 preparatorias para el Pacific Bank.\nUsa `-prep pacific1`, `-prep pacific2` y `-prep pacific3` en orden."))
+                return None, None
+
+        ok, rest = await db.check_cooldown(uid, f"rob_{heist_name}", heist['cooldown'])
+        if not ok:
+            d, h, m, s = rest // 86400, (rest % 86400) // 3600, (rest % 3600) // 60, rest % 60
+            tiempo = (f"{d}d " if d > 0 else "") + (f"{h}h " if h > 0 or d > 0 else "") + f"{m}m {s}s"
+            await ctx.send(embed=embed_error(f"Espera **{tiempo}** para repetir este atraco."))
+            return None, None
+        if heist.get('items'):
+            inv = await db.get_inventory(uid, 'personal')
+            for item in heist['items']:
+                if item not in inv or inv[item] <= 0:
+                    await ctx.send(embed=embed_error(f"Necesitas: **{item}**\nCompra en `-tienda` o `-tienda-ilegal`"))
+                    return None, None
+        return heist, uid
+
+    async def execute_heist(self, ctx, heist_name: str):
+        heist, uid = await self.validate_heist(ctx, heist_name)
+        if not heist:
+            return
+        msg = await ctx.send(embed=discord.Embed(title=f"🎭 {heist['nombre']}", description="⏳ **En progreso...**\nObtendré más información en breve.", color=0xFFA500))
+        await asyncio.sleep(random.randint(2, 4))
+        exito = random.random() < 0.80
+        if exito:
+            dinero = random.randint(heist['reward'][0], heist['reward'][1])
+            items_bonus = []
+            if random.random() < 0.15:
+                droga = random.choice(list(PRECIOS_DROGAS_BASE.keys()))
+                gramos = random.randint(3, 12)
+                await db.add_item(uid, 'personal', droga, gramos)
+                items_bonus.append(f"{gramos}g {droga}")
+            await db.add_black(uid, dinero)
+            xp_ganado = random.randint(50, 150)
+            await db.add_xp(uid, xp_ganado, "heist")
+            await db.inc_estadistica('robos_totales')
+            await db.add_heist_log(uid, heist_name, "success", dinero, dinero, json.dumps(items_bonus))
+            descripcion = f"✅ **¡ATRACO EXITOSO!**\n\n💶 **+${dinero:,}** en dinero negro"
+            if items_bonus:
+                descripcion += f"\n📦 **Botín adicional:** {', '.join(items_bonus)}"
+            descripcion += f"\n⭐ +{xp_ganado} XP"
+            embed = discord.Embed(title=f"🏆 {heist['nombre']} — EXITOSO", description=descripcion, color=0x00FF00)
+            await msg.edit(embed=embed)
+            await self.log("ROB_SUCCESS", f"{ctx.author.name} completó {heist_name}: +${dinero}")
+        else:
+            embed = discord.Embed(title=f"❌ {heist['nombre']} — FALLIDO", description="La seguridad detectó movimiento sospechoso. **Operación abortada.**", color=0xFF0000)
+            await msg.edit(embed=embed)
+            await self.log("ROB_FAIL", f"{ctx.author.name} falló {heist_name}")
+        # Solo restar items si no es owner
+        if ctx.author.id not in OWNER_IDS:
+            for item in heist.get('items', []):
+                await db.remove_item(uid, 'personal', item, 1)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @rob.command(name='badu')
-    async def rob_badu(self, ctx):
-        ok, rest = await db.check_cooldown(ctx.author.id, 'badu', 1500)
-        if not ok:
-            m, s = divmod(rest, 60)
-            return await ctx.send(embed=embed_error(f"Espera {m}m {s}s para volver a atracar Badu."))
-        msg = await ctx.send("🔓 **Descifrando la caja registradora**")
-        await asyncio.sleep(2)
-        dinero = random.randint(1000, 3500)
-        await db.add_black(ctx.author.id, dinero)
-        await db.inc_estadistica('robos_totales')
-        await db.inc_estadistica('atracos_hoy')
-        embed = discord.Embed(
-            title="💶 ¡ATRACO BADU EXITOSO!",
-            description=f"Obtuviste **${dinero:,}** en dinero negro.",
-            color=0x00FF00
-        )
-        await msg.edit(content=None, embed=embed)
-        await self.log("ATRACO_BADU", f"{ctx.author.name}: +${dinero} dinero negro")
-
-    @rob.command(name='lico')
-    async def rob_lico(self, ctx):
-        ok, rest = await db.check_cooldown(ctx.author.id, 'lico', 2700)
-        if not ok:
-            m, s = divmod(rest, 60)
-            return await ctx.send(embed=embed_error(f"Espera {m}m {s}s para volver a atracar Lico's."))
-        msg = await ctx.send("🔓 **Accediendo a la caja fuerte**")
-        await asyncio.sleep(2)
-        dinero = random.randint(3500, 6200)
-        await db.add_black(ctx.author.id, dinero)
-        await db.inc_estadistica('robos_totales')
-        embed = discord.Embed(
-            title="💶 ¡ATRACO LICO'S EXITOSO!",
-            description=f"Obtuviste **${dinero:,}** en dinero negro.",
-            color=0x00FF00
-        )
-        await msg.edit(content=None, embed=embed)
-        await self.log("ATRACO_LICO", f"{ctx.author.name}: +${dinero} dinero negro")
-
-    @rob.command(name='ammu')
-    async def rob_ammu(self, ctx):
-        ok, rest = await db.check_cooldown(ctx.author.id, 'ammu', 5400)
-        if not ok:
-            m, s = divmod(rest, 60)
-            return await ctx.send(embed=embed_error(f"Espera {m}m {s}s para volver a atracar Ammu-Nation."))
-        msg = await ctx.send("🔓 **Descifrando código de la caja fuerte**")
-        await asyncio.sleep(2)
-        dinero = random.randint(5000, 12000)
-        pistola = random.random() < 0.25
-        municion = random.randint(30, 120) if pistola else 0
-        await db.add_black(ctx.author.id, dinero)
-        if pistola:
-            await db.add_item(ctx.author.id, "personal", "Pistola de combate", 1)
-            await db.add_item(ctx.author.id, "personal", "Munición", municion)
-        await db.inc_estadistica('robos_totales')
-        embed = discord.Embed(
-            title="🏪 ¡ATRACO A AMMU-NATION EXITOSO!",
-            description=f"Obtuviste **${dinero:,}** en dinero negro.\n" + (f"🔫 Pistola de combate +{municion} balas" if pistola else "❌ Sin arma"),
-            color=0x00FF00
-        )
-        await msg.edit(content=None, embed=embed)
-        await self.log("ATRACO_AMMU", f"{ctx.author.name}: +${dinero} dinero negro, arma: {pistola}")
-
+    async def rob_badu(self, ctx): await self.execute_heist(ctx, 'badu')
     @rob.command(name='yellowjack')
-    async def rob_yellowjack(self, ctx):
-        ok, rest = await db.check_cooldown(ctx.author.id, 'yellowjack', 3600)
-        if not ok:
-            m, s = divmod(rest, 60)
-            return await ctx.send(embed=embed_error(f"Espera {m}m {s}s para volver a atracar Yellow Jack."))
-        msg = await ctx.send("🔫 **Asaltando Yellow Jack**")
-        await asyncio.sleep(2)
-        dinero = random.randint(800, 2500)
-        rehenes = random.randint(1, 5)
-        await db.add_black(ctx.author.id, dinero)
-        await db.inc_estadistica('robos_totales')
-        embed = discord.Embed(
-            title="💶 ¡ROBO YELLOW JACK!",
-            description=f"Obtuviste **${dinero:,}** en dinero negro.\nRehenes: {rehenes}",
-            color=0x00FF00
-        )
-        await msg.edit(content=None, embed=embed)
-        await self.log("ATRACO_YELLOWJACK", f"{ctx.author.name}: +${dinero} dinero negro, {rehenes} rehenes")
-
+    async def rob_yellowjack(self, ctx): await self.execute_heist(ctx, 'yellowjack')
+    @rob.command(name='ammu')
+    async def rob_ammu(self, ctx): await self.execute_heist(ctx, 'ammu')
+    @rob.command(name='vanilla')
+    async def rob_vanilla(self, ctx): await self.execute_heist(ctx, 'vanilla')
     @rob.command(name='yate')
-    async def rob_yate(self, ctx):
-        ok, rest = await db.check_cooldown(ctx.author.id, 'yate', 7200)
-        if not ok:
-            m, s = divmod(rest, 60)
-            return await ctx.send(embed=embed_error(f"Espera {m}m {s}s para volver a atracar el yate."))
-        msg = await ctx.send("⛵ **Abordando el yate de lujo...**")
-        await asyncio.sleep(3)
-        dinero = random.randint(15000, 25000)
-        droga = random.choice(list(PRECIOS_DROGAS_BASE.keys()))
-        gramos = random.randint(5, 20)
-        await db.add_black(ctx.author.id, dinero)
-        await db.add_item(ctx.author.id, "personal", droga, gramos)
-        await db.inc_estadistica('robos_totales')
-        embed = discord.Embed(
-            title="⛵ ¡ATRACO AL YATE EXITOSO!",
-            description=f"Obtuviste **${dinero:,}** en dinero negro.\nAdemás encontraste **{gramos} gramos de {droga}**.",
-            color=0xFFD700
-        )
-        await msg.edit(content=None, embed=embed)
-        await self.log("ATRACO_YATE", f"{ctx.author.name}: +${dinero} negro, +{gramos}g {droga}")
-
+    async def rob_yate(self, ctx): await self.execute_heist(ctx, 'yate')
+    @rob.command(name='centro')
+    async def rob_centro(self, ctx): await self.execute_heist(ctx, 'centro')
+    @rob.command(name='joyeria')
+    async def rob_joyeria(self, ctx): await self.execute_heist(ctx, 'joyeria')
     @rob.command(name='pacific')
-    async def rob_pacific(self, ctx):
-        ok, rest = await db.check_cooldown(ctx.author.id, 'pacific', 10800)
-        if not ok:
-            m, s = divmod(rest, 60)
-            return await ctx.send(embed=embed_error(f"Espera {m}m {s}s para volver a atracar el Pacific Standard."))
-        msg = await ctx.send("🏦 **Asaltando el Pacific Standard Bank...**")
-        await asyncio.sleep(4)
-        dinero = random.randint(40000, 60000)
-        await db.add_black(ctx.author.id, dinero)
-        await db.inc_estadistica('robos_totales')
-        embed = discord.Embed(
-            title="🏦 ¡ATRACO AL PACIFIC STANDARD EXITOSO!",
-            description=f"Obtuviste **${dinero:,}** en dinero negro. ¡Botín histórico!",
-            color=0xFFD700
-        )
-        await msg.edit(content=None, embed=embed)
-        await self.log("ATRACO_PACIFIC", f"{ctx.author.name}: +${dinero} negro")
+    async def rob_pacific(self, ctx): await self.execute_heist(ctx, 'pacific')
+    @rob.command(name='paleto')
+    async def rob_paleto(self, ctx): await self.execute_heist(ctx, 'paleto')
+    @rob.command(name='central')
+    async def rob_central(self, ctx): await self.execute_heist(ctx, 'central')
 
-    @rob.command(name='jugador')
-    async def atracar_jugador(self, ctx, victima: discord.Member):
-        uid, vid = ctx.author.id, victima.id
-        if uid == vid:
-            return await ctx.send(embed=embed_error("No puedes atracarte a ti mismo."))
-        ok, rest = await db.check_cooldown(uid, 'atracar_jugador', 600)
-        if not ok:
-            m, s = divmod(rest, 60)
-            return await ctx.send(embed=embed_error(f"Espera {m}m {s}s para volver a atracar."))
-        eco = await db.get_economy(vid)
-        if eco['cash'] <= 0:
-            return await ctx.send(embed=embed_error("La víctima no lleva dinero encima."))
-        msg = await ctx.send(f"🔫 **Atracando a {victima.display_name}...**")
-        await asyncio.sleep(2)
-        porcentaje = random.uniform(0.1, 0.5)
-        dinero_robado = int(eco['cash'] * porcentaje)
-        await db.add_cash(vid, -dinero_robado)
-        await db.add_black(uid, dinero_robado)
-        await db.inc_estadistica('robos_totales')
-        embed = discord.Embed(
-            title="💀 ¡ATRACO EXITOSO!",
-            description=f"Robaste **${dinero_robado:,}** a {victima.mention}.",
-            color=0xFF0000
-        )
-        await msg.edit(content=None, embed=embed)
-        await self.log("ATRACO_JUGADOR", f"{ctx.author.name} atracó a {victima.name}: ${dinero_robado}")
-
-# ------------------------------------------------
-# COG: Banco
-# ------------------------------------------------
+# ====================================================
+# COG: Banco (único sistema de saldo)
+# ====================================================
 class Banco(BaseCog):
     @commands.group(name='banco', invoke_without_command=True)
     @check_ban()
@@ -2160,43 +2779,67 @@ class Banco(BaseCog):
     async def banco(self, ctx):
         uid = ctx.author.id
         eco = await db.get_economy(uid)
+        emoji_money = await get_emoji('money')
+        emoji_bank = await get_emoji('bank')
         embed = discord.Embed(
-            title="🏦 BANCO CENTRAL",
-            description=f"💵 Efectivo: **${eco['cash']:,}**\n🏦 En banco: **${eco['bank']:,}**\n💰 Total: **${eco['cash'] + eco['bank']:,}**",
+            title=f"{emoji_bank} BANCO CENTRAL",
+            description=(
+                f"{emoji_money} Efectivo: **${eco['cash']:,}**\n"
+                f"{emoji_bank} En banco: **${eco['bank']:,}**\n"
+                f"💰 Total:    **${eco['cash'] + eco['bank']:,}**"
+            ),
             color=0x3498DB
         )
         if eco['black_money'] > 0:
-            embed.add_field(name="💶 Dinero negro", value=f"Tienes **${eco['black_money']:,}** pendiente de blanquear. Usa `-blanquear`.", inline=False)
+            embed.add_field(
+                name=f"{await get_emoji('black_money')} Dinero negro",
+                value=f"Tienes **${eco['black_money']:,}** pendiente de blanquear. Usa `-blanquear`.",
+                inline=False
+            )
         embed.add_field(
             name="Comandos",
-            value="`-banco ingresar <cantidad>`\n`-banco retirar <cantidad>`\n`-banco transferir @user <cantidad>`",
+            value=(
+                "`-banco ingresar <cantidad>`\n"
+                "`-banco retirar <cantidad>`\n"
+                "`-banco transferir @usuario <cantidad>`"
+            ),
             inline=False
         )
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @banco.command(name='ingresar')
     async def banco_ingresar(self, ctx, cantidad: int):
-        uid = ctx.author.id
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("Cantidad mayor a 0."))
-        eco = await db.get_economy(uid)
+        eco = await db.get_economy(ctx.author.id)
         if eco['cash'] < cantidad:
             return await ctx.send(embed=embed_error(f"No tienes **${cantidad:,}** en efectivo."))
-        await db.add_cash(uid, -cantidad)
-        await db.add_bank(uid, cantidad)
+        await db.add_cash(ctx.author.id, -cantidad)
+        await db.add_bank(ctx.author.id, cantidad)
         await ctx.send(embed=embed_success("🏦 Ingreso", f"Has ingresado **${cantidad:,}**."))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @banco.command(name='retirar')
     async def banco_retirar(self, ctx, cantidad: int):
-        uid = ctx.author.id
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("Cantidad mayor a 0."))
-        eco = await db.get_economy(uid)
+        eco = await db.get_economy(ctx.author.id)
         if eco['bank'] < cantidad:
             return await ctx.send(embed=embed_error(f"No tienes **${cantidad:,}** en el banco."))
-        await db.add_bank(uid, -cantidad)
-        await db.add_cash(uid, cantidad)
+        await db.add_bank(ctx.author.id, -cantidad)
+        await db.add_cash(ctx.author.id, cantidad)
         await ctx.send(embed=embed_success("🏦 Retiro", f"Has retirado **${cantidad:,}**."))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @banco.command(name='transferir')
     async def banco_transferir(self, ctx, usuario: discord.Member, cantidad: int):
@@ -2210,12 +2853,19 @@ class Banco(BaseCog):
             return await ctx.send(embed=embed_error(f"No tienes **${cantidad:,}** en el banco."))
         await db.add_bank(uid, -cantidad)
         await db.add_bank(tid, cantidad)
-        await ctx.send(embed=embed_success("🏦 Transferencia", f"Has transferido **${cantidad:,}** a {usuario.mention}."))
+        await ctx.send(embed=embed_success(
+            "🏦 Transferencia",
+            f"Has transferido **${cantidad:,}** a {usuario.mention}."
+        ))
         await self.log("BANCO_TRANSFERENCIA", f"{ctx.author.name} transfirió ${cantidad} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
+# ====================================================
 # COG: Multas
-# ------------------------------------------------
+# ====================================================
 class Multas(BaseCog):
     @commands.group(name='multa', invoke_without_command=True)
     @check_ban()
@@ -2229,13 +2879,21 @@ class Multas(BaseCog):
         for i, m in enumerate(multas, 1):
             embed.add_field(
                 name=f"#{i} — **${m['cantidad']:,}**",
-                value=f"Motivo: {m['motivo']}\nAgente: {m['agente']}\nFecha: {m['fecha'][:10]}",
+                value=(
+                    f"Motivo: {m['motivo']}\n"
+                    f"Agente: {m['agente']}\n"
+                    f"Fecha:  {m['fecha'][:10]}"
+                ),
                 inline=False
             )
             total += m['cantidad']
         embed.add_field(name="Total pendiente", value=f"**${total:,}**", inline=False)
         embed.set_footer(text="Usa -multa pagar <número> para pagar una multa")
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @multa.command(name='pagar')
     async def multa_pagar(self, ctx, numero: int = None):
@@ -2256,18 +2914,25 @@ class Multas(BaseCog):
         else:
             if numero < 1 or numero > len(multas):
                 return await ctx.send(embed=embed_error("Número inválido."))
-            multa = multas[numero-1]
+            m = multas[numero - 1]
             eco = await db.get_economy(uid)
-            if eco['cash'] < multa['cantidad']:
-                return await ctx.send(embed=embed_error(f"Necesitas **${multa['cantidad']:,}**."))
-            await db.add_cash(uid, -multa['cantidad'])
-            await db.pagar_multa(multa['id'])
-            await ctx.send(embed=embed_success("✅ Multa pagada", f"Has pagado **${multa['cantidad']:,}** por: {multa['motivo']}."))
-            await self.log("MULTA_PAGAR", f"{ctx.author.name} pagó multa #{numero}: ${multa['cantidad']}")
+            if eco['cash'] < m['cantidad']:
+                return await ctx.send(embed=embed_error(f"Necesitas **${m['cantidad']:,}**."))
+            await db.add_cash(uid, -m['cantidad'])
+            await db.pagar_multa(m['id'])
+            await ctx.send(embed=embed_success(
+                "✅ Multa pagada",
+                f"Has pagado **${m['cantidad']:,}** por: {m['motivo']}."
+            ))
+            await self.log("MULTA_PAGAR", f"{ctx.author.name} pagó multa #{numero}: ${m['cantidad']}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
+# ====================================================
 # COG: PDA (Policial)
-# ------------------------------------------------
+# ====================================================
 class PDA(BaseCog):
     RANGOS = ["Cadete", "Agente", "Agente de Primera", "Cabo", "Sargento", "Teniente", "Capitán", "Comandante", "Jefe de Policía"]
     RANGO_EMOJIS = {
@@ -2278,8 +2943,11 @@ class PDA(BaseCog):
 
     async def cog_check(self, ctx):
         user_state = await db.get_user_state(ctx.author.id)
-        if not user_state.get('placa'):
-            await ctx.send(embed=embed_error("No tienes placa policial."))
+        has_placa = bool(user_state.get('placa'))
+        has_lspd_role = any(role.id == ROL_LSPD_ID or "LSPD" in role.name.upper() for role in ctx.author.roles)
+        has_owner = ctx.author.id in OWNER_IDS
+        if not (has_placa or has_lspd_role or has_owner):
+            await ctx.send(embed=embed_error("No tienes placa policial, rol LSPD ni permisos de owner para abrir la PDA."))
             return False
         return True
 
@@ -2292,198 +2960,348 @@ class PDA(BaseCog):
         caja = await db.get_caja_municipal()
         nombre = await self.obtener_nombre_dni(uid) or ctx.author.display_name
         emoji = self.RANGO_EMOJIS.get(rango, "🚔")
-        embed = discord.Embed(title="🚨 PANEL PDA", color=0x3498DB)
+        embed = discord.Embed(
+            title=f"{await get_emoji('pda')} PANEL PDA — NOVA AGORA",
+            description="💎 PDA premium, brillante y lista para operaciones policiales.",
+            color=0xE91E63
+        )
+        embed.set_author(name="NOVA AGORA", icon_url=ctx.author.display_avatar.url)
+        embed.set_thumbnail(url="https://images.emojiterra.com/twitter/v14.0/512px/1f4f1.png")
+        embed.set_footer(text="✨ NOVA AGORA")
         embed.add_field(name="👤 Agente", value=f"{nombre}", inline=True)
         embed.add_field(name="🪪 Placa", value=f"{placa}", inline=True)
         embed.add_field(name=f"{emoji} Rango", value=f"{rango}", inline=True)
         embed.add_field(name="🏦 Caja Municipal", value=f"**${caja:,}**", inline=False)
         embed.add_field(
             name="Comandos",
-            value="`-pda detener @u <motivo>`\n`-pda encarcelar @u <min> <motivo>`\n`-pda multar @u <cantidad> <motivo>`\n`-pda requisar @u <arma>`\n`-pda licencia @u <tipo> [dar/quitar]`\n`-pda buscar <nombre>`\n`-pda crear-placa <numero>`",
+            value="`-pda detener @u <motivo>`\n`-pda encarcelar @u <min> <motivo>`\n`-pda multar @u <cantidad> <motivo>`\n`-pda requisar @u <arma>`\n`-pda guardar @u <item>`\n`-pda evidencia @u`\n`-pda buscar <nombre>`\n`-crear-placa @u LSPD-0001`\n`-multas`\n`-des-esposar @u <motivo>`",
             inline=False
         )
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @pda.command(name='detener')
     async def pda_detener(self, ctx, usuario: discord.Member, *, motivo: str):
-        uid = ctx.author.id
-        user_state = await db.get_user_state(uid)
-        placa = user_state['placa']
-        rango = user_state['rango']
-        nombre_ag = await self.obtener_nombre_dni(uid) or ctx.author.display_name
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
         nombre_det = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
-        embed = discord.Embed(
-            title="🚨 DETENCIÓN",
-            description=f"{nombre_ag} ha detenido a {nombre_det}. Motivo: {motivo}",
-            color=0xFF0000
-        )
+        embed = discord.Embed(title="🚨 DETENCIÓN", description=f"{nombre_ag} ha detenido a {nombre_det}. Motivo: {motivo}", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_DETENER", f"{nombre_ag} detuvo a {nombre_det}: {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @pda.command(name='encarcelar')
     async def pda_encarcelar(self, ctx, usuario: discord.Member, minutos: int, *, motivo: str):
-        uid = ctx.author.id
-        user_state = await db.get_user_state(uid)
-        placa = user_state['placa']
-        rango = user_state['rango']
-        nombre_ag = await self.obtener_nombre_dni(uid) or ctx.author.display_name
+        if minutos <= 0 or minutos > 10080:
+            return await ctx.send(embed=embed_error("Los minutos deben estar entre 1 y 10080 (7 días)."))
+        if usuario.bot:
+            return await ctx.send(embed=embed_error("No puedes encarcelar a bots."))
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
         nombre_det = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
         hasta = datetime.now() + timedelta(minutes=minutos)
         await db.update_user_state(usuario.id, encarcelado_hasta=hasta.isoformat())
-        embed = discord.Embed(
-            title="🔒 ENCARCELAMIENTO",
-            description=f"{nombre_ag} ha encarcelado a {nombre_det} por {minutos} minutos.\nMotivo: {motivo}",
-            color=0xFF0000
-        )
+        embed = discord.Embed(title="🔒 ENCARCELAMIENTO", description=f"{nombre_ag} ha encarcelado a {nombre_det} por {minutos} minutos.\nMotivo: {motivo}", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_ENCARCELAR", f"{nombre_ag} encarceló a {nombre_det} por {minutos}min: {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @pda.command(name='multar')
     async def pda_multar(self, ctx, usuario: discord.Member, cantidad: int, *, motivo: str):
-        uid = ctx.author.id
-        user_state = await db.get_user_state(uid)
-        placa = user_state['placa']
-        nombre_ag = await self.obtener_nombre_dni(uid) or ctx.author.display_name
+        if cantidad <= 0 or cantidad > 1000000:
+            return await ctx.send(embed=embed_error("La multa debe estar entre $1 y $1,000,000."))
+        if usuario.bot:
+            return await ctx.send(embed=embed_error("No puedes multar a bots."))
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        placa = (await db.get_user_state(ctx.author.id)).get('placa', '')
         await db.add_multa(usuario.id, cantidad, motivo, nombre_ag, placa)
-        embed = discord.Embed(
-            title="📄 MULTA",
-            description=f"{nombre_ag} ha multado a {usuario.mention} con **${cantidad:,}**.\nMotivo: {motivo}",
-            color=0xFFA500
-        )
+        embed = discord.Embed(title="📄 MULTA", description=f"{nombre_ag} ha multado a {usuario.mention} con **${cantidad:,}**.\nMotivo: {motivo}", color=0xFFA500)
         await ctx.send(embed=embed)
         await self.log("PDA_MULTAR", f"{nombre_ag} multó a {usuario.name}: ${cantidad} - {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @pda.command(name='requisar')
     async def pda_requisar(self, ctx, usuario: discord.Member, *, arma: str):
-        uid = ctx.author.id
-        user_state = await db.get_user_state(uid)
-        placa = user_state['placa']
-        nombre_ag = await self.obtener_nombre_dni(uid) or ctx.author.display_name
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
         armas = await db.get_armas_equipadas(usuario.id)
         arma_real = next((k for k in armas if k.lower() == arma.lower()), None)
         if not arma_real:
             return await ctx.send(embed=embed_error(f"{usuario.display_name} no tiene {arma} equipada."))
         await db.execute("DELETE FROM armas_equipadas WHERE user_id = ? AND arma = ?", (usuario.id, arma_real))
-        embed = discord.Embed(
-            title="🔫 ARMA REQUISADA",
-            description=f"{nombre_ag} requisó {arma_real} a {usuario.mention}.",
-            color=0xFF0000
-        )
+        embed = discord.Embed(title="🔫 ARMA REQUISADA", description=f"{nombre_ag} requisó {arma_real} a {usuario.mention}.", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_REQUISAR", f"{nombre_ag} requisó {arma_real} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='guardar')
+    async def pda_guardar(self, ctx, usuario: discord.Member, *, item: str):
+        if usuario.bot:
+            return await ctx.send(embed=embed_error("No puedes guardar evidencia de un bot."))
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_target = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        armas = await db.get_armas_equipadas(usuario.id)
+        item_real = next((k for k in armas if k.lower() == item.lower()), None)
+        if item_real:
+            await db.execute("DELETE FROM armas_equipadas WHERE user_id = ? AND arma = ?", (usuario.id, item_real))
+            await db.add_evidence(ctx.author.id, usuario.id, item_real, 1)
+            embed = discord.Embed(title="📦 EVIDENCIA GUARDADA", description=f"{nombre_ag} guardó **{item_real}** de {nombre_target}.", color=0x3498DB)
+            await ctx.send(embed=embed)
+            await self.log("PDA_GUARDAR", f"{nombre_ag} guardó {item_real} de {usuario.name}")
+            return
+        inv = await db.get_inventory(usuario.id, "personal")
+        item_real = next((k for k in inv if k.lower() == item.lower()), None)
+        if not item_real:
+            return await ctx.send(embed=embed_error(f"{nombre_target} no tiene {item}."))
+        await db.remove_item(usuario.id, "personal", item_real, 1)
+        await db.add_evidence(ctx.author.id, usuario.id, item_real, 1)
+        embed = discord.Embed(title="📦 EVIDENCIA GUARDADA", description=f"{nombre_ag} guardó **{item_real}** de {nombre_target}.", color=0x3498DB)
+        await ctx.send(embed=embed)
+        await self.log("PDA_GUARDAR", f"{nombre_ag} guardó {item_real} de {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='evidencia')
+    async def pda_evidencia(self, ctx, usuario: Optional[discord.Member] = None):
+        if usuario is None:
+            usuario = ctx.author
+        evidencias = await db.get_evidence(usuario.id)
+        if not evidencias:
+            return await ctx.send(embed=embed_info("📦 Evidencia", f"No hay evidencia registrada para {usuario.display_name}."))
+        descripcion = ""
+        for evidencia in evidencias[:10]:
+            agente = ctx.guild.get_member(evidencia['agente_id'])
+            nombre_agente = agente.display_name if agente else str(evidencia['agente_id'])
+            descripcion += f"• **{evidencia['item']}** x{evidencia['quantity']} — Guardado por {nombre_agente} el {evidencia['fecha'][:16]}\n"
+        embed = discord.Embed(title=f"📦 Evidencia de {usuario.display_name}", description=descripcion, color=0x3498DB)
+        embed.set_footer(text="Usa -pda guardar @usuario <item> para agregar evidencia")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @pda.command(name='licencia')
     async def pda_licencia(self, ctx, usuario: discord.Member, tipo_licencia: str, accion: str = "dar"):
-        uid = ctx.author.id
-        user_state = await db.get_user_state(uid)
-        placa = user_state['placa']
-        nombre_ag = await self.obtener_nombre_dni(uid) or ctx.author.display_name
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
         licencia = tipo_licencia.lower()
         if accion.lower() == "dar":
             await db.dar_licencia(usuario.id, licencia)
-            embed = discord.Embed(
-                title="📋 LICENCIA OTORGADA",
-                description=f"{nombre_ag} concedió {licencia} a {usuario.mention}.",
-                color=0x00FF00
-            )
+            embed = discord.Embed(title="📋 LICENCIA OTORGADA", description=f"{nombre_ag} concedió {licencia} a {usuario.mention}.", color=0x00FF00)
         else:
             await db.quitar_licencia(usuario.id, licencia)
-            embed = discord.Embed(
-                title="📋 LICENCIA REVOCADA",
-                description=f"{nombre_ag} revocó {licencia} a {usuario.mention}.",
-                color=0xFF0000
-            )
+            embed = discord.Embed(title="📋 LICENCIA REVOCADA", description=f"{nombre_ag} revocó {licencia} a {usuario.mention}.", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_LICENCIA", f"{nombre_ag} {accion} {licencia} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @pda.command(name='buscar')
     async def pda_buscar(self, ctx, *, nombre: str):
-        rows = await db.fetchall("SELECT user_id, dni_nombre, dni_apellidos FROM users WHERE dni_nombre LIKE ? OR dni_apellidos LIKE ?",
-                                 (f'%{nombre}%', f'%{nombre}%'))
+        rows = await db.fetchall("SELECT user_id, dni_nombre, dni_apellidos FROM users WHERE dni_nombre LIKE ? OR dni_apellidos LIKE ?", (f'%{nombre}%', f'%{nombre}%'))
         if not rows:
             return await ctx.send(embed=embed_error("No se encontraron resultados."))
         embed = discord.Embed(title=f"🔍 Resultados para '{nombre}'", color=0x3498DB)
         for uid, nombre, apellidos in rows[:5]:
             user = ctx.guild.get_member(uid)
             nombre_completo = f"{nombre} {apellidos}".strip()
-            embed.add_field(
-                name=nombre_completo,
-                value=f"ID: {uid}\nUsuario: {user.mention if user else uid}",
-                inline=False
-            )
+            embed.add_field(name=nombre_completo, value=f"ID: {uid}\nUsuario: {user.mention if user else uid}", inline=False)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-    @pda.command(name='crear-placa')
-    async def pda_crear_placa(self, ctx, numero: str):
-        if not any(role.name == "LSPD" for role in ctx.author.roles):
-            return await ctx.send(embed=embed_error("Necesitas el rol **LSPD** para crear una placa policial."))
-
+    @commands.command(name='crear-placa')
+    async def crear_placa(self, ctx, usuario: discord.Member, numero: str):
+        has_lspd_role = any(role.id == ROL_LSPD_ID or "LSPD" in role.name.upper() for role in ctx.author.roles)
+        has_owner = ctx.author.id in OWNER_IDS
+        if not (has_lspd_role or has_owner):
+            return await ctx.send(embed=embed_error("Necesitas rol LSPD o ser owner para crear una placa policial."))
+        numero = numero.strip().upper()
+        if numero.startswith("LSPD-") or numero.startswith("LPSD-"):
+            numero = numero.split('-', 1)[1]
         if not numero.isdigit() or len(numero) != 4:
-            return await ctx.send(embed=embed_error("El número de placa debe ser exactamente 4 dígitos (ej: 0001)."))
-
+            return await ctx.send(embed=embed_error("El número de placa debe ser exactamente 4 dígitos (ej: 0001 o LSPD-0001)."))
         placa_completa = f"LSPD-{numero}"
-        user_state = await db.get_user_state(ctx.author.id)
+        user_state = await db.get_user_state(usuario.id)
         if user_state.get('placa'):
-            return await ctx.send(embed=embed_error(f"Ya tienes una placa asignada: {user_state['placa']}. Usa `-pda quitar-placa` si quieres cambiarla."))
-
-        await db.update_user_state(ctx.author.id, placa=placa_completa)
-        embed = discord.Embed(
-            title="✅ PLACA ASIGNADA",
-            description=f"Se te ha asignado la placa **{placa_completa}**. Ahora puedes usar los comandos de PDA.",
-            color=0x00FF00
-        )
+            return await ctx.send(embed=embed_error(f"{usuario.display_name} ya tiene una placa asignada: {user_state['placa']}. Usa `-pda quitar-placa` si quieres cambiarla."))
+        await db.update_user_state(usuario.id, placa=placa_completa)
+        embed = discord.Embed(title="✅ PLACA ASIGNADA", description=f"Se ha asignado la placa **{placa_completa}** a {usuario.mention}.", color=0x00FF00)
         await ctx.send(embed=embed)
-        await self.log("CREAR_PLACA", f"{ctx.author.name} asignó placa {placa_completa}")
+        await self.log("CREAR_PLACA", f"{ctx.author.name} asignó placa {placa_completa} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='multas')
+    async def multas(self, ctx):
+        uid = ctx.author.id
+        multas = await db.get_multas_pendientes(uid)
+        if not multas:
+            return await ctx.send(embed=embed_info("📄 Multas", "No tienes multas pendientes."))
+        embed = discord.Embed(title="📄 MIS MULTAS", color=0xFFA500)
+        total = 0
+        for i, m in enumerate(multas, 1):
+            embed.add_field(name=f"#{i} — **${m['cantidad']:,}**", value=f"Motivo: {m['motivo']}\nAgente: {m['agente']}\nFecha: {m['fecha'][:10]}", inline=False)
+            total += m['cantidad']
+        embed.add_field(name="Total pendiente", value=f"**${total:,}**", inline=False)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='des-esposar')
+    async def des_esposar(self, ctx, usuario: discord.Member, *, motivo: str):
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_det = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        embed = discord.Embed(title="🔓 DES-ESPOSADO", description=f"{nombre_ag} ha des-esposado a {nombre_det}. Motivo: {motivo}", color=0x00FF00)
+        await ctx.send(embed=embed)
+        await self.log("PDA_DES-ESPOSAR", f"{nombre_ag} des-esposó a {nombre_det}: {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @pda.command(name='quitar-placa')
     async def pda_quitar_placa(self, ctx):
         user_state = await db.get_user_state(ctx.author.id)
         if not user_state.get('placa'):
             return await ctx.send(embed=embed_error("No tienes una placa asignada."))
-
         await db.update_user_state(ctx.author.id, placa=None)
-        embed = discord.Embed(
-            title="🗑️ PLACA ELIMINADA",
-            description="Tu placa policial ha sido eliminada.",
-            color=0xFF6600
-        )
+        embed = discord.Embed(title="🗑️ PLACA ELIMINADA", description="Tu placa policial ha sido eliminada.", color=0xFF6600)
         await ctx.send(embed=embed)
         await self.log("QUITAR_PLACA", f"{ctx.author.name} eliminó su placa")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
-# COG: Móvil
-# ------------------------------------------------
+# ====================================================
+# COG: Móvil (Slash y prefix) - SIN EMOJIS EN BOTONES
+# ====================================================
 class Movil(BaseCog):
-    @commands.hybrid_command(name='movil', description="Abrir móvil")
+    @app_commands.command(name='movil', description="Abre el móvil con NOVA AGORA V2")
+    async def movil(self, interaction: discord.Interaction):
+        uid = interaction.user.id
+        user_state = await db.get_user_state(uid)
+        if user_state['airplane_mode']:
+            return await interaction.response.send_message(embed=embed_error("Modo avión activado. Desactívalo con `/avion off`"))
+        numero = user_state['phone_number'] or "Sin número"
+        wifi = "📶 Conectado" if user_state['wifi_connected'] else "📶 Desconectado"
+        await interaction.response.send_message("✨ **** ABRE TÚ MÓVIL EN NOVA AGORA V2 ****")
+        embed = discord.Embed(title=f"{await get_emoji('phone')} Móvil de {interaction.user.name}", description=f"📞 Número: `{numero}`\n{wifi}", color=0x00BCD4)
+        view = MovilView(interaction.user.id)
+        await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name='avion', description="Modo avión - NOVA AGORA V2")
+    async def avion(self, interaction: discord.Interaction, estado: str):
+        if estado.lower() not in ['on', 'off']:
+            return await interaction.response.send_message(embed=embed_error("Usa `on` o `off`"))
+        uid = interaction.user.id
+        on = estado.lower() == 'on'
+        await db.update_user_state(uid, airplane_mode=on)
+        await interaction.response.send_message("✨ **** MODO AVIÓN " + ("ACTIVADO" if on else "DESACTIVADO") + " EN NOVA AGORA V2 ****")
+        await interaction.followup.send(embed=embed_success("✈️ Modo avión", f"{'Activado' if on else 'Desactivado'}"))
+
+    @app_commands.command(name='wifi', description="Gestiona WiFi - NOVA AGORA V2")
+    async def wifi(self, interaction: discord.Interaction, accion: str = None):
+        uid = interaction.user.id
+        user_state = await db.get_user_state(uid)
+        if not accion:
+            return await interaction.response.send_message(embed=embed_info("📶 WiFi", f"Estado: {'Conectado' if user_state['wifi_connected'] else 'Desconectado'}\nUsa `/wifi conectar` o `/wifi desconectar`"))
+        if accion.lower() == 'conectar':
+            if user_state['wifi_connected']:
+                return await interaction.response.send_message(embed=embed_error("Ya estás conectado."))
+            await db.update_user_state(uid, wifi_connected=True)
+            await interaction.response.send_message("✨ **** CONECTADO A WIFI EN NOVA AGORA V2 ****")
+            await interaction.followup.send(embed=embed_success("📶 WiFi", "Conectado a la red."))
+        elif accion.lower() == 'desconectar':
+            if not user_state['wifi_connected']:
+                return await interaction.response.send_message(embed=embed_error("Ya estás desconectado."))
+            await db.update_user_state(uid, wifi_connected=False)
+            await interaction.response.send_message("✨ **** DESCONECTADO DEL WIFI EN NOVA AGORA V2 ****")
+            await interaction.followup.send(embed=embed_success("📶 WiFi", "Desconectado de la red.", color=0xFFA500))
+        else:
+            await interaction.response.send_message(embed=embed_error("Usa `conectar` o `desconectar`"))
+
+    @app_commands.command(name='comprar-sim', description="Compra SIM - NOVA AGORA V2")
+    async def comprar_sim(self, interaction: discord.Interaction):
+        uid = interaction.user.id
+        eco = await db.get_economy(uid)
+        if eco['cash'] < 500:
+            return await interaction.response.send_message(embed=embed_error("Necesitas $500."))
+        numero = f"+34 6{random.randint(10,99)} {random.randint(100,999)} {random.randint(100,999)}"
+        await db.add_cash(uid, -500)
+        await db.update_user_state(uid, phone_number=numero)
+        await interaction.response.send_message("✨ **** COMPRA SIM EN NOVA AGORA V2 ****")
+        await interaction.followup.send(embed=embed_success(f"{await get_emoji('phone')} SIM comprada", f"Número: `{numero}`\nCosto: $500"))
+        await self.log("COMPRA_SIM", f"{interaction.user.name} compró SIM: {numero}")
+
+    @commands.command(name='movil', aliases=['tel', 'telefono', 'celular'])
     @check_ban()
-    async def movil(self, ctx):
+    @check_encarcelado()
+    async def movil_prefix(self, ctx):
+        try:
+            await ctx.message.delete()
+        except:
+            pass
         uid = ctx.author.id
         user_state = await db.get_user_state(uid)
         if user_state['airplane_mode']:
             return await ctx.send(embed=embed_error("Modo avión activado. Desactívalo con `-avion off`"))
         numero = user_state['phone_number'] or "Sin número"
         wifi = "📶 Conectado" if user_state['wifi_connected'] else "📶 Desconectado"
-        embed = discord.Embed(
-            title=f"📱 Móvil de {ctx.author.name}",
-            description=f"📞 Número: `{numero}`\n{wifi}",
-            color=0x00BCD4
-        )
+        await ctx.send("✨ **** ABRE TÚ MÓVIL EN NOVA AGORA V2 ****")
+        embed = discord.Embed(title=f"{await get_emoji('phone')} Móvil de {ctx.author.name}", description=f"📞 Número: `{numero}`\n{wifi}", color=0x00BCD4)
         view = MovilView(ctx.author.id)
         await ctx.send(embed=embed, view=view)
+        await self.log("MOVIL_PREFIX", f"{ctx.author.name} abrió el móvil con -movil")
 
-    @commands.command(name='avion')
+    @commands.command(name='avion', aliases=['airplane', 'avionmode'])
     @check_ban()
-    async def avion(self, ctx, estado: str):
+    @check_encarcelado()
+    async def avion_prefix(self, ctx, estado: str = None):
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        if not estado or estado.lower() not in ['on', 'off']:
+            return await ctx.send(embed=embed_error("Usa `-avion on` o `-avion off`"))
         uid = ctx.author.id
-        if estado.lower() not in ['on', 'off']:
-            return await ctx.send(embed=embed_error("Usa `on` o `off`"))
         on = estado.lower() == 'on'
         await db.update_user_state(uid, airplane_mode=on)
+        await ctx.send("✨ **** MODO AVIÓN " + ("ACTIVADO" if on else "DESACTIVADO") + " EN NOVA AGORA V2 ****")
         await ctx.send(embed=embed_success("✈️ Modo avión", f"{'Activado' if on else 'Desactivado'}"))
+        await self.log("AVION_PREFIX", f"{ctx.author.name} cambió modo avión a {estado}")
 
-    @commands.command(name='wifi')
+    @commands.command(name='wifi', aliases=['redwifi', 'internet'])
     @check_ban()
-    async def wifi(self, ctx, accion: str = None):
+    @check_encarcelado()
+    async def wifi_prefix(self, ctx, accion: str = None):
+        try:
+            await ctx.message.delete()
+        except:
+            pass
         uid = ctx.author.id
         user_state = await db.get_user_state(uid)
         if not accion:
@@ -2492,18 +3310,26 @@ class Movil(BaseCog):
             if user_state['wifi_connected']:
                 return await ctx.send(embed=embed_error("Ya estás conectado."))
             await db.update_user_state(uid, wifi_connected=True)
+            await ctx.send("✨ **** CONECTADO A WIFI EN NOVA AGORA V2 ****")
             await ctx.send(embed=embed_success("📶 WiFi", "Conectado a la red."))
         elif accion.lower() == 'desconectar':
             if not user_state['wifi_connected']:
                 return await ctx.send(embed=embed_error("Ya estás desconectado."))
             await db.update_user_state(uid, wifi_connected=False)
+            await ctx.send("✨ **** DESCONECTADO DEL WIFI EN NOVA AGORA V2 ****")
             await ctx.send(embed=embed_success("📶 WiFi", "Desconectado de la red.", color=0xFFA500))
         else:
-            await ctx.send(embed=embed_error("Usa `conectar` o `desconectar`"))
+            await ctx.send(embed=embed_error("Usa `-wifi conectar` o `-wifi desconectar`"))
+        await self.log("WIFI_PREFIX", f"{ctx.author.name} cambió estado de wifi a {accion}")
 
-    @commands.command(name='comprar-sim', aliases=['sim'])
+    @commands.command(name='comprar-sim', aliases=['comprar_sim', 'buysim', 'sim'])
     @check_ban()
-    async def comprar_sim(self, ctx):
+    @check_encarcelado()
+    async def comprar_sim_prefix(self, ctx):
+        try:
+            await ctx.message.delete()
+        except:
+            pass
         uid = ctx.author.id
         eco = await db.get_economy(uid)
         if eco['cash'] < 500:
@@ -2511,8 +3337,9 @@ class Movil(BaseCog):
         numero = f"+34 6{random.randint(10,99)} {random.randint(100,999)} {random.randint(100,999)}"
         await db.add_cash(uid, -500)
         await db.update_user_state(uid, phone_number=numero)
-        await ctx.send(embed=embed_success("📱 SIM comprada", f"Número: `{numero}`\nCosto: $500"))
-        await self.log("COMPRA_SIM", f"{ctx.author.name} compró SIM: {numero}")
+        await ctx.send("✨ **** COMPRA SIM EN NOVA AGORA V2 ****")
+        await ctx.send(embed=embed_success(f"{await get_emoji('phone')} SIM comprada", f"Número: `{numero}`\nCosto: $500"))
+        await self.log("COMPRA_SIM_PREFIX", f"{ctx.author.name} compró SIM: {numero}")
 
 class MovilView(discord.ui.View):
     def __init__(self, uid):
@@ -2525,27 +3352,32 @@ class MovilView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="📸 Instagram", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="Instagram", style=discord.ButtonStyle.danger, row=0)
     async def btn_ig(self, interaction, button):
-        await interaction.response.send_message(embed=embed_info("📸 Instagram", "Comandos:\n`-ig perfil`\n`-ig post \"texto\"`\n`-ig like <id>`\n`-ig seguir @user`\n`-ig priv @user msg`\n`-ig trending`", 0xE4405F), ephemeral=True)
+        emoji = await get_emoji('ig')
+        await interaction.response.send_message(embed=embed_info(f"{emoji} Instagram", "Comandos:\n`-ig perfil`\n`-ig post \"texto\"`\n`-ig like <id>`\n`-ig seguir @user`\n`-ig priv @user msg`\n`-ig trending`", 0xE4405F), ephemeral=True)
 
-    @discord.ui.button(label="🐦 Twitter", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Twitter", style=discord.ButtonStyle.secondary, row=0)
     async def btn_tw(self, interaction, button):
-        await interaction.response.send_message(embed=embed_info("🐦 Twitter", "Comandos:\n`-tw perfil`\n`-tw tweet \"texto\"`\n`-tw seguir @user`\n`-tw priv @user msg`", 0x1DA1F2), ephemeral=True)
+        emoji = await get_emoji('twitter')
+        await interaction.response.send_message(embed=embed_info(f"{emoji} Twitter", "Comandos:\n`-tw perfil`\n`-tw tweet \"texto\"`\n`-tw seguir @user`\n`-tw priv @user msg`", 0x1DA1F2), ephemeral=True)
 
-    @discord.ui.button(label="📘 Facebook", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Facebook", style=discord.ButtonStyle.primary, row=0)
     async def btn_fb(self, interaction, button):
-        await interaction.response.send_message(embed=embed_info("📘 Facebook", "Comandos:\n`-fb post \"texto\"`\n`-fb priv @user msg`\n`-fb perfil`", 0x1877F2), ephemeral=True)
+        emoji = await get_emoji('facebook')
+        await interaction.response.send_message(embed=embed_info(f"{emoji} Facebook", "Comandos:\n`-fb post \"texto\"`\n`-fb priv @user msg`\n`-fb perfil`", 0x1877F2), ephemeral=True)
 
-    @discord.ui.button(label="💬 WhatsApp", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="WhatsApp", style=discord.ButtonStyle.success, row=1)
     async def btn_wa(self, interaction, button):
-        await interaction.response.send_message(embed=embed_info("💬 WhatsApp", "Comandos:\n`-wa contactos`\n`-wa agregar +34... Nombre`\n`-wa chat @user msg`\n`-wa llamar @user`", 0x25D366), ephemeral=True)
+        emoji = await get_emoji('whatsapp')
+        await interaction.response.send_message(embed=embed_info(f"{emoji} WhatsApp", "Comandos:\n`-wa contactos`\n`-wa agregar +34... Nombre`\n`-wa chat @user msg`\n`-wa llamar @user`", 0x25D366), ephemeral=True)
 
-    @discord.ui.button(label="🕸️ DeepWeb", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="DeepWeb", style=discord.ButtonStyle.danger, row=1)
     async def btn_dw(self, interaction, button):
-        await interaction.response.send_message(embed=embed_info("🕸️ DeepWeb", "Anónimo.\n`-dw priv @user mensaje`", 0x2C2F33), ephemeral=True)
+        emoji = await get_emoji('deepweb')
+        await interaction.response.send_message(embed=embed_info(f"{emoji} DeepWeb", "Anónimo.\n`-deepweb @user mensaje`", 0x2C2F33), ephemeral=True)
 
-    @discord.ui.button(label="⚙️ Config", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Config", style=discord.ButtonStyle.secondary, row=2)
     async def btn_cfg(self, interaction, button):
         user_state = await db.get_user_state(self.uid)
         n = user_state['phone_number'] or "❌ Sin número"
@@ -2553,25 +3385,25 @@ class MovilView(discord.ui.View):
         wf = "📶 ON" if user_state['wifi_connected'] else "📶 OFF"
         await interaction.response.send_message(embed=embed_info("⚙️ Configuración", f"📱 {n}\n{av}\n{wf}\n\n`-avion on/off`\n`-wifi conectar/desconectar`\n`-comprar-sim`", 0x95A5A6), ephemeral=True)
 
-# ------------------------------------------------
-# COG: Redes Sociales (Instagram, Twitter, Facebook, DeepWeb)
-# ------------------------------------------------
+# ====================================================
+# COG: Redes Sociales (Instagram, Twitter, Facebook, DeepWeb, WhatsApp, y comando -x)
+# ====================================================
 class Redes(BaseCog):
     @commands.group(name='ig', invoke_without_command=True)
-    @check_ban()
     async def ig(self, ctx):
-        await ctx.send(embed=embed_info("📸 Instagram", "`-ig perfil`\n`-ig post \"texto\"`\n`-ig like <id>`\n`-ig seguir @user`\n`-ig priv @user msg`\n`-ig trending`", 0xE4405F))
+        emoji = await get_emoji('ig')
+        await ctx.send(f"{emoji} **** INSTAGRAM EN NOVA AGORA V2 ****\nUsa los subcomandos: `/ig perfil`, `/ig post`, `/ig like`, `/ig seguir`, `/ig priv`, `/ig trending`")
 
     @ig.command(name='perfil')
-    async def ig_perfil(self, ctx, usuario: discord.Member = None):
-        objetivo = usuario or ctx.author
+    async def ig_perfil(self, interaction: discord.Interaction, usuario: discord.Member = None):
+        objetivo = usuario or interaction.user
         uid = objetivo.id
         user_state = await db.get_user_state(uid)
         seguidores = await db.get_followers_ig(uid)
         siguiendo = await db.get_following_ig(uid)
         posts = await db.get_posts_ig(uid)
         likes_totales = sum(len(p['likes']) for p in posts)
-        embed = discord.Embed(title=f"📸 @{objetivo.name}", color=0xE4405F)
+        embed = discord.Embed(title=f"{await get_emoji('ig')} @{objetivo.name}", color=0xE4405F)
         embed.add_field(name="Seguidores", value=f"{seguidores}", inline=True)
         embed.add_field(name="Siguiendo", value=f"{siguiendo}", inline=True)
         embed.add_field(name="Posts", value=f"{len(posts)}", inline=True)
@@ -2579,38 +3411,42 @@ class Redes(BaseCog):
         embed.add_field(name="Privacidad", value="Pública" if user_state['ig_public'] else "Privada", inline=True)
         embed.add_field(name="Bio", value=user_state['ig_bio'] or "Sin bio", inline=False)
         embed.set_thumbnail(url=objetivo.display_avatar.url)
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
     @ig.command(name='post')
-    async def ig_post(self, ctx, *, texto: str):
-        uid = ctx.author.id
+    async def ig_post(self, interaction: discord.Interaction, texto: str):
+        uid = interaction.user.id
         pid = await db.add_post_ig(uid, texto)
-        await ctx.send(embed=embed_success("📸 Publicado", f"ID: `{pid}`\n{texto[:200]}"))
+        await interaction.response.send_message(f"{await get_emoji('ig')} **** PUBLICA EN INSTAGRAM EN NOVA AGORA V2 ****")
+        await interaction.followup.send(embed=embed_success(f"{await get_emoji('ig')} Publicado", f"ID: `{pid}`\n{texto[:200]}"))
 
     @ig.command(name='like')
-    async def ig_like(self, ctx, post_id: str):
-        uid = ctx.author.id
+    async def ig_like(self, interaction: discord.Interaction, post_id: str):
+        uid = interaction.user.id
         if await db.add_like_ig(post_id, uid):
-            await ctx.send(embed=embed_success("❤️ Like", f"Has dado like al post `{post_id}`.", 0xE4405F))
-            await self.log("IG_LIKE", f"{ctx.author.name} dio like al post {post_id}")
+            await interaction.response.send_message(f"{await get_emoji('ig')} **** LIKE EN INSTAGRAM EN NOVA AGORA V2 ****")
+            await interaction.followup.send(embed=embed_success("❤️ Like", f"Has dado like al post `{post_id}`.", 0xE4405F))
+            await self.log("IG_LIKE", f"{interaction.user.name} dio like al post {post_id}")
         else:
-            await ctx.send(embed=embed_error("Post no encontrado o ya le diste like."))
+            await interaction.response.send_message(embed=embed_error("Post no encontrado o ya le diste like."))
 
     @ig.command(name='seguir')
-    async def ig_seguir(self, ctx, usuario: discord.Member):
-        uid, tid = ctx.author.id, usuario.id
+    async def ig_seguir(self, interaction: discord.Interaction, usuario: discord.Member):
+        uid, tid = interaction.user.id, usuario.id
         if uid == tid:
-            return await ctx.send(embed=embed_error("No puedes seguirte a ti mismo."))
+            return await interaction.response.send_message(embed=embed_error("No puedes seguirte a ti mismo."))
         if await db.is_following_ig(uid, tid):
             await db.unfollow_ig(uid, tid)
-            await ctx.send(embed=embed_success("📸 Dejado de seguir", f"Dejaste de seguir a {usuario.display_name}.", 0xFFA500))
+            await interaction.response.send_message(f"{await get_emoji('ig')} **** DEJÓ DE SEGUIR EN INSTAGRAM EN NOVA AGORA V2 ****")
+            await interaction.followup.send(embed=embed_success(f"{await get_emoji('ig')} Dejado de seguir", f"Dejaste de seguir a {usuario.display_name}.", 0xFFA500))
         else:
             await db.follow_ig(uid, tid)
-            await ctx.send(embed=embed_success("📸 Siguiendo", f"Ahora sigues a {usuario.display_name}.", 0x00FF00))
-            await self.dm_user(tid, discord.Embed(title="📸 Nuevo seguidor", description=f"{ctx.author.display_name} te sigue ahora en Instagram.", color=0xE4405F))
+            await interaction.response.send_message(f"{await get_emoji('ig')} **** SIGUE EN INSTAGRAM EN NOVA AGORA V2 ****")
+            await interaction.followup.send(embed=embed_success(f"{await get_emoji('ig')} Siguiendo", f"Ahora sigues a {usuario.display_name}.", 0x00FF00))
+            await self.dm_user(tid, discord.Embed(title=f"{await get_emoji('ig')} Nuevo seguidor", description=f"{interaction.user.display_name} te sigue ahora en Instagram.", color=0xE4405F))
 
     @ig.command(name='trending')
-    async def ig_trending(self, ctx):
+    async def ig_trending(self, interaction: discord.Interaction):
         rows = await db.fetchall("SELECT id, user_id, texto, tiempo, likes FROM posts_ig")
         posts = []
         for row in rows:
@@ -2618,205 +3454,250 @@ class Redes(BaseCog):
             if len(likes) > 0:
                 posts.append({"user_id": row[1], "texto": row[2], "likes": len(likes), "id": row[0]})
         posts.sort(key=lambda x: x['likes'], reverse=True)
-        embed = discord.Embed(title="📸 TRENDING SEMANAL", color=0xE4405F)
+        embed = discord.Embed(title=f"{await get_emoji('ig')} TRENDING SEMANAL", color=0xE4405F)
         for i, p in enumerate(posts[:5], 1):
-            user = ctx.guild.get_member(p['user_id'])
+            user = interaction.guild.get_member(p['user_id'])
             nombre = user.display_name if user else f"Usuario {p['user_id']}"
-            embed.add_field(
-                name=f"{'🥇' if i==1 else '🥈' if i==2 else '🥉' if i==3 else f'#{i}'} {nombre} — ❤️ {p['likes']}",
-                value=f"{p['texto'][:50]}...\n🆔 `{p['id']}`",
-                inline=False
-            )
-        await ctx.send(embed=embed)
+            embed.add_field(name=f"{'🥇' if i==1 else '🥈' if i==2 else '🥉' if i==3 else f'#{i}'} {nombre} — ❤️ {p['likes']}", value=f"{p['texto'][:50]}...\n🆔 `{p['id']}`", inline=False)
+        await interaction.response.send_message(embed=embed)
 
     @ig.command(name='priv')
-    async def ig_priv(self, ctx, user: discord.Member, *, msg: str):
-        if ctx.author.id == user.id:
-            return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        dm = discord.Embed(
-            title="📩 Instagram — Mensaje privado",
-            description=msg,
-            color=0xE4405F,
-            timestamp=datetime.now()
-        )
-        dm.set_author(name=f"@{ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+    async def ig_priv(self, interaction: discord.Interaction, user: discord.Member, msg: str):
+        if interaction.user.id == user.id:
+            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
+        await interaction.response.send_message(f"{await get_emoji('ig')} **** ENVÍA DM EN INSTAGRAM EN NOVA AGORA V2 ****")
+        dm = discord.Embed(title=f"{await get_emoji('ig')} Instagram — Mensaje privado", description=msg, color=0xE4405F, timestamp=datetime.now())
+        dm.set_author(name=f"@{interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await self.dm_user(user.id, dm)
-        await ctx.send(embed=embed_success("📨 Mensaje enviado", f"Enviado a @{user.display_name}"))
+        await interaction.followup.send(embed=embed_success("📨 Mensaje enviado", f"Enviado a @{user.display_name}"))
 
     @commands.group(name='tw', invoke_without_command=True)
-    @check_ban()
     async def tw(self, ctx):
-        await ctx.send(embed=embed_info("🐦 Twitter", "`-tw perfil`\n`-tw tweet \"texto\"`\n`-tw seguir @user`\n`-tw priv @user msg`", 0x1DA1F2))
+        emoji = await get_emoji('twitter')
+        await ctx.send(f"{emoji} **** TWITTER EN NOVA AGORA V2 ****\nUsa los subcomandos: `/tw perfil`, `/tw tweet`, `/tw seguir`, `/tw priv`")
 
     @tw.command(name='perfil')
-    async def tw_perfil(self, ctx, usuario: discord.Member = None):
-        objetivo = usuario or ctx.author
+    async def tw_perfil(self, interaction: discord.Interaction, usuario: discord.Member = None):
+        objetivo = usuario or interaction.user
         uid = objetivo.id
         seguidores = await db.get_followers_tw(uid)
         siguiendo = await db.get_following_tw(uid)
         posts = await db.fetchall("SELECT id FROM posts_tw WHERE user_id = ?", (uid,))
-        embed = discord.Embed(title=f"🐦 @{objetivo.name}", color=0x1DA1F2)
+        embed = discord.Embed(title=f"{await get_emoji('twitter')} @{objetivo.name}", color=0x1DA1F2)
         embed.add_field(name="Seguidores", value=f"{seguidores}", inline=True)
         embed.add_field(name="Siguiendo", value=f"{siguiendo}", inline=True)
         embed.add_field(name="Tweets", value=f"{len(posts)}", inline=True)
         embed.set_thumbnail(url=objetivo.display_avatar.url)
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
     @tw.command(name='tweet')
-    async def tw_tweet(self, ctx, *, texto: str):
-        uid = ctx.author.id
+    async def tw_tweet(self, interaction: discord.Interaction, texto: str):
+        uid = interaction.user.id
         pid = await db.add_post_tw(uid, texto)
-        await ctx.send(embed=embed_success("🐦 Tweet", f"{texto[:200]}\nID: `{pid}`", 0x1DA1F2))
+        await interaction.response.send_message(f"{await get_emoji('twitter')} **** PUBLICA EN TWITTER EN NOVA AGORA V2 ****")
+        await interaction.followup.send(embed=embed_success(f"{await get_emoji('twitter')} Tweet", f"{texto[:200]}\nID: `{pid}`", 0x1DA1F2))
 
     @tw.command(name='seguir')
-    async def tw_seguir(self, ctx, usuario: discord.Member):
-        uid, tid = ctx.author.id, usuario.id
+    async def tw_seguir(self, interaction: discord.Interaction, usuario: discord.Member):
+        uid, tid = interaction.user.id, usuario.id
         if uid == tid:
-            return await ctx.send(embed=embed_error("No puedes seguirte a ti mismo."))
+            return await interaction.response.send_message(embed=embed_error("No puedes seguirte a ti mismo."))
         if await db.is_following_tw(uid, tid):
             await db.unfollow_tw(uid, tid)
-            await ctx.send(embed=embed_success("🐦 Dejado de seguir", f"Dejaste de seguir a {usuario.display_name} en Twitter.", 0xFFA500))
+            await interaction.response.send_message(f"{await get_emoji('twitter')} **** DEJÓ DE SEGUIR EN TWITTER EN NOVA AGORA V2 ****")
+            await interaction.followup.send(embed=embed_success(f"{await get_emoji('twitter')} Dejado de seguir", f"Dejaste de seguir a {usuario.display_name} en Twitter.", 0xFFA500))
         else:
             await db.follow_tw(uid, tid)
-            await ctx.send(embed=embed_success("🐦 Siguiendo", f"Ahora sigues a {usuario.display_name} en Twitter.", 0x00FF00))
-            await self.dm_user(tid, discord.Embed(title="🐦 Nuevo seguidor", description=f"{ctx.author.display_name} te sigue ahora en Twitter.", color=0x1DA1F2))
+            await interaction.response.send_message(f"{await get_emoji('twitter')} **** SIGUE EN TWITTER EN NOVA AGORA V2 ****")
+            await interaction.followup.send(embed=embed_success(f"{await get_emoji('twitter')} Siguiendo", f"Ahora sigues a {usuario.display_name} en Twitter.", 0x00FF00))
+            await self.dm_user(tid, discord.Embed(title=f"{await get_emoji('twitter')} Nuevo seguidor", description=f"{interaction.user.display_name} te sigue ahora en Twitter.", color=0x1DA1F2))
 
     @tw.command(name='priv')
-    async def tw_priv(self, ctx, user: discord.Member, *, msg: str):
-        if ctx.author.id == user.id:
-            return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        dm = discord.Embed(title="🐦 Twitter — DM", description=msg, color=0x1DA1F2, timestamp=datetime.now())
-        dm.set_author(name=f"@{ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+    async def tw_priv(self, interaction: discord.Interaction, user: discord.Member, msg: str):
+        if interaction.user.id == user.id:
+            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
+        await interaction.response.send_message(f"{await get_emoji('twitter')} **** ENVÍA DM EN TWITTER EN NOVA AGORA V2 ****")
+        dm = discord.Embed(title=f"{await get_emoji('twitter')} Twitter — DM", description=msg, color=0x1DA1F2, timestamp=datetime.now())
+        dm.set_author(name=f"@{interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await self.dm_user(user.id, dm)
-        await ctx.send(embed=embed_success("📨 DM enviado", f"A @{user.display_name}"))
+        await interaction.followup.send(embed=embed_success("📨 DM enviado", f"A @{user.display_name}"))
 
-    @commands.group(name='fb', invoke_without_command=True)
+    # Nuevo comando -x (Twitter DM)
+    @commands.command(name='x')
     @check_ban()
-    async def fb(self, ctx):
-        await ctx.send(embed=embed_info("📘 Facebook", "`-fb post \"texto\"`\n`-fb priv @user msg`\n`-fb perfil`", 0x1877F2))
+    @check_encarcelado()
+    async def twitter_dm(self, ctx, usuario: discord.Member, *, mensaje: str):
+        """Envía un mensaje directo por Twitter a otro usuario. Ej: -x @Juan Hola"""
+        if usuario.id == ctx.author.id:
+            return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
+        await db.add_twitter_dm(ctx.author.id, usuario.id, mensaje)
+        # Enviar notificación al destinatario
+        embed_notif = discord.Embed(
+            title=f"✉️ Nuevo mensaje directo de Twitter",
+            description=f"**{ctx.author.display_name}** te ha enviado un mensaje:\n\n> {mensaje}",
+            color=0x1DA1F2,
+            timestamp=datetime.now()
+        )
+        embed_notif.set_footer(text=f"Usa -x @{ctx.author.name} para responder.")
+        await self.dm_user(usuario.id, embed_notif)
+        await ctx.send(embed=embed_success("✅ Mensaje enviado", f"Tu mensaje ha sido enviado a {usuario.display_name} por Twitter DM."))
+        await self.log("TWITTER_DM", f"{ctx.author.name} -> {usuario.name}: {mensaje}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-    @fb.command(name='post')
-    async def fb_post(self, ctx, *, texto: str):
-        uid = ctx.author.id
+    fb = app_commands.Group(name='fb', description='Facebook - NOVA AGORA V2')
+
+    @fb.command(name='post', description='Publicar en Facebook')
+    async def fb_post(self, interaction: discord.Interaction, texto: str):
+        uid = interaction.user.id
         pid = await db.add_post_fb(uid, texto)
-        await ctx.send(embed=embed_success("📘 Publicado", f"ID: `{pid}`\n{texto[:200]}", 0x1877F2))
+        await interaction.response.send_message(f"{await get_emoji('facebook')} **** PUBLICA EN FACEBOOK EN NOVA AGORA V2 ****")
+        await interaction.followup.send(embed=embed_success(f"{await get_emoji('facebook')} Publicado", f"ID: `{pid}`\n{texto[:200]}", 0x1877F2))
 
-    @fb.command(name='perfil')
-    async def fb_perfil(self, ctx):
-        uid = ctx.author.id
+    @fb.command(name='perfil', description='Ver perfil de Facebook')
+    async def fb_perfil(self, interaction: discord.Interaction):
+        uid = interaction.user.id
         posts = await db.fetchall("SELECT id FROM posts_fb WHERE user_id = ?", (uid,))
-        await ctx.send(embed=embed_info(f"📘 {ctx.author.name}", f"Tienes {len(posts)} publicaciones.", 0x1877F2))
+        await interaction.response.send_message(embed=embed_info(f"{await get_emoji('facebook')} {interaction.user.name}", f"Tienes {len(posts)} publicaciones.", 0x1877F2))
 
-    @fb.command(name='priv')
-    async def fb_priv(self, ctx, user: discord.Member, *, msg: str):
-        if ctx.author.id == user.id:
-            return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        dm = discord.Embed(title="📘 Facebook — Mensaje privado", description=msg, color=0x1877F2, timestamp=datetime.now())
-        dm.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+    @fb.command(name='priv', description='Enviar mensaje privado en Facebook')
+    async def fb_priv(self, interaction: discord.Interaction, user: discord.Member, msg: str):
+        if interaction.user.id == user.id:
+            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
+        await interaction.response.send_message(f"{await get_emoji('facebook')} **** ENVÍA MENSAJE EN FACEBOOK EN NOVA AGORA V2 ****")
+        dm = discord.Embed(title=f"{await get_emoji('facebook')} Facebook — Mensaje privado", description=msg, color=0x1877F2, timestamp=datetime.now())
+        dm.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
         await self.dm_user(user.id, dm)
-        await ctx.send(embed=embed_success("📨 Mensaje enviado", f"A {user.display_name}"))
+        await interaction.followup.send(embed=embed_success("📨 Mensaje enviado", f"A {user.display_name}"))
 
-    @commands.group(name='dw', invoke_without_command=True)
-    @check_ban()
-    async def dw(self, ctx):
-        await ctx.send(embed=embed_info("🕸️ DeepWeb", "Anónimo.\n`-dw priv @user mensaje`", 0x2C2F33))
+    @app_commands.command(name='deepweb', description="Sistema DeepWeb - NOVA AGORA V2")
+    async def deepweb(self, interaction: discord.Interaction, target: discord.Member = None, msg: str = None):
+        if target is None or msg is None:
+            embed = discord.Embed(title=f"{await get_emoji('deepweb')} DEEPWEB — Sistema Anónimo", description="Envía un mensaje anónimo seguro usando el formato correcto.", color=0x2C2F33)
+            embed.add_field(name="📨 **/deepweb @usuario <mensaje>**", value="Envía un mensaje anónimo encriptado directamente a un usuario.", inline=False)
+            embed.add_field(name="🔓 **/descifrar <id>** 🔒 **(FBI)**", value="Intenta descifrar un mensaje (1/10 éxito).", inline=False)
+            embed.add_field(name="ℹ️ Características", value="✅ Identidad anónima\n✅ ID de seguimiento\n✅ Encriptación asimétrica\n✅ FBI puede descifrar (1/10)", inline=False)
+            embed.set_footer(text="Uso responsable requerido • NOVA AGORA")
+            return await interaction.response.send_message(embed=embed)
+        if target.id == interaction.user.id:
+            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
+        text = msg.strip()
+        if not text:
+            return await interaction.response.send_message(embed=embed_error("Debes escribir un mensaje después de mencionar al usuario."))
+        msg_id = await db.add_deepweb_message(interaction.user.id, target.id, text)
+        await interaction.response.send_message(f"{await get_emoji('deepweb')} **** ENVÍA MENSAJE DEEPWEB EN NOVA AGORA V2 ****")
+        dm = discord.Embed(title=f"{await get_emoji('deepweb')} Mensaje Anónimo — DeepWeb", description=text, color=0x2C2F33, timestamp=datetime.now())
+        dm.set_footer(text=f"ID: {msg_id} — Identidad oculta")
+        await self.dm_user(target.id, dm)
+        await interaction.followup.send(embed=embed_success(f"{await get_emoji('deepweb')} Mensaje enviado", f"Anónimo | ID: `{msg_id}`"))
+        await self.log("DEEPWEB", f"{interaction.user.name} → {target.name}: {text[:50]}...")
 
-    @dw.command(name='priv')
-    async def dw_priv(self, ctx, user: discord.Member, *, msg: str):
-        if ctx.author.id == user.id:
-            return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        dm = discord.Embed(title="🕸️ Mensaje Anónimo — DeepWeb", description=msg, color=0x2C2F33, timestamp=datetime.now())
-        dm.set_footer(text="— Identidad oculta")
-        await self.dm_user(user.id, dm)
-        await ctx.send(embed=embed_success("🕸️ Mensaje enviado", "Anónimo."))
+    @app_commands.command(name='descifrar', description="Descifra mensajes DeepWeb - FBI NOVA AGORA V2")
+    async def descifrar(self, interaction: discord.Interaction, mensaje_id: int = None):
+        fbi_role = discord.utils.get(interaction.guild.roles, name="FBI")
+        if not fbi_role or fbi_role not in interaction.user.roles:
+            return await interaction.response.send_message(embed=embed_error("Solo agentes del FBI pueden usar este comando."))
+        if mensaje_id is None:
+            embed = discord.Embed(title="🔐 DESCIFRADOR DeepWeb — FBI Confidencial", description="Sistema de inteligencia para descifrar mensajes DeepWeb anónimos.", color=0x3498DB)
+            embed.add_field(name="📋 Uso", value="`/descifrar <id_del_mensaje>`", inline=False)
+            embed.add_field(name="📊 Probabilidad de Éxito", value="**1/10** (10%) de descifrar la identidad del remitente", inline=False)
+            embed.add_field(name="🔍 Cómo obtener IDs", value="Los IDs se proporcionan cuando se envían mensajes DeepWeb:\n`ID: 12345` (en el mensaje anónimo)", inline=False)
+            embed.add_field(name="✅ Éxito", value="Se revela el nombre del remitente\n📝 Se registra en logs del FBI", inline=False)
+            embed.add_field(name="❌ Fallo", value="La identidad permanece oculta\n🔄 Puedes intentar nuevamente más tarde", inline=False)
+            embed.set_footer(text="Información Clasificada • FBI NOVA AGORA")
+            return await interaction.response.send_message(embed=embed)
+        decode_result = await db.decode_deepweb_message(mensaje_id, interaction.user.id)
+        if not decode_result:
+            return await interaction.response.send_message(embed=embed_error("Mensaje DeepWeb no encontrado."))
+        if decode_result['decoded']:
+            autor = interaction.guild.get_member(decode_result['sender'])
+            nombre = autor.display_name if autor else f"Usuario {decode_result['sender']}"
+            await interaction.response.send_message(f"{await get_emoji('deepweb')} **** DESCIFRA MENSAJE DEEPWEB EN NOVA AGORA V2 ****")
+            embed = discord.Embed(title="🔓 MENSAJE DESCIFRADO", description=f"**Remitente Identificado:** {nombre}\n\n{decode_result['message']}", color=0x3498DB, timestamp=datetime.now())
+            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+            embed.set_footer(text=f"Descifrado exitoso • ID: {mensaje_id}")
+            await interaction.followup.send(embed=embed)
+            await self.log("DESCIFRAR_EXIT", f"{interaction.user.name} descifró mensaje {mensaje_id} de {nombre}")
+        else:
+            await interaction.response.send_message(embed=discord.Embed(title="❌ DESCIFRADO FALLIDO", description="La identidad del remitente sigue protegida por encriptación.\nIntenta nuevamente más tarde con otro mensaje.", color=0xFF0000, timestamp=datetime.now()))
+            await self.log("DESCIFRAR_FAIL", f"{interaction.user.name} falló en descifrar mensaje {mensaje_id}")
 
-# ------------------------------------------------
-# COG: WhatsApp
-# ------------------------------------------------
 class WhatsApp(BaseCog):
-    @commands.group(name='wa', invoke_without_command=True)
-    @check_ban()
-    async def wa(self, ctx):
-        await ctx.send(embed=embed_info("💬 WhatsApp", "`-wa contactos`\n`-wa agregar +34... Nombre`\n`-wa chat @user msg`\n`-wa llamar @user`", 0x25D366))
+    wa = app_commands.Group(name='wa', description='WhatsApp - NOVA AGORA V2')
 
-    @wa.command(name='contactos')
-    async def wa_contactos(self, ctx):
-        uid = ctx.author.id
+    @wa.command(name='contactos', description='Ver contactos de WhatsApp')
+    async def wa_contactos(self, interaction: discord.Interaction):
+        uid = interaction.user.id
         contactos = await db.get_wa_contacts(uid)
         if not contactos:
-            return await ctx.send(embed=embed_info("📒 Contactos", "No tienes contactos."))
+            return await interaction.response.send_message(embed=embed_info(f"{await get_emoji('whatsapp')} Contactos", "No tienes contactos."))
         txt = "\n".join([f"📱 `{num}` — {nom}" for num, nom in contactos.items()])
-        await ctx.send(embed=embed_info("📒 Contactos", txt, 0x25D366))
+        await interaction.response.send_message(embed=embed_info(f"{await get_emoji('whatsapp')} Contactos", txt, 0x25D366))
 
-    @wa.command(name='agregar')
-    async def wa_agregar(self, ctx, numero: str, *, nombre: str):
-        uid = ctx.author.id
+    @wa.command(name='agregar', description='Agregar contacto en WhatsApp')
+    async def wa_agregar(self, interaction: discord.Interaction, numero: str, nombre: str):
+        uid = interaction.user.id
         if not numero.startswith("+"):
             numero = "+" + numero
         await db.add_wa_contact(uid, numero, nombre)
-        await ctx.send(embed=embed_success("✅ Contacto añadido", f"**{nombre}**: `{numero}`"))
+        await interaction.response.send_message(f"{await get_emoji('whatsapp')} **** AÑADE CONTACTO EN WHATSAPP EN NOVA AGORA V2 ****")
+        await interaction.followup.send(embed=embed_success("✅ Contacto añadido", f"**{nombre}**: `{numero}`"))
 
-    @wa.command(name='chat')
-    async def wa_chat(self, ctx, user: discord.Member, *, msg: str):
-        uid, tid = ctx.author.id, user.id
+    @wa.command(name='chat', description='Enviar mensaje en WhatsApp')
+    async def wa_chat(self, interaction: discord.Interaction, user: discord.Member, msg: str):
+        uid, tid = interaction.user.id, user.id
         unum = (await db.get_user_state(uid)).get('phone_number')
         tnum = (await db.get_user_state(tid)).get('phone_number')
         if not unum:
-            return await ctx.send(embed=embed_error("Necesitas una SIM. Usa `-comprar-sim`"))
+            return await interaction.response.send_message(embed=embed_error("Necesitas una SIM. Usa `/comprar-sim`"))
         if not tnum:
-            return await ctx.send(embed=embed_error(f"{user.display_name} no tiene SIM."))
+            return await interaction.response.send_message(embed=embed_error(f"{user.display_name} no tiene SIM."))
         await db.add_wa_chat(uid, tid, msg)
-        dm = discord.Embed(
-            title="💬 WhatsApp — Mensaje",
-            description=msg,
-            color=0x25D366,
-            timestamp=datetime.now()
-        )
-        dm.set_author(name=f"{ctx.author.display_name} ({unum})", icon_url=ctx.author.display_avatar.url)
+        await interaction.response.send_message(f"{await get_emoji('whatsapp')} **** ENVÍA MENSAJE EN WHATSAPP EN NOVA AGORA V2 ****")
+        dm = discord.Embed(title=f"{await get_emoji('whatsapp')} WhatsApp — Mensaje", description=msg, color=0x25D366, timestamp=datetime.now())
+        dm.set_author(name=f"{interaction.user.display_name} ({unum})", icon_url=interaction.user.display_avatar.url)
         dm.set_footer(text=f"Número: {unum}")
         await self.dm_user(tid, dm)
-        await ctx.send(embed=embed_success("📨 Mensaje enviado", f"A {user.display_name} (`{tnum}`)"))
+        await interaction.followup.send(embed=embed_success("📨 Mensaje enviado", f"A {user.display_name} (`{tnum}`)"))
 
-    @wa.command(name='llamar')
-    async def wa_llamar(self, ctx, user: discord.Member, duracion: int = 5):
-        uid, tid = ctx.author.id, user.id
+    @wa.command(name='llamar', description='Hacer llamada en WhatsApp')
+    async def wa_llamar(self, interaction: discord.Interaction, user: discord.Member, duracion: int = 5):
+        uid, tid = interaction.user.id, user.id
         if uid == tid:
-            return await ctx.send(embed=embed_error("No puedes llamarte a ti mismo."))
+            return await interaction.response.send_message(embed=embed_error("No puedes llamarte a ti mismo."))
         unum = (await db.get_user_state(uid)).get('phone_number')
         tnum = (await db.get_user_state(tid)).get('phone_number')
         if not unum:
-            return await ctx.send(embed=embed_error("Necesitas una SIM. Usa `-comprar-sim`"))
+            return await interaction.response.send_message(embed=embed_error("Necesitas una SIM. Usa `/comprar-sim`"))
         if not tnum:
-            return await ctx.send(embed=embed_error(f"{user.display_name} no tiene SIM."))
-        if not ctx.author.voice:
-            return await ctx.send(embed=embed_error("Debes estar en un canal de voz para llamar."))
-        categoria = ctx.guild.get_channel(CANAL_VOICE_CATEGORY)
+            return await interaction.response.send_message(embed=embed_error(f"{user.display_name} no tiene SIM."))
+        if not interaction.user.voice:
+            return await interaction.response.send_message(embed=embed_error("Debes estar en un canal de voz para llamar."))
+        categoria = interaction.guild.get_channel(CANAL_VOICE_CATEGORY)
         if not categoria:
-            categoria = discord.utils.get(ctx.guild.categories, name="Llamadas")
+            categoria = discord.utils.get(interaction.guild.categories, name="Llamadas")
             if not categoria:
-                categoria = await ctx.guild.create_category("Llamadas")
-        canal_nombre = f"📞 Llamada-{ctx.author.name[:5]}-{user.name[:5]}"
+                categoria = await interaction.guild.create_category("Llamadas")
+        canal_nombre = f"📞 Llamada-{interaction.user.name[:5]}-{user.name[:5]}"
         try:
-            canal_voz = await ctx.guild.create_voice_channel(name=canal_nombre, category=categoria, user_limit=2)
-            await ctx.author.move_to(canal_voz)
+            canal_voz = await interaction.guild.create_voice_channel(name=canal_nombre, category=categoria, user_limit=2)
+            await interaction.user.move_to(canal_voz)
             if user.voice:
                 await user.move_to(canal_voz)
-            embed = discord.Embed(
-                title="📞 LLAMADA INICIADA",
-                description=f"De: {ctx.author.mention}\nPara: {user.mention}\nDuración: {duracion} minutos\nCanal: {canal_voz.mention}",
-                color=0x25D366
-            )
-            await ctx.send(embed=embed)
-            await self.dm_user(tid, discord.Embed(title="📞 Llamada entrante", description=f"{ctx.author.display_name} te está llamando. Duración: {duracion} min.", color=0x25D366))
+            await interaction.response.send_message(f"{await get_emoji('whatsapp')} **** LLAMADA EN WHATSAPP EN NOVA AGORA V2 ****")
+            embed = discord.Embed(title="📞 LLAMADA INICIADA", description=f"De: {interaction.user.mention}\nPara: {user.mention}\nDuración: {duracion} minutos\nCanal: {canal_voz.mention}", color=0x25D366)
+            await interaction.followup.send(embed=embed)
+            await self.dm_user(tid, discord.Embed(title="📞 Llamada entrante", description=f"{interaction.user.display_name} te está llamando. Duración: {duracion} min.", color=0x25D366))
             await asyncio.sleep(duracion * 60)
             await canal_voz.delete()
-            await ctx.send(embed=embed_success("📞 LLAMADA FINALIZADA", color=0xFF0000))
         except Exception as e:
-            await ctx.send(embed=embed_error(str(e)))
+            await interaction.followup.send(embed=embed_error(str(e)))
 
-# ------------------------------------------------
+# ====================================================
 # COG: Periódico
-# ------------------------------------------------
+# ====================================================
 class Periodico(BaseCog):
     @commands.command(name='periodico')
     @commands.has_permissions(administrator=True)
@@ -2826,12 +3707,7 @@ class Periodico(BaseCog):
         canal = self.bot.get_channel(CANAL_PERIODICO)
         if not canal:
             return await ctx.send(embed=embed_error("Canal de periódico no configurado. Edita la variable `CANAL_PERIODICO` en el código."))
-        embed = discord.Embed(
-            title="📰 LOS SANTOS OBSERVER",
-            description=f"*Edición del {datetime.now().strftime('%d/%m/%Y %H:%M')}*",
-            color=0x2C3E50,
-            timestamp=datetime.now()
-        )
+        embed = discord.Embed(title="📰 LOS SANTOS OBSERVER", description=f"*Edición del {datetime.now().strftime('%d/%m/%Y %H:%M')}*", color=0x2C3E50, timestamp=datetime.now())
         atracos_hoy = await db.get_estadistica('atracos_hoy')
         embed.add_field(name="🚨 Criminalidad", value=f"{atracos_hoy} atracos en las últimas 24h", inline=False)
         rows = await db.fetchall("SELECT user_id, cash, bank FROM economy ORDER BY (cash+bank) DESC LIMIT 3")
@@ -2844,26 +3720,24 @@ class Periodico(BaseCog):
                 medallas = {1: "🥇", 2: "🥈", 3: "🥉"}
                 top_txt += f"{medallas[i]} **{nombre}** — **${total:,}**\n"
             embed.add_field(name="💵 Top Económico", value=top_txt, inline=False)
-        embed.set_footer(text="NOVA AGORA RP · Los Santos Observer")
+        embed.set_footer(text="NOVA AGORA · Los Santos Observer")
         await canal.send(embed=embed)
         await self.log("PERIODICO", f"{ctx.author.name} publicó una edición del periódico")
         await ctx.send(embed=embed_success("✅ Periódico publicado", "La edición ha sido publicada."))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
-# COG: Admin (con comandos de administración)
-# ------------------------------------------------
+# ====================================================
+# COG: Admin (con permisos para rol Equipo Especial)
+# ====================================================
 class Admin(BaseCog):
     @commands.command(name='say')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def say(self, ctx, *, mensaje: str = None):
         if not mensaje:
-            return await ctx.send(embed=embed_help(
-                "say",
-                "Repite el mensaje en negrita.",
-                "-say <mensaje>",
-                "-say Hola a todos\n-say pepe",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("say", "Repite el mensaje en negrita.", "-say <mensaje>", "-say Hola a todos", "Equipo Especial"))
         await ctx.send(f"**{mensaje}**")
         try:
             await ctx.message.delete()
@@ -2871,51 +3745,38 @@ class Admin(BaseCog):
             pass
 
     @commands.group(name='ban', invoke_without_command=True)
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def ban(self, ctx):
-        await ctx.send(embed=embed_help(
-            "ban",
-            "Banea a un usuario. Usa el subcomando 'definitivo' para baneo permanente + blacklist.",
-            "-ban @usuario [razón]          (baneo normal)\n-ban definitivo @usuario [razón]",
-            "-ban @Juan Spam\n-ban definitivo @Juan Spam masivo",
-            "Administrador"
-        ))
+        await ctx.send(embed=embed_help("ban", "Banea a un usuario. Usa el subcomando 'definitivo' para baneo permanente + blacklist.", "-ban @usuario [razón]\n-ban definitivo @usuario [razón]", "-ban @Juan Spam", "Equipo Especial"))
 
     @ban.command(name='definitivo')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def ban_definitivo(self, ctx, miembro: discord.Member, *, razon: str = "Sin razón"):
         if miembro.id == ctx.author.id:
             return await ctx.send(embed=embed_error("No puedes banearte a ti mismo."))
-
         if not ctx.guild.me.guild_permissions.ban_members:
             return await ctx.send(embed=embed_error("No tengo permiso para banear miembros en este servidor."))
-
         await db.add_to_blacklist(miembro.id, razon, ctx.author.id)
         await db.update_user_state(miembro.id, banned=True, ban_reason=razon, banned_by=ctx.author.id, ban_date=datetime.now().isoformat())
+        await db.delete_dni(miembro.id)
         try:
             await ctx.guild.ban(miembro, reason=razon, delete_message_days=0)
             discord_ban = "✅ Baneado del servidor"
         except Exception as e:
             discord_ban = f"❌ Error al banear del servidor: {str(e)[:100]}"
-        embed = discord.Embed(
-            title="🔨 BANEO DEFINITIVO EJECUTADO",
-            description=f"Usuario: {miembro.mention}\nRazón: {razon}\n{discord_ban}\n🖤 Añadido a la blacklist global.",
-            color=0xFF0000
-        )
+        embed = discord.Embed(title="🔨 BANEO DEFINITIVO EJECUTADO", description=f"Usuario: {miembro.mention}\nRazón: {razon}\n{discord_ban}\n🖤 Añadido a la blacklist global.", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("BAN_DEFINITIVO", f"{ctx.author.name} baneó permanentemente a {miembro.name}: {razon}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='unban')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def unban(self, ctx, uid: int = None):
         if not uid:
-            return await ctx.send(embed=embed_help(
-                "unban",
-                "Desbanea a un usuario por su ID y lo elimina de la blacklist global.",
-                "-unban <id>",
-                "-unban 123456789012345678",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("unban", "Desbanea a un usuario por su ID y lo elimina de la blacklist global.", "-unban <id>", "-unban 123456789012345678", "Equipo Especial"))
         await db.remove_from_blacklist(uid)
         await db.update_user_state(uid, banned=False, ban_reason=None)
         try:
@@ -2926,88 +3787,95 @@ class Admin(BaseCog):
             discord_unban = "⚠️ Usuario no encontrado en Discord, pero eliminado de la blacklist."
         except Exception as e:
             discord_unban = f"❌ Error al desbanear: {str(e)[:100]}"
-        embed = discord.Embed(
-            title="✅ DESBANEO EJECUTADO",
-            description=f"Usuario: {user.mention if 'user' in locals() else uid}\n{discord_unban}",
-            color=0x00FF00
-        )
+        embed = discord.Embed(title="✅ DESBANEO EJECUTADO", description=f"Usuario: {user.mention if 'user' in locals() else uid}\n{discord_unban}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("UNBAN", f"{ctx.author.name} desbaneó ID: {uid} (eliminado de blacklist)")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='money')
-    @commands.has_permissions(administrator=True)
-    async def money(self, ctx, accion: str = None, miembro: discord.Member = None, cantidad: int = None):
+    @tiene_rol_equipo_especial()
+    async def money(self, ctx, accion: str = None, miembro: discord.Member = None, cantidad: int = None, tipo: str = "cash"):
         if not accion or not miembro or not cantidad:
-            return await ctx.send(embed=embed_help(
-                "money",
-                "Añade o quita dinero en efectivo a un usuario.",
-                "-money add/remove @usuario <cantidad>",
-                "-money add @Juan 5000\n-money remove @Juan 2000",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("money", "Añade o quita dinero de un usuario (cash, bank o black).", "-money add/remove @usuario <cantidad> [tipo]", "-money add @Juan 5000", "Equipo Especial"))
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
+        tipo = tipo.lower()
+        if tipo not in ["cash", "bank", "black"]:
+            return await ctx.send(embed=embed_error("Tipo inválido. Usa: cash, bank, black."))
         if accion.lower() == 'add':
-            await db.add_cash(miembro.id, cantidad)
-            await ctx.send(embed=embed_success("💸 Dinero añadido", f"**${cantidad:,}** a {miembro.mention}"))
-            await self.log("MONEY_ADD", f"{ctx.author.name} dio ${cantidad:,} a {miembro.name}")
+            if tipo == "cash":
+                await db.add_cash(miembro.id, cantidad)
+            elif tipo == "bank":
+                await db.add_bank(miembro.id, cantidad)
+            else:
+                await db.add_black(miembro.id, cantidad)
+            await ctx.send(embed=embed_success(f"{await get_emoji('money')} Dinero añadido ({tipo})", f"**${cantidad:,}** a {miembro.mention}"))
+            await self.log("MONEY_ADD", f"{ctx.author.name} dio ${cantidad:,} ({tipo}) a {miembro.name}")
         elif accion.lower() == 'remove':
-            eco = await db.get_economy(miembro.id)
-            if eco['cash'] < cantidad:
-                return await ctx.send(embed=embed_error("Saldo insuficiente."))
-            await db.add_cash(miembro.id, -cantidad)
-            await ctx.send(embed=embed_success("💸 Dinero removido", f"**${cantidad:,}** de {miembro.mention}", 0xFF6600))
-            await self.log("MONEY_REMOVE", f"{ctx.author.name} quitó ${cantidad:,} a {miembro.name}")
+            if tipo == "cash":
+                eco = await db.get_economy(miembro.id)
+                if eco['cash'] < cantidad:
+                    return await ctx.send(embed=embed_error("Saldo insuficiente."))
+                await db.add_cash(miembro.id, -cantidad)
+            elif tipo == "bank":
+                eco = await db.get_economy(miembro.id)
+                if eco['bank'] < cantidad:
+                    return await ctx.send(embed=embed_error("Saldo insuficiente en banco."))
+                await db.add_bank(miembro.id, -cantidad)
+            else:
+                eco = await db.get_economy(miembro.id)
+                if eco['black_money'] < cantidad:
+                    return await ctx.send(embed=embed_error("Saldo insuficiente en dinero negro."))
+                await db.add_black(miembro.id, -cantidad)
+            await ctx.send(embed=embed_success(f"{await get_emoji('money')} Dinero removido ({tipo})", f"**${cantidad:,}** de {miembro.mention}", 0xFF6600))
+            await self.log("MONEY_REMOVE", f"{ctx.author.name} quitó ${cantidad:,} ({tipo}) a {miembro.name}")
         else:
             await ctx.send(embed=embed_error("Acción debe ser `add` o `remove`."))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='setprefix')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def setpre(self, ctx, p: str = None):
         if not p:
-            return await ctx.send(embed=embed_help(
-                "setprefix",
-                "Cambia el prefijo del bot en este servidor.",
-                "-setprefix <nuevo_prefijo>",
-                "-setprefix !",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("setprefix", "Cambia el prefijo del bot en este servidor.", "-setprefix <nuevo_prefijo>", "-setprefix !", "Equipo Especial"))
         if len(p) > 5:
             return await ctx.send(embed=embed_error("Máximo 5 caracteres."))
         with open('prefixes.json', 'w') as f:
             json.dump({str(ctx.guild.id): p}, f)
         await ctx.send(embed=embed_success("✅ Prefijo cambiado", f"Nuevo prefijo: `{p}`"))
         await self.log("SETPREFIX", f"{ctx.author.name} cambió prefijo a '{p}'")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='add-inv')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def addinv(self, ctx, miembro: discord.Member = None, tipo: str = None, item: str = None, cantidad: int = 1):
         if not miembro or not tipo or not item:
-            return await ctx.send(embed=embed_help(
-                "add-inv",
-                "Añade un item al inventario de un usuario.",
-                "-add-inv @usuario <tipo> <item> [cantidad]",
-                "-add-inv @Juan personal Pistola 1\nTipos: personal, vehiculo, propiedad, negocios",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("add-inv", "Añade un item al inventario de un usuario.", "-add-inv @usuario <tipo> <item> [cantidad]", "-add-inv @Juan personal Pistola 1", "Equipo Especial"))
         t = tipo.lower()
         if t not in ['personal', 'vehiculo', 'propiedad', 'negocios']:
             return await ctx.send(embed=embed_error("Tipo inválido. Usa: personal, vehiculo, propiedad, negocios"))
         await db.add_item(miembro.id, t, item, cantidad)
         await ctx.send(embed=embed_success("✅ Item añadido", f"{cantidad}x {item} a {miembro.mention} ({t})"))
         await self.log("ADD_INV", f"{ctx.author.name} añadió {cantidad}x {item} ({t}) a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='rem-inv')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def reminv(self, ctx, miembro: discord.Member = None, tipo: str = None, item: str = None, cantidad: int = 1):
         if not miembro or not tipo or not item:
-            return await ctx.send(embed=embed_help(
-                "rem-inv",
-                "Elimina un item del inventario de un usuario.",
-                "-rem-inv @usuario <tipo> <item> [cantidad]",
-                "-rem-inv @Juan personal Pistola 1",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("rem-inv", "Elimina un item del inventario de un usuario.", "-rem-inv @usuario <tipo> <item> [cantidad]", "-rem-inv @Juan personal Pistola 1", "Equipo Especial"))
         t = tipo.lower()
         if t not in ['personal', 'vehiculo', 'propiedad', 'negocios']:
             return await ctx.send(embed=embed_error("Tipo inválido. Usa: personal, vehiculo, propiedad, negocios"))
@@ -3016,165 +3884,281 @@ class Admin(BaseCog):
             return await ctx.send(embed=embed_error(f"{miembro.name} no tiene {item} en {t}."))
         await ctx.send(embed=embed_success("🗑️ Item eliminado", f"{eliminado}x {item} de {miembro.mention} ({t})", 0xFF6600))
         await self.log("REM_INV", f"{ctx.author.name} eliminó {eliminado}x {item} ({t}) de {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='add-coche')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def addcar(self, ctx, miembro: discord.Member = None, modelo: str = None):
         if not miembro or not modelo:
-            return await ctx.send(embed=embed_help(
-                "add-coche",
-                "Registra un vehículo para un usuario (matrícula aleatoria).",
-                "-add-coche @usuario <modelo>",
-                "-add-coche @Juan Turismo",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("add-coche", "Registra un vehículo para un usuario (matrícula aleatoria).", "-add-coche @usuario <modelo>", "-add-coche @Juan Turismo", "Equipo Especial"))
         matricula = f"{random.randint(1000,9999)} {''.join(random.choices('BCDFGHJKLMNPQRSTVWXYZ', k=3))}"
         await db.add_vehiculo(miembro.id, matricula, modelo)
-        embed = discord.Embed(
-            title="✅ VEHÍCULO REGISTRADO",
-            description=f"Modelo: {modelo}\nMatrícula: {matricula}\nPropietario: {miembro.mention}",
-            color=0x00FF00
-        )
+        embed = discord.Embed(title="✅ VEHÍCULO REGISTRADO", description=f"Modelo: {modelo}\nMatrícula: {matricula}\nPropietario: {miembro.mention}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("ADD_COCHE", f"{ctx.author.name} añadió {modelo} ({matricula}) a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='remove-coche')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def remcar(self, ctx, miembro: discord.Member = None, matricula: str = None):
         if not miembro or not matricula:
-            return await ctx.send(embed=embed_help(
-                "remove-coche",
-                "Elimina un vehículo de un usuario por matrícula.",
-                "-remove-coche @usuario <matrícula>",
-                "-remove-coche @Juan 1234 ABC",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("remove-coche", "Elimina un vehículo de un usuario por matrícula.", "-remove-coche @usuario <matrícula>", "-remove-coche @Juan 1234 ABC", "Equipo Especial"))
         await db.execute("DELETE FROM vehiculos WHERE user_id = ? AND matricula = ?", (miembro.id, matricula))
         await ctx.send(embed=embed_success("🗑️ Vehículo eliminado", f"Matrícula {matricula} de {miembro.mention}", 0xFF6600))
         await self.log("REM_COCHE", f"{ctx.author.name} quitó {matricula} a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='add-droga')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def adddrg(self, ctx, miembro: discord.Member = None, tipo: str = None, cantidad: int = 1):
         if not miembro or not tipo:
-            return await ctx.send(embed=embed_help(
-                "add-droga",
-                "Añade droga al inventario personal de un usuario.",
-                "-add-droga @usuario <tipo> [cantidad]",
-                "-add-droga @Juan Marihuana 5",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("add-droga", "Añade droga al inventario personal de un usuario.", "-add-droga @usuario <tipo> [cantidad]", "-add-droga @Juan Marihuana 5", "Equipo Especial"))
         tipo_norm = tipo.capitalize()
         if tipo_norm not in Drogas.EMOJIS_DROGA:
             return await ctx.send(embed=embed_error(f"Tipo no válido. Opciones: {', '.join(Drogas.EMOJIS_DROGA.keys())}"))
         await db.add_item(miembro.id, "personal", tipo_norm, cantidad)
         await ctx.send(embed=embed_success("✅ Droga añadida", f"{cantidad}x {tipo_norm} a {miembro.mention}"))
         await self.log("ADD_DROGA", f"{ctx.author.name} añadió {cantidad}x {tipo_norm} a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='add-licencia')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def addlicencia(self, ctx, miembro: discord.Member = None, licencia: str = None):
         if not miembro or not licencia:
-            return await ctx.send(embed=embed_help(
-                "add-licencia",
-                "Otorga una licencia de armas.",
-                "-add-licencia @usuario <tipo_licencia>",
-                "-add-licencia @Juan licencia_pistola",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("add-licencia", "Otorga una licencia de armas.", "-add-licencia @usuario <tipo_licencia>", "-add-licencia @Juan licencia_pistola", "Equipo Especial"))
         await db.dar_licencia(miembro.id, licencia.lower())
         await ctx.send(embed=embed_success("✅ Licencia otorgada", f"{licencia} a {miembro.mention}"))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='rem-licencia')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def remlicencia(self, ctx, miembro: discord.Member = None, licencia: str = None):
         if not miembro or not licencia:
-            return await ctx.send(embed=embed_help(
-                "rem-licencia",
-                "Revoca una licencia de armas.",
-                "-rem-licencia @usuario <tipo_licencia>",
-                "-rem-licencia @Juan licencia_pistola",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("rem-licencia", "Revoca una licencia de armas.", "-rem-licencia @usuario <tipo_licencia>", "-rem-licencia @Juan licencia_pistola", "Equipo Especial"))
         await db.quitar_licencia(miembro.id, licencia.lower())
         await ctx.send(embed=embed_success("🗑️ Licencia revocada", f"{licencia} a {miembro.mention}", 0xFF6600))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='quitar-warn')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def quitar_warn(self, ctx, miembro: discord.Member = None, id_warn: int = None):
         if not miembro or not id_warn:
-            return await ctx.send(embed=embed_help(
-                "quitar-warn",
-                "Elimina una advertencia de un usuario por su ID.",
-                "-quitar-warn @usuario <id_warn>",
-                "-quitar-warn @Juan 3",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("quitar-warn", "Elimina una advertencia de un usuario por su ID.", "-quitar-warn @usuario <id_warn>", "-quitar-warn @Juan 3", "Equipo Especial"))
         row = await db.fetchone("SELECT id FROM warnings WHERE id = ? AND user_id = ?", (id_warn, miembro.id))
         if not row:
             return await ctx.send(embed=embed_error("Advertencia no encontrada."))
         await db.execute("DELETE FROM warnings WHERE id = ?", (id_warn,))
         await self.registrar_log_moderacion(ctx, f"WARN #{id_warn} ELIMINADA", miembro, "Eliminada por administrador")
         await ctx.send(embed=embed_success("🗑️ Advertencia eliminada", f"Se eliminó la advertencia #{id_warn} de {miembro.mention}.", 0xFF6600))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='economy-reset')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_equipo_especial()
     async def economy_reset(self, ctx, target: str = None, cantidad: int = 0):
         if not target:
-            return await ctx.send(embed=embed_help(
-                "economy-reset",
-                "Resetea la economía de un usuario o de todos los miembros con un rol.",
-                "-economy-reset @usuario [cantidad]\n-economy-reset @rol [cantidad]",
-                "-economy-reset @Juan 1000\n-economy-reset @Nuevos 500",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("economy-reset", "Resetea la economía de un usuario o de todos los miembros con un rol.", "-economy-reset @usuario [cantidad]\n-economy-reset @rol [cantidad]", "-economy-reset @Juan 1000\n-economy-reset @Nuevos 500", "Equipo Especial"))
         if cantidad < 0:
             return await ctx.send(embed=embed_error("La cantidad no puede ser negativa."))
-
         try:
             user = await commands.MemberConverter().convert(ctx, target)
-            await db.execute("UPDATE economy SET cash = ?, bank = ?, black_money = ? WHERE user_id = ?",
-                             (cantidad, cantidad, cantidad, user.id))
+            await db.execute("UPDATE economy SET cash = ?, bank = ?, black_money = ? WHERE user_id = ?", (cantidad, cantidad, cantidad, user.id))
             await ctx.send(embed=embed_success("✅ Economía reseteada", f"Se ha reseteado la economía de {user.mention} a **${cantidad:,}**."))
             await self.log("ECONOMY_RESET", f"{ctx.author.name} reseteó economía de {user.name} a ${cantidad}")
             return
         except commands.BadArgument:
             pass
-
         try:
             role = await commands.RoleConverter().convert(ctx, target)
             members = [m for m in ctx.guild.members if role in m.roles and not m.bot]
             if not members:
                 return await ctx.send(embed=embed_error(f"No hay miembros con el rol {role.mention}."))
-
             view = ConfirmView(ctx.author.id)
-            embed = discord.Embed(
-                title="⚠️ Confirmar reseteo masivo",
-                description=f"¿Estás seguro de que quieres resetear la economía de **{len(members)}** miembros con el rol {role.mention} a **${cantidad:,}**?",
-                color=0xFFA500
-            )
-            await ctx.send(embed=embed, view=view)
+            embed_confirm = discord.Embed(title="⚠️ Confirmar reseteo masivo", description=f"¿Estás seguro de que quieres resetear la economía de **{len(members)}** miembros con el rol {role.mention} a **${cantidad:,}**?", color=0xFFA500)
+            await ctx.send(embed=embed_confirm, view=view)
             await view.wait()
             if not view.value:
                 return await ctx.send(embed=embed_info("Operación cancelada."))
-
             for member in members:
-                await db.execute("UPDATE economy SET cash = ?, bank = ?, black_money = ? WHERE user_id = ?",
-                                 (cantidad, cantidad, cantidad, member.id))
+                await db.execute("UPDATE economy SET cash = ?, bank = ?, black_money = ? WHERE user_id = ?", (cantidad, cantidad, cantidad, member.id))
             await ctx.send(embed=embed_success("✅ Economías reseteadas", f"Se ha reseteado la economía de {len(members)} miembros a **${cantidad:,}**."))
             await self.log("ECONOMY_RESET_MASS", f"{ctx.author.name} reseteó economía de {len(members)} miembros con rol {role.name} a ${cantidad}")
             return
         except commands.BadArgument:
             pass
-
         await ctx.send(embed=embed_error("No se encontró un usuario o rol con ese nombre. Usa @usuario o @rol."))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
-# COG: Roleplay (me, do, entorno, reparar, curar) - CORREGIDO
-# ------------------------------------------------
+    @commands.command(name='reset-user')
+    @tiene_rol_equipo_especial()
+    async def reset_user(self, ctx, miembro: discord.Member, flags: str = ""):
+        uid = miembro.id
+        full_reset = "--full" in flags.lower()
+        try:
+            await db.execute("UPDATE economy SET cash=0, bank=0, black_money=0 WHERE user_id=?", (uid,))
+            await db.execute("DELETE FROM inventory WHERE user_id=?", (uid,))
+            await db.execute("DELETE FROM vehiculos WHERE user_id=?", (uid,))
+            await db.execute("DELETE FROM armas_equipadas WHERE user_id=?", (uid,))
+            await db.execute("DELETE FROM armas_licencias WHERE user_id=?", (uid,))
+            await db.execute("DELETE FROM multas WHERE user_id=? AND pagada=0", (uid,))
+            await db.update_user_state(uid, encarcelado_hasta=None)
+            if full_reset:
+                await db.delete_dni(uid)
+            embed = discord.Embed(title="✅ Usuario Reseteado", color=discord.Color.green())
+            embed.add_field(name="Limpiado", value="Dinero, Inventario, Vehículos, Armas, Multas", inline=False)
+            embed.add_field(name="Mantenido", value="PDA, Nivel, DNI (a menos que --full)", inline=False)
+            await ctx.send(embed=embed)
+            await self.log("RESET_USER", f"{ctx.author.name} reseteó {miembro.name}")
+        except Exception as e:
+            await ctx.send(embed=embed_error(f"Error: {str(e)[:100]}"))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='create-item')
+    @tiene_rol_equipo_especial()
+    async def create_item(self, ctx, nombre: str, precio: int, emoji: str, *, descripcion: str = ""):
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
+        nombre = nombre.strip()
+        if not nombre:
+            return await ctx.send(embed=embed_error("Debes especificar un nombre para el item."))
+        if precio <= 0:
+            return await ctx.send(embed=embed_error("El precio debe ser mayor a 0."))
+        if len(emoji) > 2:
+            emoji = emoji[:2]
+        if nombre.lower() in TIENDA_ITEMS_DICT:
+            return await ctx.send(embed=embed_error(f"Ya existe un item con nombre '{nombre}'. Usa otro nombre."))
+        custom_items = []
+        if os.path.exists(CUSTOM_ITEMS_FILE):
+            with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+                custom_items = json.load(f)
+        custom_items.append([nombre, precio, emoji, descripcion])
+        with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
+            json.dump(custom_items, f, indent=2, ensure_ascii=False)
+        TIENDA_ITEMS_FULL = TIENDA_ITEMS_BASE + custom_items
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        embed = discord.Embed(title=f"{await get_emoji('shop')} Item creado", description=f"**{nombre}** agregado a la tienda con precio **${precio:,}** {emoji}\nDescripción: {descripcion if descripcion else 'Sin descripción'}", color=0x00FF00)
+        await ctx.send(embed=embed)
+        await self.log("CREATE_ITEM", f"{ctx.author.name} creó item '{nombre}' (${precio})")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='delete-item')
+    @tiene_rol_equipo_especial()
+    async def delete_item(self, ctx, *, nombre: str):
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
+        nombre = nombre.strip()
+        if not nombre:
+            return await ctx.send(embed=embed_error("Debes especificar el nombre del item a eliminar."))
+        for item in TIENDA_ITEMS_BASE:
+            if item[0].lower() == nombre.lower():
+                return await ctx.send(embed=embed_error("No puedes eliminar un item estándar. Solo items personalizados."))
+        if not os.path.exists(CUSTOM_ITEMS_FILE):
+            return await ctx.send(embed=embed_error("No hay items personalizados."))
+        with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+            custom_items = json.load(f)
+        original_len = len(custom_items)
+        new_custom = [item for item in custom_items if item[0].lower() != nombre.lower()]
+        if len(new_custom) == original_len:
+            return await ctx.send(embed=embed_error(f"No se encontró el item personalizado '{nombre}'."))
+        with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
+            json.dump(new_custom, f, indent=2, ensure_ascii=False)
+        TIENDA_ITEMS_FULL = TIENDA_ITEMS_BASE + new_custom
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        embed = discord.Embed(title="✅ Item eliminado", description=f"**{nombre}** ha sido eliminado de la tienda.", color=0xFF6600)
+        await ctx.send(embed=embed)
+        await self.log("DELETE_ITEM", f"{ctx.author.name} eliminó item '{nombre}'")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='give-item')
+    @tiene_rol_equipo_especial()
+    async def give_item(self, ctx, miembro: discord.Member, item: str, cantidad: int = 1):
+        if cantidad <= 0:
+            return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
+        await db.add_item(miembro.id, "personal", item, cantidad)
+        embed = discord.Embed(title="✅ Item regalado", description=f"{cantidad}x **{item}** entregado a {miembro.mention}.", color=0x00FF00)
+        await ctx.send(embed=embed)
+        await self.log("GIVE_ITEM", f"{ctx.author.name} dio {cantidad}x {item} a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='take-item')
+    @tiene_rol_equipo_especial()
+    async def take_item(self, ctx, miembro: discord.Member, item: str, cantidad: int = 1):
+        if cantidad <= 0:
+            return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
+        eliminado = await db.remove_item(miembro.id, "personal", item, cantidad)
+        if eliminado == 0:
+            return await ctx.send(embed=embed_error(f"{miembro.mention} no tiene {item} o cantidad insuficiente."))
+        embed = discord.Embed(title="🗑️ Item quitado", description=f"{eliminado}x **{item}** quitado a {miembro.mention}.", color=0xFF6600)
+        await ctx.send(embed=embed)
+        await self.log("TAKE_ITEM", f"{ctx.author.name} quitó {eliminado}x {item} a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='mass-economy')
+    @tiene_rol_equipo_especial()
+    async def mass_economy(self, ctx, rol: discord.Role, cantidad: int):
+        """Asigna dinero en efectivo (cash) a todos los miembros con un rol específico."""
+        if cantidad <= 0:
+            return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
+        miembros = [m for m in ctx.guild.members if rol in m.roles and not m.bot]
+        if not miembros:
+            return await ctx.send(embed=embed_error(f"No hay miembros con el rol {rol.mention}."))
+        view = ConfirmView(ctx.author.id)
+        embed_confirm = discord.Embed(title="⚠️ Confirmar asignación masiva", description=f"¿Estás seguro de que quieres dar **${cantidad:,}** a **{len(miembros)}** miembros con el rol {rol.mention}?", color=0xFFA500)
+        await ctx.send(embed=embed_confirm, view=view)
+        await view.wait()
+        if not view.value:
+            return await ctx.send(embed=embed_info("Operación cancelada."))
+        for member in miembros:
+            await db.add_cash(member.id, cantidad)
+        embed = discord.Embed(title="✅ Asignación masiva completada", description=f"Se ha dado **${cantidad:,}** a **{len(miembros)}** miembros con el rol {rol.mention}.", color=0x00FF00)
+        await ctx.send(embed=embed)
+        await self.log("MASS_ECONOMY", f"{ctx.author.name} dio ${cantidad} a {len(miembros)} miembros con rol {rol.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+# ====================================================
+# COG: Roleplay
+# ====================================================
 class Roleplay(BaseCog):
     @commands.command(name='me')
-    @check_encarcelado()
     async def me(self, ctx, *, accion: str):
         try:
             nombre = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
@@ -3189,7 +4173,6 @@ class Roleplay(BaseCog):
             await ctx.send(embed=embed_error(f"Error al ejecutar -me: {str(e)[:100]}"))
 
     @commands.command(name='do')
-    @check_encarcelado()
     async def do(self, ctx, *, pensamiento: str):
         try:
             nombre = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
@@ -3204,7 +4187,6 @@ class Roleplay(BaseCog):
             await ctx.send(embed=embed_error(f"Error al ejecutar -do: {str(e)[:100]}"))
 
     @commands.command(name='entorno')
-    @check_encarcelado()
     async def entorno(self, ctx, *, descripcion: str):
         try:
             partes = descripcion.split("|", 1)
@@ -3223,17 +4205,11 @@ class Roleplay(BaseCog):
 
     @commands.command(name='reparar')
     @tiene_profesion("mecánico", "mecanico")
-    @check_encarcelado()
     async def reparar(self, ctx, objetivo: discord.Member, *, descripcion: str = "Reparación completada."):
         try:
             nombre_mec = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
             nombre_obj = await self.obtener_nombre_dni(objetivo.id) or objetivo.display_name
-            embed = discord.Embed(
-                title="🔧 REPARACIÓN COMPLETADA",
-                description=f"**{nombre_mec}** ha reparado el vehículo de **{nombre_obj}**.\n\n*{descripcion.strip()}*",
-                color=0xE67E22,
-                timestamp=datetime.now()
-            )
+            embed = discord.Embed(title="🔧 REPARACIÓN COMPLETADA", description=f"**{nombre_mec}** ha reparado el vehículo de **{nombre_obj}**.\n\n*{descripcion.strip()}*", color=0xE67E22, timestamp=datetime.now())
             await ctx.send(embed=embed)
             try:
                 await ctx.message.delete()
@@ -3244,17 +4220,11 @@ class Roleplay(BaseCog):
 
     @commands.command(name='curar')
     @tiene_profesion("médico", "medico", "doctor", "enfermero", "ems")
-    @check_encarcelado()
     async def curar(self, ctx, objetivo: discord.Member, *, descripcion: str = "Tratamiento completado."):
         try:
             nombre_med = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
             nombre_obj = await self.obtener_nombre_dni(objetivo.id) or objetivo.display_name
-            embed = discord.Embed(
-                title="🏥 CURACIÓN COMPLETADA",
-                description=f"**{nombre_med}** ha atendido a **{nombre_obj}**.\n\n*{descripcion.strip()}*",
-                color=0x2ECC71,
-                timestamp=datetime.now()
-            )
+            embed = discord.Embed(title="🏥 CURACIÓN COMPLETADA", description=f"**{nombre_med}** ha atendido a **{nombre_obj}**.\n\n*{descripcion.strip()}*", color=0x2ECC71, timestamp=datetime.now())
             await ctx.send(embed=embed)
             try:
                 await ctx.message.delete()
@@ -3263,9 +4233,9 @@ class Roleplay(BaseCog):
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -curar: {str(e)[:100]}"))
 
-# ------------------------------------------------
-# COG: Hosting (CORREGIDO)
-# ------------------------------------------------
+# ====================================================
+# COG: Hosting (Comando -bot y -bot-off)
+# ====================================================
 class Hosting(BaseCog):
     def __init__(self, bot):
         super().__init__(bot)
@@ -3274,7 +4244,6 @@ class Hosting(BaseCog):
     @commands.command(name='bot', aliases=['Bot'])
     @is_owner()
     async def hosting_comando(self, ctx, dias: int = None):
-        """Activa/renueva el bot por X días (solo owners)."""
         if dias is None:
             expiry = await db.get_expiry()
             if expiry and self.bot_active:
@@ -3307,17 +4276,18 @@ class Hosting(BaseCog):
                     timestamp=datetime.now()
                 )
             await ctx.send(embed=embed)
+            try:
+                await ctx.message.delete()
+            except:
+                pass
             return
-
         if dias < 1:
             return await ctx.send(embed=embed_error("❌ Debes especificar al menos 1 día."))
         if dias > 30:
             return await ctx.send(embed=embed_error("❌ No puedes activar por más de 30 días."))
-
         nueva_expiry = datetime.now() + timedelta(days=dias)
         await db.set_expiry(nueva_expiry)
         self.bot_active = True
-
         embed = discord.Embed(
             title="✅ Bot activado con éxito",
             description=f"**Duración:** {dias} días\n"
@@ -3329,14 +4299,17 @@ class Hosting(BaseCog):
         embed.set_footer(text="Para detener: Cierra la terminal manualmente")
         await ctx.send(embed=embed)
         await self.log("HOSTING", f"{ctx.author.name} activó el bot por {dias} días. Expira: {nueva_expiry}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-    @commands.command(name='botoff', aliases=['botStop', 'botstop'])
+    @commands.command(name='bot-off', aliases=['Bot-off', 'botoff', 'botStop', 'botstop'])
     @is_owner()
     async def botoff_comando(self, ctx):
-        """Detiene el bot inmediatamente (solo owners)."""
         embed = discord.Embed(
             title="⛔ Bot detenido",
-            description="El bot se está apagando...",
+            description="El bot se está apagando...\nNota: Para que el bot funcione 24/7 necesita un servidor o VPS encendido. Si el PC está apagado, no puede ejecutarse hasta que se encienda de nuevo.",
             color=discord.Color.red(),
             timestamp=datetime.now()
         )
@@ -3347,7 +4320,6 @@ class Hosting(BaseCog):
 
     @tasks.loop(hours=1)
     async def check_expiry(self):
-        """Verifica cada hora si el bot debe seguir activo."""
         expiry = await db.get_expiry()
         if expiry:
             if datetime.now() < expiry:
@@ -3372,55 +4344,39 @@ class Hosting(BaseCog):
             if expiry:
                 print(f"❌ Bot ha expirado - Última expiración fue: {expiry}")
 
-# ------------------------------------------------
-# COG: Soporte (status, votacion, purge, config, roles, etc.)
-# ------------------------------------------------
+# ====================================================
+# COG: Soporte (status, votacion, cierre-rol)
+# ====================================================
 class Soporte(BaseCog):
     @commands.command(name='status')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_iniciador()
     async def status(self, ctx, iniciador: str = None, ciudadanos: int = None, policias: int = None, soporte: int = 0):
         if iniciador is None or ciudadanos is None or policias is None:
-            embed = embed_help(
-                "status",
-                "Publica el estado de la sesión de rol en el canal actual.",
-                "-status <iniciador> <ciudadanos> <policías> [soporte]",
-                "-status Juan 10 5 2",
-                "Administrador"
-            )
+            embed = embed_help("status", "Publica el estado de la sesión de rol en el canal actual.", "-status <iniciador> <ciudadanos> <policías> [soporte]", "-status Juan 10 5 2", "Iniciador de rol")
             return await ctx.send(embed=embed)
         if any(x < 0 for x in [ciudadanos, policias, soporte]):
             return await ctx.send(embed=embed_error("Los números no pueden ser negativos."))
         total = ciudadanos + policias + soporte
-        embed = discord.Embed(
-            title="🎮 ESTAMOS EN ROL 🎮",
-            color=discord.Color.red(),
-            timestamp=datetime.now()
-        )
+        embed = discord.Embed(title="🚨 ESTAMOS EN ROL 🚨", color=discord.Color.red(), timestamp=datetime.now())
         embed.add_field(name="📌 Iniciador:", value=f"```\n{iniciador}\n```", inline=False)
         embed.add_field(name="🧑 Personas en rol:", value=f"```\n{ciudadanos}\n```", inline=False)
         embed.add_field(name="🚔 Policías en rol:", value=f"```\n{policias}\n```", inline=False)
         embed.add_field(name="🛠️ Soporte en rol:", value=f"```\n{soporte}\n```", inline=False)
         embed.add_field(name="📊 Total en sesión:", value=f"```\n{total}\n```", inline=False)
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
-        embed.set_footer(text=f"Soporte: {ctx.author.display_name}  ·  NOVA AGORA RP", icon_url=ctx.author.display_avatar.url)
+        embed.set_footer(text=f"Soporte: {ctx.author.display_name}  ·  NOVA AGORA", icon_url=ctx.author.display_avatar.url)
         try:
             await ctx.message.delete()
         except:
             pass
-        await ctx.send(content="@rol", embed=embed)
+        await ctx.send(content="<@&1450592205898252381>", embed=embed)
         await self.log("STATUS", f"{ctx.author.name} — {iniciador} | {ciudadanos}p {policias}pol {soporte}sop")
 
     @commands.command(name='votacion')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_iniciador()
     async def votacion(self, ctx, hora: str = None, *, tema: str = None):
         if not hora:
-            embed = embed_help(
-                "votacion",
-                "Crea una votación de rol en el canal actual con reacciones.",
-                "-votacion <hora> [tema]",
-                "-votacion 20:00\n-votacion 20:00 Sesión nocturna",
-                "Administrador"
-            )
+            embed = embed_help("votacion", "Crea una votación de rol en el canal actual con reacciones.", "-votacion <hora> [tema]", "-votacion 20:00", "Iniciador de rol")
             return await ctx.send(embed=embed)
         try:
             datetime.strptime(hora, "%H:%M")
@@ -3433,431 +4389,74 @@ class Soporte(BaseCog):
         await self._publicar_votacion(ctx.channel, ctx.author, {"hora": hora, "tema": tema})
 
     async def _publicar_votacion(self, canal, autor, datos):
-        embed = discord.Embed(
-            title="🗳️ VOTACIÓN DE ROL ✨",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
+        embed = discord.Embed(title="📌 VOTACIÓN DE ROL 📌", color=discord.Color.blue(), timestamp=datetime.now())
         embed.add_field(name="📌 → Hora:", value=f"```\n{datos['hora']}\n```", inline=False)
         if datos.get("tema"):
             embed.add_field(name="📝 → Tema:", value=f"```\n{datos['tema']}\n```", inline=False)
-        embed.add_field(
-            name="\u200b",
-            value=(
-                "✅ → **Si te vas a unir.**\n🚔 → **Si te unes como policía.**\n"
-                "❌ → **No te unes.**\n😅 → **Si te vas a unir tarde.**"
-            ),
-            inline=False
-        )
+        embed.add_field(name="\u200b", value="✅ → **Si te vas a unir.**\n🚔 → **Si te unes como policía.**\n❌ → **No te unes.**\n😅 → **Si te vas a unir tarde.**", inline=False)
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
-        embed.set_footer(text=f"Soporte: {autor.display_name}  ·  NOVA AGORA RP", icon_url=autor.display_avatar.url)
+        embed.set_footer(text=f"Soporte: {autor.display_name}  ·  NOVA AGORA", icon_url=autor.display_avatar.url)
         msg = await canal.send(content="@rol", embed=embed)
         for emoji in ["✅", "🚔", "❌", "😅"]:
             await msg.add_reaction(emoji)
         await self.log("VOTACION", f"{autor.name} → {datos['hora']}")
 
-    @commands.command(name='purge')
-    @commands.has_permissions(manage_messages=True)
-    async def purge(self, ctx, cantidad: int = None):
-        if cantidad is None:
-            embed = embed_help(
-                "purge",
-                "Borra mensajes en masa en el canal actual.",
-                "-purge <1-100>",
-                "-purge 20",
-                "Gestionar mensajes"
-            )
-            return await ctx.send(embed=embed)
-        if not 1 <= cantidad <= 100:
-            return await ctx.send(embed=embed_error("La cantidad debe estar entre 1 y 100."))
-        try:
-            deleted = await ctx.channel.purge(limit=cantidad + 1)
-            msg = await ctx.send(embed=embed_success("🧹 Mensajes eliminados", f"**{len(deleted)-1}** mensajes borrados."))
-            await asyncio.sleep(4)
-            await msg.delete()
-        except discord.HTTPException as e:
-            if e.code == 50034:
-                await ctx.send(embed=embed_error("No se pueden borrar mensajes de más de 14 días."))
-            else:
-                await ctx.send(embed=embed_error(f"Error: {str(e)[:100]}"))
-
-    @commands.command(name='config')
-    @commands.has_permissions(administrator=True)
-    async def config(self, ctx, rol: str = None, *, descripcion: str = None):
-        if rol is None or descripcion is None:
-            embed = embed_help(
-                "config",
-                "Guarda la descripción de un rol para mostrarla con `-roles`.",
-                "-config <nombre_del_rol> <descripción>",
-                "-config Policía Rol encargado de mantener el orden.",
-                "Administrador"
-            )
-            return await ctx.send(embed=embed)
-        cfg = self.cargar_config_roles()
-        key = rol.lower().strip()
-        cfg[key] = {
-            "nombre": rol.strip(),
-            "descripcion": descripcion.strip(),
-            "configurado_por": ctx.author.display_name,
-            "fecha": datetime.now().strftime("%d/%m/%Y %H:%M")
-        }
-        self.guardar_config_roles(cfg)
-        embed = discord.Embed(title="⚙️ ROL CONFIGURADO", color=discord.Color.blue())
-        embed.add_field(name="📌 Rol", value=f"`{rol.strip()}`", inline=True)
-        embed.add_field(name="📝 Descripción", value=descripcion.strip(), inline=False)
-        await ctx.send(embed=embed)
-
-    @commands.command(name='roles')
-    async def roles(self, ctx, rol: Optional[str] = None):
-        cfg = self.cargar_config_roles()
-        if not cfg:
-            return await ctx.send(embed=embed_error("No hay roles configurados."))
-        if rol:
-            key = rol.lower().strip()
-            if key not in cfg:
-                return await ctx.send(embed=embed_error(f"Rol `{rol}` no encontrado."))
-            r = cfg[key]
-            embed = discord.Embed(title=f"⚙️ {r['nombre']}", description=r['descripcion'], color=discord.Color.blue())
-            embed.set_footer(text=f"Configurado por {r.get('configurado_por','?')} · {r.get('fecha','?')}")
-            return await ctx.send(embed=embed)
-        embed = discord.Embed(title="📋 Roles Configurados", color=discord.Color.blue(), timestamp=datetime.now())
-        for key, r in cfg.items():
-            embed.add_field(name=f"⚙️ {r['nombre']}", value=r['descripcion'][:100], inline=False)
-        await ctx.send(embed=embed)
-
-    @commands.command(name='quitar-rol')
-    @commands.has_permissions(administrator=True)
-    async def quitar_rol(self, ctx, *, rol: str = None):
-        if rol is None:
-            embed = embed_help(
-                "quitar-rol",
-                "Elimina la configuración de un rol.",
-                "-quitar-rol <nombre_del_rol>",
-                "-quitar-rol Policía",
-                "Administrador"
-            )
-            return await ctx.send(embed=embed)
-        cfg = self.cargar_config_roles()
-        key = rol.lower().strip()
-        if key not in cfg:
-            return await ctx.send(embed=embed_error(f"Rol `{rol}` no encontrado."))
-        nombre = cfg[key]["nombre"]
-        del cfg[key]
-        self.guardar_config_roles(cfg)
-        embed = discord.Embed(title="🗑️ ROL ELIMINADO", color=discord.Color.red(), timestamp=datetime.now())
-        embed.add_field(name="📌 Rol eliminado", value=f"`{nombre}`", inline=True)
-        embed.add_field(name="👤 Eliminado por", value=ctx.author.mention, inline=True)
-        embed.set_footer(text=f"Quedan {len(cfg)} roles configurados")
-        await ctx.send(embed=embed)
-
-    @commands.command(name='set-economy-all')
-    @commands.has_permissions(administrator=True)
-    async def set_economy_all(self, ctx, rol: discord.Role = None, cantidad: int = None):
-        if not rol and not cantidad:
-            cfg = self.cargar_economy_roles()
-            if not cfg:
-                return await ctx.send(embed=embed_error("No hay roles configurados con saldo automático."))
-            embed = discord.Embed(title="💰 Roles con Economy configurado", color=discord.Color.gold(), timestamp=datetime.now())
-            for rid, cant in cfg.items():
-                role = ctx.guild.get_role(int(rid))
-                nombre = role.mention if role else f"`ID: {rid}` (eliminado)"
-                embed.add_field(name=nombre, value=f"```\n**${cant:,}**\n```", inline=True)
-            embed.set_footer(text="NOVA AGORA RP · Economy Roles")
-            return await ctx.send(embed=embed)
-        if rol is None or cantidad is None:
-            embed = embed_help(
-                "set-economy-all",
-                "Asigna un saldo inicial a todos los miembros que tienen un rol específico.",
-                "-set-economy-all @rol <cantidad>",
-                "-set-economy-all @Nuevos 1000",
-                "Administrador"
-            )
-            return await ctx.send(embed=embed)
-        if cantidad <= 0:
-            return await ctx.send(embed=embed_error("La cantidad debe ser mayor a $0."))
-        cfg = self.cargar_economy_roles()
-        cfg[rol.id] = cantidad
-        self.guardar_economy_roles(cfg)
-        miembros_con_rol = [m for m in ctx.guild.members if rol in m.roles and not m.bot]
-        for miembro in miembros_con_rol:
-            await db.add_cash(miembro.id, cantidad)
-        embed = discord.Embed(
-            title="🎮 ECONOMY ROL CONFIGURADO 🎮",
-            description=f"**Rol:** {rol.name}\n**Cantidad:** **${cantidad:,}**\n**Actualizados:** {len(miembros_con_rol)} miembros",
-            color=discord.Color.green(),
-            timestamp=datetime.now()
+    @commands.command(name='cierre-rol')
+    @tiene_rol_iniciador()
+    async def cierre_rol(self, ctx):
+        """Envía el mensaje de cierre de rol con votación."""
+        canal_votacion = ctx.guild.get_channel(1450592843751100622)
+        rol_usuario = ctx.guild.get_role(ROL_USUARIO_ID)
+        mensaje = (
+            "@everyone\n\n"
+            "# 📢 CIERRE DE ROL\n\n"
+            "El rol de hoy ha finalizado.\n"
+            "Se ha cerrado el rol por el momento.\n\n"
+            f"🗳️ **Vota aquí:** {canal_votacion.mention if canal_votacion else 'Canal 1450592843751100622'}\n\n"
+            "Gracias por participar.\n\n"
+            "🇪🇸 Estate atento a las próximas aperturas programadas para las 16:00 (hora española).\n\n"
+            "Cuantos más usuarios participen, más actividad y rol tendremos mañana.\n\n"
+            f"{rol_usuario.mention if rol_usuario else '<@&1450592205898252381>'}"
         )
-        embed.set_footer(text=f"Configurado por {ctx.author.display_name}  ·  NOVA AGORA RP")
-        await ctx.send(embed=embed)
-        await self.log("SET_ECONOMY_ROL", f"{ctx.author.name} → {rol.name} = ${cantidad:,} ({len(miembros_con_rol)} miembros)")
-
-    def cargar_config_roles(self) -> dict:
+        await ctx.send(mensaje)
         try:
-            with open('config_roles.json', 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
+            await ctx.message.delete()
+        except:
+            pass
+        await self.log("CIERRE_ROL", f"{ctx.author.name} cerró el rol")
 
-    def guardar_config_roles(self, data: dict):
-        with open('config_roles.json', 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    def cargar_economy_roles(self) -> dict:
-        try:
-            with open('economy_roles.json', 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-
-    def guardar_economy_roles(self, data: dict):
-        with open('economy_roles.json', 'w', encoding='utf-8') as f:
-            json.dump({str(k): v for k, v in data.items()}, f, ensure_ascii=False, indent=2)
-
-# ------------------------------------------------
-# COG: Ayuda (menú interactivo)
-# ------------------------------------------------
+# ====================================================
+# COG: Ayuda (nuevas categorías)
+# ====================================================
 class Ayuda(BaseCog):
     CATEGORIAS = {
-        "soporte": {
-            "emoji": "🛠️",
-            "nombre": "Soporte",
-            "comandos": [
-                ("-status <iniciador> <ciudadanos> <policías> [soporte]", "**Publica el estado de sesión RP**"),
-                ("-votacion <hora> [tema]", "**Crea una votación de rol**"),
-                ("-purge <1-100>", "**Borra mensajes en masa**"),
-                ("-config <rol> <descripción> 🔒", "**Configura un rol del servidor**"),
-                ("-roles [rol]", "**Muestra los roles configurados**"),
-                ("-quitar-rol <rol> 🔒", "**Elimina un rol configurado**"),
-                ("-set-economy-all [@rol] [cantidad] 🔒", "**Asigna saldo automático por rol**"),
-                ("-economy-reset @usuario/@rol [cantidad] 🔒", "**Resetea la economía de un usuario o rol**"),
-                ("/anuncios 🔒", "**Publica un anuncio oficial**"),
-                ("/purge <n> 🔒", "**Purge con slash**"),
-                ("/votacion <hora> [tema] 🔒", "**Votación con slash**")
-            ]
-        },
-        "roleplay": {
-            "emoji": "🎭",
-            "nombre": "Roleplay",
-            "comandos": [
-                ("-me <acción>", "**Narra una acción de tu personaje**"),
-                ("-do <pensamiento>", "**Expresa un pensamiento en rol**"),
-                ("-entorno <descripción> [|lugar]", "**Describe el entorno (alertas)**"),
-                ("-reparar @usuario [descripción]", "**Repara un vehículo (mecánico)**"),
-                ("-curar @usuario [descripción]", "**Cura heridas (médico/EMS)**"),
-                ("-dni <nombre> <apellidos> <edad> <género> <nacionalidad> <color_ojos> <altura> <profesión>", "**Crea tu DNI**"),
-                ("-editardni <campo> <nuevo_valor>", "**Edita tu DNI**"),
-                ("-ver dni [@usuario]", "**Muestra el DNI propio o de otro**"),
-                ("-verdni [@usuario]", "**Alias de -ver dni**"),
-                ("-borrardni @usuario 🔒", "**Elimina DNI de un usuario**")
-            ]
-        },
-        "trabajos": {
-            "emoji": "💼",
-            "nombre": "Trabajos",
-            "comandos": [
-                ("-trabajo", "**Sistema de trabajo por minutos**"),
-                ("-inv [tipo]", "**Muestra tu inventario**"),
-                ("-tienda", "**Abre la tienda de items**"),
-                ("-mover <item> <cantidad> <origen> <destino>", "**Mueve items entre inventarios**"),
-                ("-intercambio @usuario <cantidad> <item>", "**Da items a otro jugador**"),
-                ("-use <item>", "**Usa un item del inventario**"),
-                ("-comprar <item> [cantidad]", "**Compra artículos de la tienda**")
-            ]
-        },
-        "ilegales": {
-            "emoji": "💊",
-            "nombre": "Ilegales",
-            "comandos": [
-                ("-droga", "**Muestra precios de drogas**"),
-                ("-droga comprar <tipo> [cantidad]", "**Compra droga (max 27)**"),
-                ("-droga vender <tipo> [cantidad]", "**Vende droga**"),
-                ("-rob badu", "**Atraca Badu**"),
-                ("-rob lico", "**Atraca Lico's**"),
-                ("-rob ammu", "**Atraca Ammu-Nation**"),
-                ("-rob yellowjack", "**Atraca Yellow Jack**"),
-                ("-rob yate", "**Atraca el yate**"),
-                ("-rob pacific", "**Atraca Pacific Standard**"),
-                ("-rob jugador @usuario", "**Atraca a un jugador**"),
-                ("-blanquear", "**Blanquea dinero negro (65%)**")
-            ]
-        },
-        "armas": {
-            "emoji": "🔫",
-            "nombre": "Armas",
-            "comandos": [
-                ("-arma", "**Ver armas equipadas y licencias**"),
-                ("-arma equipar <tipo>", "**Equipa un arma**"),
-                ("-arma disparar", "**Dispara con el arma equipada**"),
-                ("-arma recargar <tipo> <cantidad>", "**Recarga munición**")
-            ]
-        },
-        "vehiculos": {
-            "emoji": "🚗",
-            "nombre": "Vehículos",
-            "comandos": [
-                ("-vehiculo", "**Lista tus vehículos**"),
-                ("-vehiculo conducir <matrícula>", "**Conduce un vehículo**"),
-                ("-vehiculo repostar <matrícula> [cantidad]", "**Reposta combustible**"),
-                ("-vehiculo itv <matrícula>", "**Pasa la ITV**")
-            ]
-        },
-        "mercado": {
-            "emoji": "🏪",
-            "nombre": "Mercado",
-            "comandos": [
-                ("-mercado", "**Muestra publicaciones**"),
-                ("-mercado publicar <item> <precio> <descripción>", "**Publica un item**"),
-                ("-mercado comprar <id>", "**Compra un item**"),
-                ("-mercado mispub", "**Ver tus publicaciones**"),
-                ("-mercado cancelar <id>", "**Cancela publicación**")
-            ]
-        },
-        "casino": {
-            "emoji": "🎰",
-            "nombre": "Casino",
-            "comandos": [
-                ("-casino slots <apuesta>", "**Tragaperras**"),
-                ("-casino ruleta <apuesta> <tipo>", "**Ruleta**"),
-                ("-casino dados <apuesta>", "**Dados**"),
-                ("-bj <apuesta>", "**Blackjack**"),
-                ("-casino racha", "**Ver racha**")
-            ]
-        },
-        "movil": {
-            "emoji": "📱",
-            "nombre": "Móvil & Redes",
-            "comandos": [
-                ("-movil", "**Abre el móvil**"),
-                ("-avion on/off", "**Modo avión**"),
-                ("-wifi conectar/desconectar", "**Gestiona WiFi**"),
-                ("-comprar-sim", "**Compra número de teléfono**"),
-                ("-ig perfil", "**Ver perfil de Instagram**"),
-                ("-ig post <texto>", "**Publicar en Instagram**"),
-                ("-ig like <id>", "**Dar like**"),
-                ("-ig seguir @usuario", "**Seguir/dejar de seguir**"),
-                ("-ig priv @usuario <msg>", "**Enviar DM**"),
-                ("-ig trending", "**Posts más populares**"),
-                ("-tw perfil", "**Ver perfil de Twitter**"),
-                ("-tw tweet <texto>", "**Publicar tweet**"),
-                ("-tw seguir @usuario", "**Seguir/dejar de seguir**"),
-                ("-tw priv @usuario <msg>", "**Enviar DM**"),
-                ("-fb post <texto>", "**Publicar en Facebook**"),
-                ("-fb priv @usuario <msg>", "**Enviar mensaje**"),
-                ("-dw priv @usuario <msg>", "**Mensaje anónimo DeepWeb**"),
-                ("-wa contactos", "**Ver contactos**"),
-                ("-wa agregar +34... <nombre>", "**Añadir contacto**"),
-                ("-wa chat @usuario <msg>", "**Enviar mensaje**"),
-                ("-wa llamar @usuario [minutos]", "**Llamada de voz**")
-            ]
-        },
-        "pda": {
-            "emoji": "🚨",
-            "nombre": "PDA Policial",
-            "comandos": [
-                ("-pda", "**Ver panel PDA**"),
-                ("-pda detener @usuario <motivo>", "**Detener a un ciudadano**"),
-                ("-pda encarcelar @usuario <minutos> <motivo>", "**Encarcelar**"),
-                ("-pda multar @usuario <cantidad> <motivo>", "**Poner multa**"),
-                ("-pda requisar @usuario <arma>", "**Requisar arma**"),
-                ("-pda licencia @usuario <tipo> [dar/quitar]", "**Gestionar licencias**"),
-                ("-pda buscar <nombre>", "**Buscar antecedentes**"),
-                ("-pda crear-placa <numero>", "**Crea una placa policial (requiere LSPD)**"),
-                ("-pda quitar-placa", "**Elimina tu placa policial**")
-            ]
-        },
-        "admin": {
-            "emoji": "🔧",
-            "nombre": "Administración",
-            "comandos": [
-                ("-say <mensaje> 🔒", "**Repite el mensaje en negrita**"),
-                ("-ban @usuario [razón] 🔒", "**Banea al usuario (si la razón empieza con 'definitivo', aplica ban permanente)**"),
-                ("-ban definitivo @usuario [razón] 🔒", "**Baneo permanente + blacklist**"),
-                ("-unban <id> 🔒", "**Desbanea por ID y elimina de blacklist**"),
-                ("-money add/remove @usuario <cantidad> 🔒", "**Modifica dinero**"),
-                ("-setprefix <prefijo> 🔒", "**Cambia el prefijo**"),
-                ("-add-inv @usuario <tipo> <item> [cantidad] 🔒", "**Añade items**"),
-                ("-rem-inv @usuario <tipo> <item> [cantidad] 🔒", "**Elimina items**"),
-                ("-add-coche @usuario <modelo> 🔒", "**Registra vehículo**"),
-                ("-remove-coche @usuario <matrícula> 🔒", "**Elimina vehículo**"),
-                ("-add-droga @usuario <tipo> [cantidad] 🔒", "**Añade droga**"),
-                ("-add-licencia @usuario <licencia> 🔒", "**Otorga licencia**"),
-                ("-rem-licencia @usuario <licencia> 🔒", "**Revoca licencia**"),
-                ("-periodico 🔒", "**Publica el periódico**"),
-                ("-bot [días] 🔒", "**Activa el bot por X días (solo owners)**"),
-                ("-botoff 🔒", "**Detiene el bot inmediatamente (solo owners)**"),
-                ("-quitar-warn @usuario <id_warn> 🔒", "**Elimina una advertencia**"),
-                ("-borrardni @usuario 🔒", "**Elimina DNI de un usuario**"),
-                ("-economy-reset @usuario/@rol [cantidad] 🔒", "**Resetea la economía de un usuario o rol**")
-            ]
-        },
-        "moderacion": {
-            "emoji": "🔨",
-            "nombre": "Moderación",
-            "comandos": [
-                ("-mute @usuario <razón> 🔒", "**Silencia a un usuario**"),
-                ("-unmute @usuario 🔒", "**Quita el silencio**"),
-                ("-warn @usuario <razón> 🔒", "**Añade una advertencia**"),
-                ("-delwarn @usuario <id> 🔒", "**Elimina una advertencia**"),
-                ("-history @usuario", "**Muestra historial de sanciones**"),
-                ("-warnings @usuario", "**Muestra solo las advertencias**")
-            ]
-        },
-        "kits": {
-            "emoji": "🎁",
-            "nombre": "Kits por Rol",
-            "comandos": [
-                ("-policial", "**Reclama tu kit policial (rol LSPD, cooldown 12h)**"),
-                ("-mecanico", "**Reclama tu kit mecánico (rol Mecánico, cooldown 12h)**"),
-                ("-ems", "**Reclama tu kit EMS (rol EMS, cooldown 12h)**"),
-                ("-bomberos", "**Reclama tu kit bomberos (rol Bomberos, cooldown 12h)**")
-            ]
-        }
+        "economia": {"emoji": "🏦", "nombre": "Economía", "comandos": [("-banco", "**Gestiona tu dinero (ingresar, retirar, transferir)**"), ("-balance-top", "**Top de dinero del servidor**"), ("-blanquear", "**Convierte dinero negro a limpio (65%)**"), ("-inv [tipo]", "**Muestra tu inventario**"), ("-tienda", "**Compra items**"), ("-comprar <item> [cantidad]", "**Compra un artículo de la tienda**"), ("-comprar-licencia <tipo>", "**Compra licencias (coche, moto, armas, etc.)**"), ("-licencia [@usuario]", "**Ver licencias de un usuario**"), ("-use <item>", "**Usa un item del inventario**"), ("-intercambio @user <cantidad> <item>", "**Da items a otro jugador**"), ("-mover <item> <cant> <origen> <destino>", "**Mueve items entre inventarios**")]},
+        "trabajos": {"emoji": "💼", "nombre": "Trabajos", "comandos": [("-trabajo", "**Simula tu jornada laboral (sin dinero)**"), ("-bus", "**Conduce el autobús público (roleplay) [requiere rol AUTOBUSERO]**"), ("-chatarrero", "**Recolecta chatarra y véndela [requiere rol CHATARRERO]**"), ("-minar", "**Extrae minerales con probabilidades [requiere rol MINERO]**")]},
+        "facciones": {"emoji": "🚔", "nombre": "Facciones", "comandos": [("-pda", "**Panel PDA policial**"), ("-pda detener @user <motivo>", "**Detener a un ciudadano**"), ("-pda encarcelar @user <min> <motivo>", "**Encarcelar**"), ("-pda multar @user <cantidad> <motivo>", "**Poner multa**"), ("-pda requisar @user <arma>", "**Requisar arma**"), ("-pda guardar @user <item>", "**Guardar evidencia**"), ("-pda evidencia [@user]", "**Ver evidencias**"), ("-pda buscar <nombre>", "**Buscar antecedentes**"), ("-crear-placa @user LSPD-0001", "**Asignar placa policial (requiere LSPD/owner)**"), ("-alerta-robo", "**Alerta de robo (solo LSPD Operativo)**"), ("-dispo lspd/lsmd/lssd <cantidad>", "**Disponibilidad de servicios**")]},
+        "atracos": {"emoji": "🏴", "nombre": "Atracos", "comandos": [("-rob", "**Ver todos los atracos**"), ("-rob badu", "**Atraco a Badu ($1.2k-$2.8k, 10min)**"), ("-rob yellowjack", "**Atraco a Yellow Jack ($3k-$5.5k, 30min)**"), ("-rob ammu", "**Atraco a Ammu-Nation ($6k-$12k, 1h)**"), ("-rob vanilla", "**Atraco a Vanilla Unicorn ($12k-$18k, 2h)**"), ("-rob yate", "**Atraco al Yate ($18k-$26k, 2.5h)**"), ("-rob centro", "**Atraco Centro Comercial ($22k-$32k, 3h)**"), ("-rob joyeria", "**Atraco a Joyería ($45k-$65k, 3 días)**"), ("-rob paleto", "**Atraco Banco Paleto ($120k-$160k, 12 días)**"), ("-rob central", "**Atraco Banco Central ($180k-$240k, 14 días)**"), ("-rob pacific", "**Atraco Pacific Bank ($250k-$350k, 14 días, requiere 3 preparatorias)**"), ("-rob status", "**Ver tu estado de atracos**"), ("-prep pacific1", "**Preparatoria I para Pacific Bank**"), ("-prep pacific2", "**Preparatoria II para Pacific Bank**"), ("-prep pacific3", "**Preparatoria III para Pacific Bank**")]},
+        "redes": {"emoji": "📱", "nombre": "Redes Sociales", "comandos": [("/movil", "**Abre el móvil**"), ("/avion on/off", "**Modo avión**"), ("/wifi conectar/desconectar", "**Gestiona WiFi**"), ("/comprar-sim", "**Compra SIM**"), ("/ig perfil", "**Ver perfil de Instagram**"), ("/ig post <texto>", "**Publicar en Instagram**"), ("/ig like <id>", "**Dar like**"), ("/ig seguir @user", "**Seguir/dejar de seguir**"), ("/ig priv @user <msg>", "**Enviar DM**"), ("/ig trending", "**Posts más populares**"), ("/tw perfil", "**Ver perfil de Twitter**"), ("/tw tweet <texto>", "**Publicar tweet**"), ("/tw seguir @user", "**Seguir/dejar de seguir**"), ("/tw priv @user <msg>", "**Enviar DM**"), ("/fb post <texto>", "**Publicar en Facebook**"), ("/fb priv @user <msg>", "**Enviar mensaje**"), ("/deepweb @user <msg>", "**Enviar mensaje anónimo**"), ("/descifrar <id> 🔒FBI", "**Descifrar mensaje DeepWeb**"), ("/wa contactos", "**Ver contactos**"), ("/wa agregar +34... <nombre>", "**Añadir contacto**"), ("/wa chat @user <msg>", "**Enviar mensaje**"), ("/wa llamar @user [minutos]", "**Llamada de voz**"), ("-x @user <mensaje>", "**Enviar DM por Twitter**")]},
+        "identidad": {"emoji": "🪪", "nombre": "Identidad", "comandos": [("/dni <nombre> <apellidos> <edad> <género> <nacionalidad> <color_ojos> <altura> <profesión>", "**Crea tu DNI**"), ("/editardni <campo> <nuevo_valor>", "**Edita tu DNI**"), ("-ver dni [@usuario]", "**Ver DNI de un usuario**"), ("/borrardni @usuario 🔒", "**Eliminar DNI (admin)**")]},
+        "admin": {"emoji": "⚙️", "nombre": "Administración", "comandos": [("-say <mensaje> 🔒", "**Repite un mensaje**"), ("-ban @user [razón] 🔒", "**Banea a un usuario**"), ("-ban definitivo @user [razón] 🔒", "**Baneo permanente + blacklist**"), ("-unban <id> 🔒", "**Desbanea por ID**"), ("-money add/remove @user <cantidad> [tipo] 🔒", "**Modifica dinero**"), ("-setprefix <prefijo> 🔒", "**Cambia el prefijo**"), ("-add-inv @user <tipo> <item> [cantidad] 🔒", "**Añade items**"), ("-rem-inv @user <tipo> <item> [cantidad] 🔒", "**Elimina items**"), ("-add-coche @user <modelo> 🔒", "**Registra vehículo**"), ("-remove-coche @user <matrícula> 🔒", "**Elimina vehículo**"), ("-add-droga @user <tipo> [cantidad] 🔒", "**Añade droga**"), ("-add-licencia @user <licencia> 🔒", "**Otorga licencia**"), ("-rem-licencia @user <licencia> 🔒", "**Revoca licencia**"), ("-periodico 🔒", "**Publica el periódico**"), ("-bot [días] 🔒", "**Activa el bot por X días (solo owner)**"), ("-bot-off 🔒", "**Apaga el bot (owner)**"), ("-quitar-warn @user <id> 🔒", "**Elimina advertencia**"), ("-economy-reset @user/@rol [cantidad] 🔒", "**Resetea economía**"), ("-create-item <nombre> <precio> <emoji> [desc] 🔒", "**Crea item personalizado**"), ("-delete-item <nombre> 🔒", "**Elimina item personalizado**"), ("-give-item @user <item> [cantidad] 🔒", "**Regala item**"), ("-take-item @user <item> [cantidad] 🔒", "**Quita item**"), ("-mass-economy @rol <cantidad> 🔒", "**Asigna dinero a un rol**"), ("/dashboard", "**Panel de control (rol específico)**")]},
+        "web": {"emoji": "🌐", "nombre": "Panel Web", "comandos": [("https://tu-dominio.com", "**Accede al panel web**"), ("/register", "**Regístrate en la web**"), ("/login", "**Inicia sesión**"), ("/perfil", "**Ver tu perfil web**"), ("/blacklist?token=TOKEN", "**Panel de blacklist (admin)**"), ("/owner/emojis?token=TOKEN", "**Gestión de emojis (owner)**")]}
     }
 
     @commands.command(name='ayuda', aliases=['help'])
     async def ayuda(self, ctx, cat: Optional[str] = None):
         if cat and cat.lower() in self.CATEGORIAS:
             cat_info = self.CATEGORIAS[cat.lower()]
-            embed = discord.Embed(
-                title=f"{cat_info['emoji']} · TODOS LOS COMANDOS DE {cat_info['nombre'].upper()}",
-                color=discord.Color.blue(),
-                timestamp=datetime.now()
-            )
+            embed = discord.Embed(title=f"{cat_info['emoji']} · TODOS LOS COMANDOS DE {cat_info['nombre'].upper()}", color=discord.Color.blue(), timestamp=datetime.now())
             desc = ""
             for cmd, desc_cmd in cat_info["comandos"]:
                 desc += f"» **{cmd}**\n— {desc_cmd}\n\n"
             embed.description = desc
-            embed.set_footer(text=f"Prefijo: {get_pre(self.bot, ctx.message)}  ·  🔒 = Solo admins/mods  ·  NOVA AGORA RP")
+            embed.set_footer(text=f"Prefijo: {get_pre(self.bot, ctx.message)}  ·  🔒 = Solo admins/mods  ·  NOVA AGORA")
             await ctx.send(embed=embed)
             return
-
         prefijo = get_pre(self.bot, ctx.message)
         eco = await db.get_economy(ctx.author.id)
         saldo = eco['cash'] + eco['bank']
-
-        embed = discord.Embed(
-            title="📚 NOVA AGORA RP — Panel de Ayuda",
-            description=(
-                f"**Prefijo:** `{prefijo}` — Selecciona una categoría en el menú de abajo.\n\n"
-                f"🛠️ · **Soporte**\n"
-                f"🎭 · **Roleplay**\n"
-                f"💼 · **Trabajos**\n"
-                f"💊 · **Ilegales**\n"
-                f"🔫 · **Armas**\n"
-                f"🚗 · **Vehículos**\n"
-                f"🏪 · **Mercado**\n"
-                f"🎰 · **Casino**\n"
-                f"📱 · **Móvil & Redes**\n"
-                f"🚨 · **PDA Policial**\n"
-                f"🔧 · **Administración**\n"
-                f"🔨 · **Moderación**\n"
-                f"🎁 · **Kits por Rol**\n\n"
-                f"🔒 = Solo administradores/moderadores"
-            ),
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"Saldo: **${saldo:,}**  ·  NOVA AGORA RP")
+        embed = discord.Embed(title="📚 NOVA AGORA — Panel de Ayuda", description=f"**Prefijo:** `{prefijo}` — Selecciona una categoría en el menú de abajo.\n\n🏦 · **Economía**\n💼 · **Trabajos**\n🚔 · **Facciones**\n🏴 · **Atracos**\n📱 · **Redes Sociales**\n🪪 · **Identidad**\n⚙️ · **Administración**\n🌐 · **Panel Web**\n\n🔒 = Solo administradores/moderadores", color=discord.Color.blue(), timestamp=datetime.now())
+        embed.set_footer(text=f"Saldo: **${saldo:,}**  ·  NOVA AGORA")
         view = AyudaView(prefijo, self.CATEGORIAS, ctx.author.id)
         await ctx.send(embed=embed, view=view)
 
@@ -3867,21 +4466,8 @@ class AyudaView(discord.ui.View):
         self.prefijo = prefijo
         self.categorias = categorias
         self.user_id = user_id
-
-        options = []
-        for key, info in categorias.items():
-            options.append(discord.SelectOption(
-                label=info["nombre"],
-                description=f"Comandos de {info['nombre']}",
-                emoji=info["emoji"],
-                value=key
-            ))
-
-        select = discord.ui.Select(
-            placeholder="📂 Selecciona una categoría...",
-            options=options,
-            row=0
-        )
+        options = [discord.SelectOption(label=info["nombre"], description=f"Comandos de {info['nombre']}", emoji=info["emoji"], value=key) for key, info in categorias.items()]
+        select = discord.ui.Select(placeholder="📂 Selecciona una categoría...", options=options, row=0)
         select.callback = self.select_callback
         self.add_item(select)
 
@@ -3891,25 +4477,21 @@ class AyudaView(discord.ui.View):
             return
         key = interaction.data['values'][0]
         cat_info = self.categorias[key]
-        embed = discord.Embed(
-            title=f"{cat_info['emoji']} · TODOS LOS COMANDOS DE {cat_info['nombre'].upper()}",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
+        embed = discord.Embed(title=f"{cat_info['emoji']} · TODOS LOS COMANDOS DE {cat_info['nombre'].upper()}", color=discord.Color.blue(), timestamp=datetime.now())
         desc = ""
         for cmd, desc_cmd in cat_info["comandos"]:
             desc += f"» **{cmd}**\n— {desc_cmd}\n\n"
         embed.description = desc
-        embed.set_footer(text=f"Prefijo: {self.prefijo}  ·  🔒 = Solo admins/mods  ·  NOVA AGORA RP")
+        embed.set_footer(text=f"Prefijo: {self.prefijo}  ·  🔒 = Solo admins/mods  ·  NOVA AGORA")
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def on_timeout(self):
         for child in self.children:
             child.disabled = True
 
-# ------------------------------------------------
-# COG: Moderacion (mute, warn, history, etc.)
-# ------------------------------------------------
+# ====================================================
+# COG: Moderacion (mute, warn, history)
+# ====================================================
 class Moderacion(BaseCog):
     async def ensure_muted_role(self, guild: discord.Guild) -> discord.Role:
         role = discord.utils.get(guild.roles, name="Muted")
@@ -3931,36 +4513,25 @@ class Moderacion(BaseCog):
     @commands.has_permissions(manage_roles=True)
     async def mute(self, ctx, miembro: discord.Member = None, *, razon: str = "Sin razón"):
         if not miembro:
-            return await ctx.send(embed=embed_help(
-                "mute",
-                "Silencia a un usuario por tiempo indefinido (30 días).",
-                "-mute @usuario [razón]",
-                "-mute @Juan Spam en el chat",
-                "Gestionar roles"
-            ))
+            return await ctx.send(embed=embed_help("mute", "Silencia a un usuario por tiempo indefinido (30 días).", "-mute @usuario [razón]", "-mute @Juan Spam en el chat", "Gestionar roles"))
         muted_role = await self.ensure_muted_role(ctx.guild)
         if muted_role in miembro.roles:
             return await ctx.send(embed=embed_error("El usuario ya está muteado."))
         await miembro.add_roles(muted_role, reason=f"Mute por {ctx.author}: {razon}")
         fecha_fin = (datetime.now() + timedelta(days=30)).isoformat()
-        await db.execute("""
-            INSERT INTO mutes (user_id, razon, fecha_inicio, fecha_fin, agente_id, agente_nombre, activo)
-            VALUES (?, ?, ?, ?, ?, ?, 1)
-        """, (miembro.id, razon, datetime.now().isoformat(), fecha_fin, ctx.author.id, str(ctx.author)))
+        await db.execute("INSERT INTO mutes (user_id, razon, fecha_inicio, fecha_fin, agente_id, agente_nombre, activo) VALUES (?, ?, ?, ?, ?, ?, 1)", (miembro.id, razon, datetime.now().isoformat(), fecha_fin, ctx.author.id, str(ctx.author)))
         await self.registrar_log_moderacion(ctx, "MUTE", miembro, razon, "30 días")
         await ctx.send(embed=embed_success("✅ Mute aplicado", f"{miembro.mention} ha sido muteado.\nRazón: {razon}"))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='unmute')
     @commands.has_permissions(manage_roles=True)
     async def unmute(self, ctx, miembro: discord.Member = None):
         if not miembro:
-            return await ctx.send(embed=embed_help(
-                "unmute",
-                "Quita el mute a un usuario.",
-                "-unmute @usuario",
-                "-unmute @Juan",
-                "Gestionar roles"
-            ))
+            return await ctx.send(embed=embed_help("unmute", "Quita el mute a un usuario.", "-unmute @usuario", "-unmute @Juan", "Gestionar roles"))
         muted_role = await self.ensure_muted_role(ctx.guild)
         if muted_role not in miembro.roles:
             return await ctx.send(embed=embed_error("El usuario no está muteado."))
@@ -3968,55 +4539,46 @@ class Moderacion(BaseCog):
         await db.execute("UPDATE mutes SET activo = 0 WHERE user_id = ? AND activo = 1", (miembro.id,))
         await self.registrar_log_moderacion(ctx, "UNMUTE", miembro, "Levantado por moderador")
         await ctx.send(embed=embed_success("✅ Unmute aplicado", f"{miembro.mention} ya puede hablar."))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='warn')
     @commands.has_permissions(manage_messages=True)
     async def warn(self, ctx, miembro: discord.Member = None, *, razon: str = None):
         if not miembro or not razon:
-            return await ctx.send(embed=embed_help(
-                "warn",
-                "Añade una advertencia a un usuario.",
-                "-warn @usuario <razón>",
-                "-warn @Juan No respeta las normas",
-                "Gestionar mensajes"
-            ))
-        await db.execute("""
-            INSERT INTO warnings (user_id, razon, fecha, agente_id, agente_nombre)
-            VALUES (?, ?, ?, ?, ?)
-        """, (miembro.id, razon, datetime.now().isoformat(), ctx.author.id, str(ctx.author)))
+            return await ctx.send(embed=embed_help("warn", "Añade una advertencia a un usuario.", "-warn @usuario <razón>", "-warn @Juan No respeta las normas", "Gestionar mensajes"))
+        await db.execute("INSERT INTO warnings (user_id, razon, fecha, agente_id, agente_nombre) VALUES (?, ?, ?, ?, ?)", (miembro.id, razon, datetime.now().isoformat(), ctx.author.id, str(ctx.author)))
         warns = await db.fetchall("SELECT id FROM warnings WHERE user_id = ?", (miembro.id,))
         num_warns = len(warns)
         await self.registrar_log_moderacion(ctx, f"WARN #{num_warns}", miembro, razon)
         await ctx.send(embed=embed_success("⚠️ Advertencia registrada", f"{miembro.mention} ha recibido una advertencia.\nRazón: {razon}\nTotal: {num_warns} advertencias.", 0xFFA500))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='delwarn')
     @commands.has_permissions(administrator=True)
     async def delwarn(self, ctx, miembro: discord.Member = None, id_warn: int = None):
         if not miembro or not id_warn:
-            return await ctx.send(embed=embed_help(
-                "delwarn",
-                "Elimina una advertencia de un usuario por su ID.",
-                "-delwarn @usuario <id_warn>",
-                "-delwarn @Juan 3",
-                "Administrador"
-            ))
+            return await ctx.send(embed=embed_help("delwarn", "Elimina una advertencia de un usuario por su ID.", "-delwarn @usuario <id_warn>", "-delwarn @Juan 3", "Administrador"))
         row = await db.fetchone("SELECT id FROM warnings WHERE id = ? AND user_id = ?", (id_warn, miembro.id))
         if not row:
             return await ctx.send(embed=embed_error("Advertencia no encontrada."))
         await db.execute("DELETE FROM warnings WHERE id = ?", (id_warn,))
         await self.registrar_log_moderacion(ctx, f"WARN #{id_warn} ELIMINADA", miembro, "Eliminada por administrador")
         await ctx.send(embed=embed_success("🗑️ Advertencia eliminada", f"Se eliminó la advertencia #{id_warn} de {miembro.mention}.", 0xFF6600))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='history')
     async def history(self, ctx, miembro: discord.Member = None):
         if not miembro:
-            return await ctx.send(embed=embed_help(
-                "history",
-                "Muestra el historial de sanciones de un usuario.",
-                "-history @usuario",
-                "-history @Juan",
-                ""
-            ))
+            return await ctx.send(embed=embed_help("history", "Muestra el historial de sanciones de un usuario.", "-history @usuario", "-history @Juan", ""))
         warns = await db.fetchall("SELECT id, razon, fecha, agente_nombre FROM warnings WHERE user_id = ? ORDER BY fecha DESC", (miembro.id,))
         mutes = await db.fetchall("SELECT id, razon, fecha_inicio, fecha_fin, agente_nombre FROM mutes WHERE user_id = ? ORDER BY fecha_inicio DESC", (miembro.id,))
         embed = discord.Embed(title=f"📜 Historial de sanciones de {miembro.display_name}", color=discord.Color.blue(), timestamp=datetime.now())
@@ -4032,17 +4594,15 @@ class Moderacion(BaseCog):
         else:
             embed.add_field(name="🔇 Mutes", value="*Ninguno*", inline=False)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='warnings')
     async def warnings(self, ctx, miembro: discord.Member = None):
         if not miembro:
-            return await ctx.send(embed=embed_help(
-                "warnings",
-                "Muestra las advertencias de un usuario.",
-                "-warnings @usuario",
-                "-warnings @Juan",
-                ""
-            ))
+            return await ctx.send(embed=embed_help("warnings", "Muestra las advertencias de un usuario.", "-warnings @usuario", "-warnings @Juan", ""))
         warns = await db.fetchall("SELECT id, razon, fecha, agente_nombre FROM warnings WHERE user_id = ? ORDER BY fecha DESC", (miembro.id,))
         if not warns:
             return await ctx.send(embed=embed_success("✅ Sin advertencias", f"{miembro.display_name} no tiene advertencias."))
@@ -4050,10 +4610,14 @@ class Moderacion(BaseCog):
         for w in warns:
             embed.add_field(name=f"#{w[0]}", value=f"Razón: {w[1]}\nPor: {w[4]}\nFecha: {datetime.fromisoformat(w[3]).strftime('%d/%m/%Y %H:%M')}", inline=False)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-# ------------------------------------------------
-# COG: Niveles (XP y niveles)
-# ------------------------------------------------
+# ====================================================
+# COG: Niveles (XP y niveles) - INDEPENDIENTE con cooldown de 14 días
+# ====================================================
 class Niveles(BaseCog):
     def __init__(self, bot):
         super().__init__(bot)
@@ -4063,33 +4627,58 @@ class Niveles(BaseCog):
     async def on_message(self, message):
         if message.author.bot or not message.guild:
             return
-        user_state = await db.fetchone("SELECT last_message_time FROM niveles WHERE user_id = ?", (message.author.id,))
-        if user_state and user_state[0]:
-            last = datetime.fromisoformat(user_state[0])
-            if (datetime.now() - last).total_seconds() < COOLDOWN_XP:
+        uid = message.author.id
+        user_data = await db.fetchone("SELECT last_message_time, last_message_content FROM niveles WHERE user_id = ?", (uid,))
+        now = datetime.now()
+        if user_data and user_data[0]:
+            last_time = datetime.fromisoformat(user_data[0])
+            last_content = user_data[1] or ""
+            if (now - last_time).total_seconds() < COOLDOWN_MENSAJE_XP:
                 return
-        xp = random.randint(15, 25)
-        nuevo_nivel = await db.add_xp(message.author.id, xp, "message")
-        if nuevo_nivel:
-            await self.verificar_recompensa_nivel(message.author, nuevo_nivel)
-            await message.channel.send(f"🎉 {message.author.mention} ha subido al nivel **{nuevo_nivel}**!")
+            if message.content.lower() == last_content.lower():
+                return
+        result = await db.fetchone("SELECT mensajes FROM niveles WHERE user_id = ?", (uid,))
+        current_messages = result[0] if result else 0
+        new_messages = current_messages + 1
+        new_level = new_messages // MENSAJES_POR_NIVEL
+        old_level = current_messages // MENSAJES_POR_NIVEL
+        remainder = new_messages % MENSAJES_POR_NIVEL
+        next_remaining = MENSAJES_POR_NIVEL - remainder if remainder else MENSAJES_POR_NIVEL
+        if result is None:
+            await db.execute("INSERT OR IGNORE INTO niveles (user_id, mensajes, last_message_time, last_message_content) VALUES (?, ?, ?, ?)", (uid, 0, None, None))
+        await db.execute("UPDATE niveles SET mensajes = ?, last_message_time = ?, last_message_content = ? WHERE user_id = ?", (new_messages, now.isoformat(), message.content[:100], uid))
+        if new_level > old_level and new_level > 0:
+            # Verificar si el usuario puede subir de nivel (cooldown 14 días)
+            nivel_data = await db.get_nivel(uid)
+            last_level_up = nivel_data.get('last_level_up')
+            puede_subir = True
+            if last_level_up:
+                ultima_subida = datetime.fromisoformat(last_level_up)
+                if (datetime.now() - ultima_subida).days < DIAS_PARA_SUBIR_NIVEL:
+                    puede_subir = False
+            if puede_subir:
+                await db.execute("UPDATE niveles SET nivel = ?, last_level_up = ? WHERE user_id = ?", (new_level, now.isoformat(), uid))
+                await self.verificar_recompensa_nivel(message.author, new_level)
+                await message.channel.send(f"🎉 {message.author.mention} ha subido al nivel **{new_level}** por actividad!\n💬 **{new_messages} mensajes** acumulados | Próximo nivel en **{next_remaining} mensajes**.")
+            else:
+                # No sube de nivel, pero se queda con el XP acumulado
+                dias_restantes = DIAS_PARA_SUBIR_NIVEL - (datetime.now() - ultima_subida).days
+                await message.channel.send(f"⚠️ {message.author.mention}, has alcanzado el nivel **{new_level}** pero debes esperar **{dias_restantes} días** para subir (cooldown de 14 días entre niveles). Sigue ganando XP mientras tanto.")
 
     @commands.Cog.listener()
     async def on_command_completion(self, ctx):
         if ctx.author.bot:
             return
-        user_state = await db.fetchone("SELECT last_command_time FROM niveles WHERE user_id = ?", (ctx.author.id,))
-        if user_state and user_state[0]:
-            last = datetime.fromisoformat(user_state[0])
-            if (datetime.now() - last).total_seconds() < 30:
+        uid = ctx.author.id
+        now = datetime.now()
+        user_data = await db.fetchone("SELECT last_command_time FROM niveles WHERE user_id = ?", (uid,))
+        if user_data and user_data[0]:
+            last_time = datetime.fromisoformat(user_data[0])
+            if (now - last_time).total_seconds() < COOLDOWN_COMANDO_XP:
                 return
-        xp = random.randint(5, 10)
-        nuevo_nivel = await db.add_xp(ctx.author.id, xp, "command")
-        if nuevo_nivel:
-            await self.verificar_recompensa_nivel(ctx.author, nuevo_nivel)
-            await ctx.send(f"🎉 {ctx.author.mention} has subido al nivel **{nuevo_nivel}**!")
+        await db.execute("UPDATE niveles SET last_command_time = ? WHERE user_id = ?", (now.isoformat(), uid))
 
-    @tasks.loop(minutes=5)
+    @tasks.loop(minutes=30)
     async def tiempo_task(self):
         for guild in self.bot.guilds:
             for member in guild.members:
@@ -4103,9 +4692,18 @@ class Niveles(BaseCog):
                 xp = XP_POR_TIEMPO
                 nuevo_nivel = await db.add_xp(member.id, xp, "time")
                 if nuevo_nivel:
-                    await self.verificar_recompensa_nivel(member, nuevo_nivel)
-                    canal = member.guild.system_channel or member.guild.text_channels[0]
-                    await canal.send(f"🎉 {member.mention} ha subido al nivel **{nuevo_nivel}**!")
+                    # Verificar cooldown antes de notificar
+                    nivel_data = await db.get_nivel(member.id)
+                    last_level_up = nivel_data.get('last_level_up')
+                    puede_subir = True
+                    if last_level_up:
+                        ultima_subida = datetime.fromisoformat(last_level_up)
+                        if (datetime.now() - ultima_subida).days < DIAS_PARA_SUBIR_NIVEL:
+                            puede_subir = False
+                    if puede_subir:
+                        await self.verificar_recompensa_nivel(member, nuevo_nivel)
+                        canal = member.guild.system_channel or member.guild.text_channels[0]
+                        await canal.send(f"🎉 {member.mention} ha subido al nivel **{nuevo_nivel}**!")
 
     async def verificar_recompensa_nivel(self, member: discord.Member, nivel: int):
         for nivel_requerido, rol_id in ROLES_POR_NIVEL.items():
@@ -4124,7 +4722,20 @@ class Niveles(BaseCog):
         embed.add_field(name="XP total", value=data['xp'], inline=True)
         xp_siguiente = ((data['nivel'] + 1) ** 2) * 100
         embed.add_field(name="XP para siguiente nivel", value=f"{xp_siguiente - data['xp']}", inline=True)
+        if data['last_level_up']:
+            ultima_subida = datetime.fromisoformat(data['last_level_up'])
+            dias_restantes = DIAS_PARA_SUBIR_NIVEL - (datetime.now() - ultima_subida).days
+            if dias_restantes > 0:
+                embed.add_field(name="⏳ Cooldown", value=f"Puedes subir de nivel nuevamente en **{dias_restantes} días**.", inline=False)
+            else:
+                embed.add_field(name="✅ Cooldown", value="Ya puedes subir de nivel cuando alcances el XP necesario.", inline=False)
+        else:
+            embed.add_field(name="✅ Cooldown", value="Sin restricciones, sube de nivel cuando alcances el XP.", inline=False)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='ranking')
     async def ranking_niveles(self, ctx):
@@ -4137,21 +4748,60 @@ class Niveles(BaseCog):
             desc += f"**#{i}** {nombre} - Nivel {nivel} ({xp} XP)\n"
         embed.description = desc
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    def construir_server_embed(self, guild: discord.Guild) -> discord.Embed:
+        owner_text = "\n".join([f"<@{oid}> (`{oid}`)" for oid in OWNER_IDS]) if OWNER_IDS else "No configurados"
+        canales = len(guild.channels)
+        roles = len(guild.roles)
+        text_channels = len(guild.text_channels)
+        voice_channels = len(guild.voice_channels)
+        categories = len(guild.categories)
+        online_members = sum(1 for m in guild.members if not m.bot and m.status != discord.Status.offline)
+        bots = sum(1 for m in guild.members if m.bot)
+        boosts = guild.premium_subscription_count or 0
+        boost_tier = guild.premium_tier
+        embed = discord.Embed(title="✨ **** NOVA AGORA V2 SERVER ****", description="Bienvenido al informe premium del Servidor.\nEstilo exclusivo Nova Developers, con datos reales y toque cinematográfico.", color=0x00E5FF)
+        embed.add_field(name="**** OWNER IDS ****", value=owner_text, inline=False)
+        embed.add_field(name="**** CANALES ****", value=f"💬 Texto: {text_channels}\n🔊 Voz: {voice_channels}\n🗂️ Categorías: {categories}\n📌 Total canales: {canales}", inline=False)
+        embed.add_field(name="**** ROLES ****", value=f"🎭 {roles} roles registrados", inline=True)
+        embed.add_field(name="**** MIEMBROS ****", value=f"👥 Total: {guild.member_count}\n🟢 Online: {online_members}\n🤖 Bots: {bots}", inline=True)
+        embed.add_field(name="**** NOVA DEVELOPERS ****", value="- Bot personalizado Nova Developers\n- Hosting 24/7 optimizado\n- Comandos exclusivos RP\n- PDA, Multas y DeepWeb integrados", inline=False)
+        embed.add_field(name="**** ESTADO PREMIUM ****", value=f"Boost Tier: {boost_tier} · Boosts: {boosts}\nCreado: {guild.created_at.strftime('%d/%m/%Y')}", inline=False)
+        embed.add_field(name="**** SERVER ID ****", value=f"-# `{guild.id}`", inline=False)
+        embed.set_footer(text=f"ID OWNER: {', '.join(str(oid) for oid in OWNER_IDS)} • Nova Agora V2 • Bot: Nova Developers")
+        return embed
+
+    @commands.command(name='información', aliases=['info', 'server', 'serverinfo', 'informacion'])
+    async def server_info(self, ctx):
+        embed = self.construir_server_embed(ctx.guild)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @app_commands.command(name='info', description='Información premium del servidor Nova Agora V2')
+    async def server_slash(self, interaction: discord.Interaction):
+        embed = self.construir_server_embed(interaction.guild)
+        await interaction.response.send_message(embed=embed)
 
     @tiempo_task.before_loop
     async def before_tiempo(self):
         await self.bot.wait_until_ready()
 
-# ------------------------------------------------
-# COG: TicketSystem (completo con panel y modal de valoración)
-# ------------------------------------------------
+# ====================================================
+# COG: TicketSystem
+# ====================================================
 class TicketModal(discord.ui.Modal, title="Valorar ticket"):
     def __init__(self, bot, channel_id, user_id):
         super().__init__()
         self.bot = bot
         self.channel_id = channel_id
         self.user_id = user_id
-
     rating = discord.ui.TextInput(label="Puntuación (1-5)", placeholder="Ej: 5", max_length=1)
     comment = discord.ui.TextInput(label="Comentario (opcional)", style=discord.TextStyle.paragraph, required=False, max_length=500)
 
@@ -4210,11 +4860,8 @@ class TicketSystem(BaseCog):
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         channel = await guild.create_text_channel(channel_name, category=cat, overwrites=overwrites)
-        await db.execute("INSERT INTO tickets (user_id, channel_id, category, created_at, status) VALUES (?, ?, ?, ?, 'abierto')",
-                         (user.id, channel.id, category_key, datetime.now().isoformat()))
-        embed = discord.Embed(title=f"📩 Ticket abierto — {self.CATEGORIAS[category_key]['nombre']}",
-                              description=f"**Usuario:** {user.mention}\n**Categoría:** {self.CATEGORIAS[category_key]['emoji']} {self.CATEGORIAS[category_key]['nombre']}\n\nEl equipo de soporte te atenderá en breve.",
-                              color=discord.Color.blue(), timestamp=datetime.now())
+        await db.execute("INSERT INTO tickets (user_id, channel_id, category, created_at, status) VALUES (?, ?, ?, ?, 'abierto')", (user.id, channel.id, category_key, datetime.now().isoformat()))
+        embed = discord.Embed(title=f"{await get_emoji('ticket')} Ticket abierto — {self.CATEGORIAS[category_key]['nombre']}", description=f"**Usuario:** {user.mention}\n**Categoría:** {self.CATEGORIAS[category_key]['emoji']} {self.CATEGORIAS[category_key]['nombre']}\n\nEl equipo de soporte te atenderá en breve.", color=discord.Color.blue(), timestamp=datetime.now())
         embed.set_footer(text=f"Ticket #{await self.get_ticket_id(channel.id)}")
         await channel.send(embed=embed)
         view = TicketControlView(self.bot, channel.id, user.id)
@@ -4231,21 +4878,15 @@ class TicketSystem(BaseCog):
     @commands.command(name='ticket_panel')
     @commands.has_permissions(administrator=True)
     async def crear_panel_tickets(self, ctx):
-        embed = discord.Embed(
-            title="📩 Sistema de Tickets - Nova Agora Roleplay",
-            description=(
-                "¡Bienvenido al centro de soporte!\nSelecciona la categoría que corresponda.\n\n" +
-                "\n".join([f"{data['emoji']} → **{data['nombre']}**\n*{data['desc']}*\n" for data in self.CATEGORIAS.values()]) +
-                "\n**📌 Importante:**\n- Tickets privados.\n- Abre solo uno a la vez.\n- Adjunta evidencia.\n\nGracias por ser parte de Nova Agora RP."
-            ),
-            color=discord.Color.gold(),
-            timestamp=datetime.now()
-        )
+        embed = discord.Embed(title=f"{await get_emoji('ticket')} Sistema de Tickets - Nova Agora Roleplay", description="¡Bienvenido al centro de soporte!\nSelecciona la categoría que corresponda.\n\n" + "\n".join([f"{data['emoji']} → **{data['nombre']}**\n*{data['desc']}*\n" for data in self.CATEGORIAS.values()]) + "\n**📌 Importante:**\n- Tickets privados.\n- Abre solo uno a la vez.\n- Adjunta evidencia.\n\nGracias por ser parte de Nova Agora RP.", color=discord.Color.gold(), timestamp=datetime.now())
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
         embed.set_footer(text="NOVA AGORA ROLEPLAY")
         view = TicketPanelView(self.bot, self.CATEGORIAS)
         await ctx.send(embed=embed, view=view)
-        await ctx.message.delete()
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
 class TicketPanelView(discord.ui.View):
     def __init__(self, bot, categorias):
@@ -4290,12 +4931,7 @@ class TicketControlView(discord.ui.View):
         await db.execute("UPDATE tickets SET status = 'cerrado', closed_at = ? WHERE channel_id = ?", (datetime.now().isoformat(), self.channel_id))
         channel = interaction.channel
         user = channel.guild.get_member(self.user_id)
-        embed = discord.Embed(
-            title="🔒 Ticket cerrado",
-            description=f"El ticket ha sido cerrado por {interaction.user.mention}.",
-            color=discord.Color.red(),
-            timestamp=datetime.now()
-        )
+        embed = discord.Embed(title="🔒 Ticket cerrado", description=f"El ticket ha sido cerrado por {interaction.user.mention}.", color=discord.Color.red(), timestamp=datetime.now())
         await channel.send(embed=embed)
         if is_staff and user:
             modal = TicketModal(self.bot, self.channel_id, user.id)
@@ -4305,13 +4941,7 @@ class TicketControlView(discord.ui.View):
                 await interaction2.response.send_modal(modal)
             button_modal.callback = modal_callback
             view.add_item(button_modal)
-            dm_embed = discord.Embed(
-                title="📝 Valoración del ticket",
-                description="¿Te atendieron correctamente? Tu opinión nos ayuda a mejorar.\n\n"
-                            "**¿Te respondieron en un tiempo razonable?**\n**¿Se resolvió tu problema como esperabas?**\n\n"
-                            "No te tomará más de un minuto.\n\nNo te sientas obligado, puedes cancelar si lo deseas.",
-                color=discord.Color.gold()
-            )
+            dm_embed = discord.Embed(title="📝 Valoración del ticket", description="¿Te atendieron correctamente? Tu opinión nos ayuda a mejorar.\n\n**¿Te respondieron en un tiempo razonable?**\n**¿Se resolvió tu problema como esperabas?**\n\nNo te tomará más de un minuto.\n\nNo te sientas obligado, puedes cancelar si lo deseas.", color=discord.Color.gold())
             try:
                 await user.send(embed=dm_embed, view=view)
             except:
@@ -4320,15 +4950,13 @@ class TicketControlView(discord.ui.View):
         await channel.delete()
         await self.bot.get_cog("TicketSystem").log("TICKET", f"Ticket #{await self.bot.get_cog('TicketSystem').get_ticket_id(self.channel_id)} cerrado por {interaction.user}")
 
-# ------------------------------------------------
-# COG: AntiRaid (solo flood de mensajes y palabras prohibidas)
-# ------------------------------------------------
+# ====================================================
+# COG: AntiRaid
+# ====================================================
 class AntiRaid(BaseCog):
     def __init__(self, bot):
         super().__init__(bot)
-        self.thresholds = {
-            "message_flood": 15,
-        }
+        self.thresholds = {"message_flood": 15}
         self.message_flood = {}
 
     @commands.Cog.listener()
@@ -4344,7 +4972,6 @@ class AntiRaid(BaseCog):
         if len(self.message_flood[user_id]) > self.thresholds["message_flood"]:
             await self._punish_user(message.author, "flood_messages")
             self.message_flood[user_id] = []
-
         forbidden_words = ["n-word", "puto", "cabrón", "imbécil", "idiota"]
         content_lower = message.content.lower()
         for word in forbidden_words:
@@ -4353,15 +4980,10 @@ class AntiRaid(BaseCog):
                 break
 
     async def _punish_user(self, user, reason_type):
-        rows = await db.fetchall("SELECT COUNT(*) FROM antiraid_actions WHERE user_id = ? AND timestamp > ?",
-                                 (user.id, (datetime.now() - timedelta(hours=24)).isoformat()))
+        rows = await db.fetchall("SELECT COUNT(*) FROM antiraid_actions WHERE user_id = ? AND timestamp > ?", (user.id, (datetime.now() - timedelta(hours=24)).isoformat()))
         infracciones = rows[0][0] if rows else 0
-
         if infracciones < 2:
-            await db.execute("""
-                INSERT INTO warnings (user_id, razon, fecha, agente_id, agente_nombre)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user.id, f"Anti-Raid: {reason_type}", datetime.now().isoformat(), self.bot.user.id, "Sistema"))
+            await db.execute("INSERT INTO warnings (user_id, razon, fecha, agente_id, agente_nombre) VALUES (?, ?, ?, ?, ?)", (user.id, f"Anti-Raid: {reason_type}", datetime.now().isoformat(), self.bot.user.id, "Sistema"))
             await self.log("ANTIRAID_WARN", f"{user} recibió advertencia por {reason_type}")
             try:
                 await user.send(embed=embed_error(f"⚠️ Has sido advertido por el sistema anti-raid: {reason_type}. Comportamiento inapropiado."))
@@ -4394,6 +5016,7 @@ class AntiRaid(BaseCog):
         else:
             await db.add_to_blacklist(user.id, f"Anti-Raid: {reason_type}", self.bot.user.id)
             await db.update_user_state(user.id, banned=True, ban_reason=f"Anti-Raid: {reason_type}", banned_by=self.bot.user.id, ban_date=datetime.now().isoformat())
+            await db.delete_dni(user.id)
             guild = self.bot.guilds[0] if self.bot.guilds else None
             if guild:
                 member = guild.get_member(user.id)
@@ -4405,9 +5028,9 @@ class AntiRaid(BaseCog):
                     except:
                         pass
 
-# ------------------------------------------------
-# COG: CheckUsers (slash command)
-# ------------------------------------------------
+# ====================================================
+# COG: CheckUsers
+# ====================================================
 class CheckUsers(BaseCog):
     @app_commands.command(name="checkusers", description="Muestra los usuarios del servidor que están en la blacklist global.")
     @app_commands.default_permissions(administrator=True)
@@ -4426,9 +5049,9 @@ class CheckUsers(BaseCog):
             embed = discord.Embed(title="⚠️ Usuarios en blacklist", description="\n".join(suspicious), color=discord.Color.red())
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ------------------------------------------------
-# COG: TabletPolicial (comando oculto -tablet)
-# ------------------------------------------------
+# ====================================================
+# COG: TabletPolicial
+# ====================================================
 class TabletPolicial(BaseCog):
     def __init__(self, bot):
         super().__init__(bot)
@@ -4444,12 +5067,12 @@ class TabletPolicial(BaseCog):
     @commands.command(name='tablet', hidden=True)
     async def tablet(self, ctx):
         view = TabletView(ctx.author.id)
-        embed = discord.Embed(
-            title="📱 Tablet Policial - Nova Agora RP",
-            description="Selecciona una acción desde el menú.",
-            color=0x3498DB
-        )
+        embed = discord.Embed(title=f"{await get_emoji('pda')} Tablet Policial - Nova Agora", description="Selecciona una acción desde el menú.", color=0x3498DB)
         await ctx.send(embed=embed, view=view)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
 class TabletView(discord.ui.View):
     def __init__(self, user_id):
@@ -4494,7 +5117,6 @@ class TabletView(discord.ui.View):
 class DetenerModal(discord.ui.Modal, title="Detener ciudadano"):
     usuario = discord.ui.TextInput(label="ID o mención del usuario", placeholder="@usuario o ID")
     motivo = discord.ui.TextInput(label="Motivo", placeholder="Razón de la detención", style=discord.TextStyle.paragraph)
-
     async def on_submit(self, interaction: discord.Interaction):
         try:
             user_id = int(self.usuario.value.replace('<@', '').replace('>', ''))
@@ -4502,11 +5124,7 @@ class DetenerModal(discord.ui.Modal, title="Detener ciudadano"):
             if not miembro:
                 await interaction.response.send_message("Usuario no encontrado.", ephemeral=True)
                 return
-            embed = discord.Embed(
-                title="🚨 DETENCIÓN",
-                description=f"{interaction.user.display_name} ha detenido a {miembro.mention}. Motivo: {self.motivo.value}",
-                color=0xFF0000
-            )
+            embed = discord.Embed(title="🚨 DETENCIÓN", description=f"{interaction.user.display_name} ha detenido a {miembro.mention}. Motivo: {self.motivo.value}", color=0xFF0000)
             await interaction.response.send_message(embed=embed)
             await interaction.followup.send("Detención registrada.", ephemeral=True)
             await db.log_antiraid_action(interaction.user.id, "detener", interaction.guild.id)
@@ -4517,7 +5135,6 @@ class EncarcelarModal(discord.ui.Modal, title="Encarcelar ciudadano"):
     usuario = discord.ui.TextInput(label="ID o mención del usuario", placeholder="@usuario o ID")
     minutos = discord.ui.TextInput(label="Minutos", placeholder="Número de minutos")
     motivo = discord.ui.TextInput(label="Motivo", placeholder="Razón del encarcelamiento", style=discord.TextStyle.paragraph)
-
     async def on_submit(self, interaction: discord.Interaction):
         try:
             user_id = int(self.usuario.value.replace('<@', '').replace('>', ''))
@@ -4531,11 +5148,7 @@ class EncarcelarModal(discord.ui.Modal, title="Encarcelar ciudadano"):
                 return
             hasta = datetime.now() + timedelta(minutes=minutos)
             await db.update_user_state(miembro.id, encarcelado_hasta=hasta.isoformat())
-            embed = discord.Embed(
-                title="🔒 ENCARCELAMIENTO",
-                description=f"{interaction.user.display_name} ha encarcelado a {miembro.mention} por {minutos} minutos.\nMotivo: {self.motivo.value}",
-                color=0xFF0000
-            )
+            embed = discord.Embed(title="🔒 ENCARCELAMIENTO", description=f"{interaction.user.display_name} ha encarcelado a {miembro.mention} por {minutos} minutos.\nMotivo: {self.motivo.value}", color=0xFF0000)
             await interaction.response.send_message(embed=embed)
             await db.log_antiraid_action(interaction.user.id, "encarcelar", interaction.guild.id)
         except ValueError:
@@ -4545,7 +5158,6 @@ class MultarModal(discord.ui.Modal, title="Multar ciudadano"):
     usuario = discord.ui.TextInput(label="ID o mención del usuario", placeholder="@usuario o ID")
     cantidad = discord.ui.TextInput(label="Cantidad", placeholder="Monto de la multa")
     motivo = discord.ui.TextInput(label="Motivo", placeholder="Razón de la multa", style=discord.TextStyle.paragraph)
-
     async def on_submit(self, interaction: discord.Interaction):
         try:
             user_id = int(self.usuario.value.replace('<@', '').replace('>', ''))
@@ -4558,11 +5170,7 @@ class MultarModal(discord.ui.Modal, title="Multar ciudadano"):
                 await interaction.response.send_message("La cantidad debe ser mayor a 0.", ephemeral=True)
                 return
             await db.add_multa(miembro.id, cantidad, self.motivo.value, interaction.user.display_name, "Tablet")
-            embed = discord.Embed(
-                title="📄 MULTA",
-                description=f"{interaction.user.display_name} ha multado a {miembro.mention} con **${cantidad:,}**.\nMotivo: {self.motivo.value}",
-                color=0xFFA500
-            )
+            embed = discord.Embed(title="📄 MULTA", description=f"{interaction.user.display_name} ha multado a {miembro.mention} con **${cantidad:,}**.\nMotivo: {self.motivo.value}", color=0xFFA500)
             await interaction.response.send_message(embed=embed)
             await db.log_antiraid_action(interaction.user.id, "multar", interaction.guild.id)
         except ValueError:
@@ -4571,7 +5179,6 @@ class MultarModal(discord.ui.Modal, title="Multar ciudadano"):
 class RequisarModal(discord.ui.Modal, title="Requisar arma"):
     usuario = discord.ui.TextInput(label="ID o mención del usuario", placeholder="@usuario o ID")
     arma = discord.ui.TextInput(label="Arma", placeholder="Nombre del arma (ej: Pistola)")
-
     async def on_submit(self, interaction: discord.Interaction):
         try:
             user_id = int(self.usuario.value.replace('<@', '').replace('>', ''))
@@ -4585,11 +5192,7 @@ class RequisarModal(discord.ui.Modal, title="Requisar arma"):
                 await interaction.response.send_message(f"{miembro.display_name} no tiene {self.arma.value} equipada.", ephemeral=True)
                 return
             await db.execute("DELETE FROM armas_equipadas WHERE user_id = ? AND arma = ?", (miembro.id, arma_real))
-            embed = discord.Embed(
-                title="🔫 ARMA REQUISADA",
-                description=f"{interaction.user.display_name} requisó {arma_real} a {miembro.mention}.",
-                color=0xFF0000
-            )
+            embed = discord.Embed(title="🔫 ARMA REQUISADA", description=f"{interaction.user.display_name} requisó {arma_real} a {miembro.mention}.", color=0xFF0000)
             await interaction.response.send_message(embed=embed)
             await db.log_antiraid_action(interaction.user.id, "requisar", interaction.guild.id)
         except ValueError:
@@ -4599,7 +5202,6 @@ class LicenciaModal(discord.ui.Modal, title="Gestionar licencia"):
     usuario = discord.ui.TextInput(label="ID o mención del usuario", placeholder="@usuario o ID")
     tipo = discord.ui.TextInput(label="Tipo de licencia", placeholder="Ej: licencia_pistola")
     accion = discord.ui.TextInput(label="Acción", placeholder="dar / quitar", default="dar")
-
     async def on_submit(self, interaction: discord.Interaction):
         try:
             user_id = int(self.usuario.value.replace('<@', '').replace('>', ''))
@@ -4618,147 +5220,387 @@ class LicenciaModal(discord.ui.Modal, title="Gestionar licencia"):
             else:
                 await interaction.response.send_message("Acción debe ser 'dar' o 'quitar'.", ephemeral=True)
                 return
-            embed = discord.Embed(
-                title="📋 LICENCIA",
-                description=f"{interaction.user.display_name} {desc}.",
-                color=0x00FF00 if accion == "dar" else 0xFF0000
-            )
+            embed = discord.Embed(title="📋 LICENCIA", description=f"{interaction.user.display_name} {desc}.", color=0x00FF00 if accion == "dar" else 0xFF0000)
             await interaction.response.send_message(embed=embed)
             await db.log_antiraid_action(interaction.user.id, f"licencia_{accion}", interaction.guild.id)
         except ValueError:
             await interaction.response.send_message("ID inválido.", ephemeral=True)
 
-# ------------------------------------------------
-# COG: DNI (con almacenamiento en base de datos)
-# ------------------------------------------------
+# ====================================================
+# COG: DNI (mejorado)
+# ====================================================
 class DNI(BaseCog):
-    @commands.hybrid_command(name='dni', description="Crea tu DNI de personaje")
-    @check_ban()
-    async def dni(self, ctx, nombre: str, apellidos: str, edad: int, genero: str, nacionalidad: str, color_ojos: str, altura: str, profesion: str):
-        uid = ctx.author.id
+    @app_commands.command(name='dni', description="Crea tu DNI de personaje en NOVA AGORA V2")
+    async def dni(self, interaction: discord.Interaction, nombre: str, apellidos: str, edad: int, genero: str, nacionalidad: str, color_ojos: str, altura: str, profesion: str):
+        uid = interaction.user.id
         existing = await db.get_dni(uid)
         if existing:
-            return await ctx.send(embed=embed_error("Ya tienes un DNI registrado."))
+            return await interaction.response.send_message(embed=embed_error("Ya tienes un DNI registrado."))
         numero = f"{random.randint(10000000, 99999999)}{random.choice('ABCDEFGHJKLMNPQRSTVWXYZ')}"
-        data = {
-            "nombre": nombre, "apellidos": apellidos, "edad": edad, "genero": genero,
-            "nacionalidad": nacionalidad, "color_ojos": color_ojos, "altura": altura,
-            "profesion": profesion, "numero": numero, "fecha_creacion": datetime.now().isoformat()
-        }
+        data = {"nombre": nombre, "apellidos": apellidos, "edad": edad, "genero": genero, "nacionalidad": nacionalidad, "color_ojos": color_ojos, "altura": altura, "profesion": profesion, "numero": numero, "fecha_creacion": datetime.now().isoformat()}
         await db.set_dni(uid, data)
-        embed = discord.Embed(title="✅ DNI CREADO", description=(
-            f"**Nombre:** {nombre}\n**Apellidos:** {apellidos}\n**Edad:** {edad}\n**Género:** {genero}\n"
-            f"**Nacionalidad:** {nacionalidad}\n**Color de ojos:** {color_ojos}\n"
-            f"**Altura:** {altura}\n**Profesión:** {profesion}\n**Número DNI:** `{numero}`"
-        ), color=0x00FF00)
-        await ctx.send(embed=embed)
+        await interaction.response.send_message("✨ **** CREA TÚ DNI EN NOVA AGORA V2 ****")
+        embed = discord.Embed(title="✅ DNI CREADO", description=f"**Nombre:** {nombre}\n**Apellidos:** {apellidos}\n**Edad:** {edad}\n**Género:** {genero}\n**Nacionalidad:** {nacionalidad}\n**Color de ojos:** {color_ojos}\n**Altura:** {altura}\n**Profesión:** {profesion}\n**Número DNI:** `{numero}`", color=0x00FF00)
+        await interaction.followup.send(embed=embed)
 
-    @commands.hybrid_command(name='editardni', description="Edita tu DNI")
-    @check_ban()
-    async def editardni(self, ctx, campo: str, *, nuevo_valor: str):
-        uid = ctx.author.id
-        dni = await db.get_dni(uid)
-        if not dni:
-            return await ctx.send(embed=embed_error("No tienes DNI."))
-        campos = ['nombre', 'apellidos', 'edad', 'genero', 'nacionalidad', 'color_ojos', 'altura', 'profesion']
-        if campo.lower() not in campos:
-            return await ctx.send(embed=embed_error(f"Campos válidos: {', '.join(campos)}"))
-        if campo.lower() == 'edad':
-            try:
-                nuevo_valor = int(nuevo_valor)
-                if nuevo_valor < 0 or nuevo_valor > 120:
-                    raise ValueError
-            except:
-                return await ctx.send(embed=embed_error("Edad debe ser un número entre 0 y 120."))
-        dni[campo.lower()] = nuevo_valor
-        await db.set_dni(uid, dni)
-        await ctx.send(embed=embed_success("✏️ DNI actualizado", f"**{campo}** → `{nuevo_valor}`"))
-
-    @commands.group(name='ver', invoke_without_command=True)
-    async def ver(self, ctx):
-        await ctx.send(embed=embed_info("📋 Comando ver", "Usa `-ver dni [usuario]` para ver el DNI de alguien."))
-
-    @ver.command(name='dni', aliases=['dn'])
-    @check_ban()
-    async def ver_dni(self, ctx, usuario: Optional[discord.Member] = None):
+    @commands.command(name='ver')
+    async def ver(self, ctx, subcomando: str = None, usuario: Optional[discord.Member] = None):
+        if subcomando is None or subcomando.lower() != 'dni':
+            return await ctx.send(embed=embed_info("📋 Comando ver", "Usa `-ver dni [usuario]` para ver el DNI de alguien."))
         uid = usuario.id if usuario else ctx.author.id
         dni = await db.get_dni(uid)
         if not dni:
             return await ctx.send(embed=embed_error("Ese usuario no tiene DNI."))
-        embed = discord.Embed(
-            title=f"📄 **DNI de {dni['nombre']} {dni['apellidos']}**",
-            color=0x3498DB,
-            timestamp=datetime.now()
-        )
         target = usuario or ctx.author
+        embed = discord.Embed(title="DOCUMENTO NACIONAL DE IDENTIDAD • NOVA AGORA V2", description="ESTADOS UNIDOS · LOS ANGELES", color=0x00D1FF, timestamp=datetime.now())
+        embed.set_author(name=target.display_name, icon_url=target.display_avatar.url)
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="👤 **Nombre completo**", value=f"{dni['nombre']} {dni['apellidos']}", inline=False)
-        embed.add_field(name="🎂 **Edad**", value=dni['edad'], inline=True)
-        embed.add_field(name="⚥ **Género**", value=dni['genero'], inline=True)
-        embed.add_field(name="🌍 **Nacionalidad**", value=dni['nacionalidad'], inline=True)
-        embed.add_field(name="👁️ **Color de ojos**", value=dni['color_ojos'], inline=True)
-        embed.add_field(name="📏 **Altura**", value=dni['altura'], inline=True)
-        embed.add_field(name="💼 **Profesión**", value=dni['profesion'], inline=True)
-        embed.add_field(name="🆔 **Número DNI**", value=f"`{dni['numero']}`", inline=False)
-        embed.add_field(name="📅 **Creado**", value=datetime.fromisoformat(dni['fecha_creacion']).strftime("%d/%m/%Y %H:%M"), inline=False)
-        embed.set_footer(text="Nova Agora RP • Documento de Identidad")
+        embed.set_image(url=target.display_avatar.url)
+        embed.add_field(name="✨ ESTADO", value="LOS ANGELES", inline=False)
+        embed.add_field(name="🌟 NOMBRE", value=f"**{dni['nombre']}**", inline=False)
+        embed.add_field(name="💫 APELLIDOS", value=f"**{dni['apellidos']}**", inline=False)
+        embed.add_field(name="🔥 SEXO", value=dni['genero'], inline=False)
+        embed.add_field(name="📅 FECHA NACIMIENTO", value=str(dni['edad']), inline=False)
+        embed.add_field(name="👁️ COLOR OJOS", value=dni['color_ojos'], inline=False)
+        embed.add_field(name="📏 ALTURA", value=dni['altura'], inline=False)
+        embed.add_field(name="🎖️ PROFESIÓN", value=f"**{dni['profesion']}**", inline=False)
+        embed.add_field(name="🌍 NACIONALIDAD", value=dni['nacionalidad'], inline=False)
+        embed.add_field(name="🔐 Nº DNI", value=f"**{dni['numero']}**", inline=False)
+        embed.add_field(name="✅ ESTADO DEL DOCUMENTO", value="**VÁLIDO**", inline=False)
+        embed.add_field(name="🗓️ EMITIDO", value=datetime.fromisoformat(dni['fecha_creacion']).strftime('%d/%m/%Y %H:%M'), inline=False)
+        embed.set_footer(text=f"NOVA AGORA V2 • CARNET OFICIAL • {datetime.now():%d/%m/%Y}")
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
-    @commands.hybrid_command(name='verdni', description="Ver DNI de un usuario")
-    @check_ban()
-    async def verdni(self, ctx, usuario: Optional[discord.Member] = None):
-        await self.ver_dni(ctx, usuario)
-
-    @commands.hybrid_command(name='borrardni', description="Elimina el DNI de un usuario (solo administradores)")
-    @commands.has_permissions(administrator=True)
-    async def borrardni(self, ctx, usuario: discord.Member):
+    @app_commands.command(name='borrardni', description="Elimina el DNI de un usuario (solo administradores) en NOVA AGORA V2")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def borrardni(self, interaction: discord.Interaction, usuario: discord.Member):
         dni = await db.get_dni(usuario.id)
         if not dni:
-            return await ctx.send(embed=embed_error("Ese usuario no tiene DNI."))
+            return await interaction.response.send_message(embed=embed_error("Ese usuario no tiene DNI."))
         await db.delete_dni(usuario.id)
-        await ctx.send(embed=embed_success("🗑️ DNI eliminado", f"Se eliminó el DNI de {usuario.mention}.", 0xFF0000))
+        await interaction.response.send_message("✨ **** BORRA DNI EN NOVA AGORA V2 ****")
+        await interaction.followup.send(embed=embed_success("🗑️ DNI eliminado", f"Se eliminó el DNI de {usuario.mention}.", 0xFF0000))
 
-# ------------------------------------------------
-# COG: Kits (sistema de kits por rol con comandos separados y cooldown 12h)
-# ------------------------------------------------
+# ====================================================
+# COG: Trabajos (Minería, Bus, Chatarrero) con roles específicos
+# ====================================================
+class Trabajos(BaseCog):
+    trabajos_activos = {}  # {user_id: {"tipo": str, "inicio": datetime, "fin": datetime, "pago": int}}
+
+    @commands.command(name='minar', description='Extrae minerales con probabilidad')
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_minero()  # Requiere rol MINERO
+    async def minar(self, ctx):
+        uid = str(ctx.author.id)
+        if uid in self.trabajos_activos:
+            return await ctx.send(embed=embed_error("-# **Ya estás trabajando. Termina tu turno actual con `-terminar-trabajo`.**"))
+        msg = await ctx.send("⛏️ **Comenzando a minar...**\n *Excavando en la mina...*")
+        await asyncio.sleep(random.randint(3, 6))
+        # Seleccionar mineral según probabilidad
+        rand = random.random() * 100
+        acum = 0
+        mineral_encontrado = None
+        for mineral, datos in MINERALES.items():
+            acum += datos["probabilidad"]
+            if rand <= acum:
+                mineral_encontrado = mineral
+                break
+        if not mineral_encontrado:
+            mineral_encontrado = "Carbón"
+        cantidad = random.randint(1, 3)
+        valor = MINERALES[mineral_encontrado]["valor"] * cantidad
+        emoji = MINERALES[mineral_encontrado]["emoji"]
+        await db.add_item(ctx.author.id, "personal", mineral_encontrado, cantidad)
+        embed = discord.Embed(
+            title="⛏️ **RESULTADO DE LA MINERÍA**",
+            description=f"{emoji} Has extraído **{cantidad}x {mineral_encontrado}**.\n💎 Valor aproximado: **${valor}**",
+            color=0xB87333
+        )
+        await msg.edit(content=None, embed=embed)
+        await self.log("MINAR", f"{ctx.author.name} extrajo {cantidad}x {mineral_encontrado}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='bus', description='Conduce el autobús público (roleplay)')
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_autobusero()  # Requiere rol AUTOBUSERO
+    async def bus(self, ctx):
+        uid = str(ctx.author.id)
+        if uid in self.trabajos_activos:
+            return await ctx.send(embed=embed_error("-# **Ya estás trabajando. Termina tu turno actual con `-terminar-trabajo`.**"))
+        self.trabajos_activos[uid] = {"tipo": "bus", "inicio": datetime.now(), "fin": datetime.now() + timedelta(minutes=5)}
+        embed = discord.Embed(
+            title="🚌 **CONDUCIENDO EL AUTOBÚS**",
+            description="Has comenzado tu ruta como conductor de autobús.\nRecoge pasajeros y completa la ruta.\n**Tiempo estimado: 5 minutos**\n\nPulsa `-terminar-trabajo` para cobrar.",
+            color=0xFFD700
+        )
+        await ctx.send(embed=embed)
+        await self.log("BUS", f"{ctx.author.name} comenzó ruta de autobús")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='chatarrero', description='Recolecta chatarra y véndela')
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_chatarrero()  # Requiere rol CHATARRERO
+    async def chatarrero(self, ctx):
+        uid = str(ctx.author.id)
+        if uid in self.trabajos_activos:
+            return await ctx.send(embed=embed_error("-# **Ya estás trabajando. Termina tu turno actual con `-terminar-trabajo`.**"))
+        self.trabajos_activos[uid] = {"tipo": "chatarrero", "inicio": datetime.now(), "fin": datetime.now() + timedelta(minutes=8)}
+        embed = discord.Embed(
+            title="🔧 **RECOLECTANDO CHATARRA**",
+            description="Has comenzado a recolectar metales y piezas viejas.\n**Tiempo estimado: 8 minutos**\n\nPulsa `-terminar-trabajo` para cobrar.",
+            color=0x808080
+        )
+        await ctx.send(embed=embed)
+        await self.log("CHATARRERO", f"{ctx.author.name} comenzó recolección de chatarra")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='terminar-trabajo', description='Termina tu trabajo actual y cobra')
+    @check_ban()
+    async def terminar_trabajo(self, ctx):
+        uid = str(ctx.author.id)
+        if uid not in self.trabajos_activos:
+            return await ctx.send(embed=embed_error("-# **No tienes ningún trabajo activo.\nUsa `-minar`, `-bus` o `-chatarrero` para comenzar.**"))
+        trabajo = self.trabajos_activos[uid]
+        tipo = trabajo["tipo"]
+        inicio = trabajo["inicio"]
+        fin = trabajo["fin"]
+        ahora = datetime.now()
+        if ahora < fin:
+            return await ctx.send(embed=embed_error(f"-# **Todavía no has terminado. Te quedan {(fin-ahora).seconds//60} minutos.**"))
+        if tipo == "minar":
+            embed = discord.Embed(title="⛏️ **MINERÍA COMPLETADA**", description="Has terminado tu jornada de minería. Los minerales ya están en tu inventario.", color=0xB87333)
+            await ctx.send(embed=embed)
+        elif tipo == "bus":
+            pago = random.randint(500, 1200)
+            await db.add_cash(ctx.author.id, pago)
+            embed = discord.Embed(title="🚌 **RUTA COMPLETADA**", description=f"Has cobrado **${pago:,}** por tu servicio de autobús.", color=0xFFD700)
+            await ctx.send(embed=embed)
+        elif tipo == "chatarrero":
+            chatarra = random.randint(5, 20)
+            valor_total = chatarra * 15
+            await db.add_cash(ctx.author.id, valor_total)
+            await db.add_item(ctx.author.id, "personal", "Chatarra", chatarra)
+            embed = discord.Embed(title="🔧 **RECOLECCIÓN COMPLETADA**", description=f"Has recogido **{chatarra} piezas de chatarra** y las has vendido por **${valor_total:,}**.", color=0x808080)
+            await ctx.send(embed=embed)
+        del self.trabajos_activos[uid]
+        await self.log("TERMINAR_TRABAJO", f"{ctx.author.name} finalizó trabajo de {tipo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+# ====================================================
+# COG: OwnerMenu (Emojis animados) y panel web de gestión de emojis
+# ====================================================
+class OwnerMenu(BaseCog):
+    @commands.group(name='owner', invoke_without_command=True)
+    @is_owner()
+    async def owner(self, ctx):
+        embed = discord.Embed(title="🔧 Panel de Owner", description="Comandos disponibles:", color=0x00FF00)
+        embed.add_field(name="`-owner add-emoji <nombre> <emoji>`", value="Agrega un emoji animado al servidor (puedes usar el emoji de otro servidor si el bot tiene permisos).", inline=False)
+        embed.add_field(name="`-owner list-emojis`", value="Lista los emojis personalizados añadidos.", inline=False)
+        embed.add_field(name="`-owner menu`", value="Abre un menú interactivo para gestionar emojis.", inline=False)
+        embed.add_field(name="🌐 Panel web", value=f"Accede a `/owner/emojis` en el navegador con el token `{ADMIN_TOKEN}` para gestionar emojis globales.", inline=False)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @owner.command(name='add-emoji')
+    @is_owner()
+    async def add_animated_emoji(self, ctx, nombre: str, emoji: str):
+        """Agrega un emoji animado al servidor. Ej: -owner add-emoji NovaGif <a:Nombre:123456789>"""
+        guild = ctx.guild
+        if not guild.me.guild_permissions.create_expression:
+            return await ctx.send(embed=embed_error("El bot necesita el permiso 'Crear expresiones' (Crear emojis)."))
+        emoji_id = None
+        if emoji.startswith("<a:") or emoji.startswith("<:"):
+            try:
+                emoji_id = int(emoji.split(":")[-1][:-1])
+                emoji_url = f"https://cdn.discordapp.com/emojis/{emoji_id}.gif" if emoji.startswith("<a:") else f"https://cdn.discordapp.com/emojis/{emoji_id}.png"
+            except:
+                return await ctx.send(embed=embed_error("Formato de emoji inválido. Usa un emoji animado tipo `<a:nombre:123456789>` o `:nombre:` de este servidor."))
+        else:
+            custom_emoji = discord.utils.get(guild.emojis, name=emoji.strip(":"))
+            if custom_emoji:
+                emoji_id = custom_emoji.id
+                emoji_url = custom_emoji.url
+            else:
+                return await ctx.send(embed=embed_error("Emoji no encontrado en este servidor. Proporciónalo en formato `<a:nombre:ID>`."))
+        try:
+            new_emoji = await guild.create_custom_emoji(name=nombre, image=await self.bot.loop.run_in_executor(None, self._download_image, emoji_url))
+            await db.add_animated_emoji(nombre, new_emoji.id, ctx.author.id)
+            await ctx.send(embed=embed_success("✅ Emoji añadido", f"Se ha añadido el emoji `:{new_emoji.name}:` al servidor."))
+            await self.log("ADD_EMOJI", f"{ctx.author.name} añadió emoji {nombre} (ID: {new_emoji.id})")
+        except Exception as e:
+            await ctx.send(embed=embed_error(f"Error al añadir emoji: {str(e)[:100]}"))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    def _download_image(self, url):
+        import requests
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.content
+
+    @owner.command(name='list-emojis')
+    @is_owner()
+    async def list_emojis(self, ctx):
+        emojis = await db.get_all_animated_emojis()
+        if not emojis:
+            return await ctx.send(embed=embed_info("📋 Emojis", "No hay emojis personalizados añadidos."))
+        desc = "\n".join([f"`:{e['name']}:` (<:{e['name']}:{e['emoji_id']}>)" for e in emojis])
+        embed = discord.Embed(title="📋 Emojis personalizados", description=desc, color=0x00FF00)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @owner.command(name='menu')
+    @is_owner()
+    async def owner_menu(self, ctx):
+        view = OwnerMenuView()
+        embed = discord.Embed(title="🔧 Menú de Owner", description="Selecciona una opción para gestionar el bot y los emojis animados.\n\nTambién puedes usar el panel web: `/owner/emojis`", color=0x00FF00)
+        await ctx.send(embed=embed, view=view)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+class OwnerMenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+
+    @discord.ui.button(label="➕ Añadir Emoji", style=discord.ButtonStyle.success, emoji="➕")
+    async def add_emoji_btn(self, interaction: discord.Interaction, button):
+        modal = AddEmojiModal()
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="📋 Listar Emojis", style=discord.ButtonStyle.primary, emoji="📋")
+    async def list_emoji_btn(self, interaction: discord.Interaction, button):
+        emojis = await db.get_all_animated_emojis()
+        if not emojis:
+            embed = embed_info("📋 Emojis", "No hay emojis personalizados.")
+        else:
+            desc = "\n".join([f"`:{e['name']}:` (<:{e['name']}:{e['emoji_id']}>)" for e in emojis])
+            embed = discord.Embed(title="📋 Emojis personalizados", description=desc, color=0x00FF00)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="⚙️ Comandos Owner", style=discord.ButtonStyle.secondary, emoji="⚙️")
+    async def cmd_help(self, interaction: discord.Interaction, button):
+        embed = discord.Embed(title="⚙️ Comandos de Owner", description="`-bot [días]` - Activar bot\n`-bot-off` - Apagar bot\n`-owner add-emoji <nombre> <emoji>` - Añadir emoji animado\n`-owner list-emojis` - Ver emojis\n`-owner menu` - Este menú\n`-grant-pda @user` - Dar acceso PDA web\n`-revoke-pda @user` - Revocar acceso PDA", color=0x00FF00)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class AddEmojiModal(discord.ui.Modal, title="Añadir Emoji Animado"):
+    nombre = discord.ui.TextInput(label="Nombre del emoji", placeholder="Ej: NovaGif", max_length=32)
+    emoji_input = discord.ui.TextInput(label="Emoji", placeholder="Ej: <a:NovaGif:123456789> o :nombre:", style=discord.TextStyle.short)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if not guild.me.guild_permissions.create_expression:
+            return await interaction.response.send_message(embed=embed_error("El bot necesita permiso 'Crear expresiones'."), ephemeral=True)
+        emoji_str = self.emoji_input.value
+        nombre = self.nombre.value
+        emoji_id = None
+        if emoji_str.startswith("<a:") or emoji_str.startswith("<:"):
+            try:
+                emoji_id = int(emoji_str.split(":")[-1][:-1])
+                emoji_url = f"https://cdn.discordapp.com/emojis/{emoji_id}.gif" if emoji_str.startswith("<a:") else f"https://cdn.discordapp.com/emojis/{emoji_id}.png"
+            except:
+                return await interaction.response.send_message(embed=embed_error("Formato de emoji inválido."), ephemeral=True)
+        else:
+            custom_emoji = discord.utils.get(guild.emojis, name=emoji_str.strip(":"))
+            if custom_emoji:
+                emoji_id = custom_emoji.id
+                emoji_url = custom_emoji.url
+            else:
+                return await interaction.response.send_message(embed=embed_error("Emoji no encontrado en este servidor."), ephemeral=True)
+        try:
+            import requests
+            response = requests.get(emoji_url)
+            response.raise_for_status()
+            new_emoji = await guild.create_custom_emoji(name=nombre, image=response.content)
+            await db.add_animated_emoji(nombre, new_emoji.id, interaction.user.id)
+            await interaction.response.send_message(embed=embed_success("✅ Emoji añadido", f"Se ha añadido `:{new_emoji.name}:` al servidor."), ephemeral=True)
+            await db.log_antiraid_action(interaction.user.id, "add_emoji", guild.id)
+        except Exception as e:
+            await interaction.response.send_message(embed=embed_error(f"Error: {str(e)[:100]}"), ephemeral=True)
+
+# ====================================================
+# COG: Kits (por rol)
+# ====================================================
 class Kits(BaseCog):
-    COOLDOWN_SEGUNDOS = 43200  # 12 horas
+    COOLDOWN_SEGUNDOS = 43200
 
     @commands.command(name='policial')
     @check_ban()
     @check_encarcelado()
     async def kit_policial(self, ctx):
         await self._reclamar_kit(ctx, "LSPD", "Kit policial", [("Placa Policial", 1), ("Linterna", 1), ("Radio", 1), ("Esposas", 1), ("Guantes", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='mecanico')
     @check_ban()
     @check_encarcelado()
     async def kit_mecanico(self, ctx):
         await self._reclamar_kit(ctx, "Mecánico", "Kit mecánico", [("Llave Inglesa", 1), ("Herramientas", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='ems')
     @check_ban()
     @check_encarcelado()
     async def kit_ems(self, ctx):
         await self._reclamar_kit(ctx, "EMS", "Kit EMS", [("Botiquin", 1), ("Desfibrilador", 1), ("Kit Médico", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     @commands.command(name='bomberos')
     @check_ban()
     @check_encarcelado()
     async def kit_bomberos(self, ctx):
         await self._reclamar_kit(ctx, "Bomberos", "Kit bomberos", [("Traje Ignifugo", 1), ("Hacha", 1), ("Manguera", 1), ("Botiquin", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
     async def _reclamar_kit(self, ctx, rol_requerido, nombre_kit, items):
         user = ctx.author
         if not any(role.name == rol_requerido for role in user.roles):
             return await ctx.send(embed=embed_error(f"Necesitas el rol **{rol_requerido}** para reclamar el {nombre_kit}."))
-
         ok, rest = await db.check_cooldown(user.id, f"kit_{rol_requerido.lower()}", self.COOLDOWN_SEGUNDOS)
         if not ok:
             horas = rest // 3600
             minutos = (rest % 3600) // 60
             return await ctx.send(embed=embed_error(f"Ya has reclamado el {nombre_kit} recientemente. Puedes volver a reclamarlo en {horas}h {minutos}m."))
-
         for item, cantidad in items:
             await db.add_item(user.id, "personal", item, cantidad)
         desc = ", ".join([f"{cant}x {item}" for item, cant in items])
@@ -4766,7 +5608,225 @@ class Kits(BaseCog):
         await self.log("KIT", f"{user.name} reclamó {nombre_kit}")
 
 # ====================================================
-# PANEL WEB
+# COG: Dashboard (slash command)
+# ====================================================
+class Dashboard(BaseCog):
+    @app_commands.command(name='dashboard', description="Panel de control avanzado de Nova Agora")
+    @app_commands.default_permissions(administrator=False)
+    async def dashboard_slash(self, interaction: discord.Interaction):
+        # Verificar rol específico
+        role = interaction.guild.get_role(ROL_DASHBOARD_ID)
+        if not role or role not in interaction.user.roles:
+            if interaction.user.id not in OWNER_IDS:
+                return await interaction.response.send_message(embed=embed_error("No tienes permiso para usar este comando."), ephemeral=True)
+        # Obtener estadísticas
+        total_users = (await db.fetchone("SELECT COUNT(*) FROM economy"))[0]
+        total_cash = (await db.fetchone("SELECT SUM(cash) FROM economy"))[0] or 0
+        total_bank = (await db.fetchone("SELECT SUM(bank) FROM economy"))[0] or 0
+        total_black = (await db.fetchone("SELECT SUM(black_money) FROM economy"))[0] or 0
+        total_money = total_cash + total_bank + total_black
+        # Personas en rol (miembros con rol LSPD)
+        rol_lspd = interaction.guild.get_role(ROL_LSPD_ID)
+        people_in_rol = len(rol_lspd.members) if rol_lspd else 0
+        # Trabajos activos
+        trabajos_activos = len(Trabajos.trabajos_activos)
+        # Comandos ejecutados
+        comandos_ejecutados = await db.get_estadistica('comandos_totales') or 0
+        # Atracos realizados
+        atracos_totales = await db.get_estadistica('robos_totales') or 0
+        # Ranking de niveles
+        top_niveles = await db.get_ranking_niveles(5)
+        embed = discord.Embed(
+            title="📊 DASHBOARD NOVA AGORA",
+            description="**Estadísticas en tiempo real del servidor**",
+            color=0x00E5FF,
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="👥 Usuarios registrados", value=f"{total_users}", inline=True)
+        embed.add_field(name="💰 Economía total", value=f"${total_money:,}", inline=True)
+        embed.add_field(name="🚔 Personas en rol LSPD", value=f"{people_in_rol}", inline=True)
+        embed.add_field(name="💼 Trabajos activos", value=f"{trabajos_activos}", inline=True)
+        embed.add_field(name="📟 Comandos ejecutados", value=f"{comandos_ejecutados}", inline=True)
+        embed.add_field(name="🏴 Atracos realizados", value=f"{atracos_totales}", inline=True)
+        # Ranking
+        ranking_text = ""
+        for i, (uid, xp, nivel) in enumerate(top_niveles, 1):
+            user = interaction.guild.get_member(uid)
+            nombre = user.display_name if user else f"Usuario {uid}"
+            ranking_text += f"{i}. {nombre} - Nivel {nivel} ({xp} XP)\n"
+        embed.add_field(name="🏆 Ranking de niveles", value=ranking_text or "Sin datos", inline=False)
+        embed.set_footer(text="Actualizado en tiempo real")
+        await interaction.response.send_message(embed=embed)
+
+# ====================================================
+# COG: Alertas (con restricción solo LSPD)
+# ====================================================
+class Alertas(BaseCog):
+    @commands.command(name='alerta-robo')
+    @tiene_rol_lspd_operativo()  # Solo rol LSPD (ID 1450592202165321759)
+    async def alerta_robo(self, ctx):
+        """Envía una alerta de robo a la comisaría (solo LSPD Operativo)"""
+        rol_lspd = ctx.guild.get_role(ROL_LSPD_OPERATIVO_ID)
+        if not rol_lspd:
+            return await ctx.send(embed=embed_error("Rol LSPD Operativo no encontrado."))
+        emoji_animado = "<a:PirateAlert:1495516168121745449>"
+        mensaje = (
+            f"{emoji_animado} **🚨 DEFCON 4 🚨** {emoji_animado}\n\n"
+            f"{rol_lspd.mention}\n"
+            "**CORRE, ESTÁN ROBANDO EN LA OTRA COMISARÍA, VES DEPRISA**\n\n"
+            "🚔 Refuerzos solicitados.\n"
+            "⚠️ Posible enfrentamiento armado.\n"
+            "📍 Acude a la ubicación marcada.\n\n"
+            f"{emoji_animado} **CÓDIGO ROJO - ACCIÓN INMEDIATA** {emoji_animado}"
+        )
+        await ctx.send(content=mensaje)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        await self.log("ALERTA_ROBO", f"{ctx.author.name} activó la alerta de robo")
+
+# ====================================================
+# COG: Disponibilidad (pública, sin restricción de rol)
+# ====================================================
+class Disponibilidad(BaseCog):
+    @commands.command(name='dispo')
+    @check_ban()
+    async def dispo(self, ctx, servicio: str = None, cantidad: int = None):
+        """Muestra la disponibilidad de servicios de emergencia. Ej: -dispo lspd 3"""
+        if not servicio or cantidad is None:
+            embed = embed_help("dispo", "Muestra la disponibilidad de un servicio de emergencia.", "-dispo <lspd/lsmd/lssd> <cantidad>", "-dispo lspd 5", "")
+            return await ctx.send(embed=embed)
+        servicio = servicio.lower()
+        if servicio not in ['lspd', 'lsmd', 'lssd']:
+            return await ctx.send(embed=embed_error("Servicio no válido. Usa: lspd, lsmd, lssd"))
+        if cantidad < 0:
+            return await ctx.send(embed=embed_error("La cantidad no puede ser negativa."))
+        unidad = "unidad" if cantidad == 1 else "unidades"
+        if servicio == 'lspd':
+            if cantidad == 0:
+                estado = "🔴 SATURADO"
+                desc = "⚠️ Actualmente no hay unidades disponibles.\n🚨 Todas las patrullas se encuentran atendiendo incidencias."
+            elif cantidad == 1:
+                estado = "🟢 1 unidad disponible"
+                desc = f"🚓 Actualmente hay **{cantidad} {unidad} disponible** patrullando la ciudad."
+            else:
+                estado = f"🟢 {cantidad} unidades disponibles"
+                desc = f"🚓 Actualmente hay **{cantidad} {unidad} disponibles** patrullando la ciudad."
+            footer = "⚡ Tiempo de respuesta sujeto a disponibilidad."
+        elif servicio == 'lsmd':
+            estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
+            desc = f"🏥 Actualmente hay **{cantidad} {unidad} médica/s disponible/s** en servicio." if cantidad > 0 else "⚠️ Actualmente no hay unidades médicas disponibles.\n🚑 Todo el personal se encuentra atendiendo emergencias activas."
+            footer = "📞 Pendientes de los avisos recibidos desde la central 911.\n❤️ Preparados para atender emergencias médicas en toda la ciudad."
+        else:  # lssd
+            estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
+            desc = f"🌵 Actualmente hay **{cantidad} {unidad} Sheriff disponible/s** patrullando las zonas rurales y desérticas." if cantidad > 0 else "⚠️ Actualmente no hay unidades Sheriff disponibles.\n🌵 Todas las patrullas se encuentran desplegadas en servicio."
+            footer = "🛣️ Supervisando carreteras.\n👁️ Vigilancia activa en el condado.\n⚡ Tiempo de respuesta sujeto a disponibilidad."
+        embed = discord.Embed(
+            title=f"🚨 DISPONIBILIDAD {servicio.upper()} 🚨",
+            description=f"📡 Estado Operativo: **{estado}**\n\n{desc}\n\n━━━━━━━━━━━━━━━━━━\n{footer}",
+            color=0x00A8FF
+        )
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        await self.log("DISPO", f"{ctx.author.name} consultó disponibilidad {servicio.upper()}: {cantidad}")
+
+# ====================================================
+# COG: Preparatorias (Pacific Bank)
+# ====================================================
+class Preparatorias(BaseCog):
+    @commands.group(name='prep', invoke_without_command=True)
+    @check_ban()
+    @check_encarcelado()
+    async def prep(self, ctx):
+        embed = discord.Embed(title="📋 Preparatorias para atracos", description="Comandos disponibles:\n`-prep pacific1` - Inicia preparatoria I de Pacific Bank\n`-prep pacific2` - Inicia preparatoria II de Pacific Bank\n`-prep pacific3` - Inicia preparatoria III de Pacific Bank", color=0xFFA500)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    async def _notify_lspd(self, ctx, prep_num: int):
+        """Envía la alerta a LSPD con el mensaje específico antes del embed."""
+        rol_lspd = ctx.guild.get_role(ROL_LSPD_OPERATIVO_ID)
+        if rol_lspd:
+            alerta_texto = "🚨 **CORRAN, ESTÁN ROBANDO CERCA DEL PACIFIC BANK. TODAS LAS UNIDADES DISPONIBLES DEBEN ACUDIR DE INMEDIATO.** 🚨"
+            await ctx.send(f"{alerta_texto}\n{rol_lspd.mention}")
+
+    @prep.command(name='pacific1')
+    async def prep_pacific1(self, ctx):
+        uid = ctx.author.id
+        prep = await db.get_heist_prep(uid)
+        if prep['pacific_prep1']:
+            return await ctx.send(embed=embed_error("Ya has completado la Preparatoria I de Pacific Bank."))
+        await self._notify_lspd(ctx, 1)
+        embed = discord.Embed(
+            title="🏦 PREPARATORIA I — PACIFIC BANK",
+            description="**Objetivos:**\n• Robar una furgoneta de transporte.\n• Obtener documentación bancaria.\n• Conseguir acceso preliminar al sistema de seguridad.\n\n✅ **Preparatoria I completada**\n📦 Recompensa: +200 XP",
+            color=0xFFD700
+        )
+        embed.set_footer(text="Continúa con -prep pacific2")
+        await ctx.send(embed=embed)
+        await db.set_heist_prep(uid, 'pacific_prep1', True)
+        await db.add_xp(uid, 200, "heist")
+        await self.log("PREP_PACIFIC1", f"{ctx.author.name} completó preparatoria I")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @prep.command(name='pacific2')
+    async def prep_pacific2(self, ctx):
+        uid = ctx.author.id
+        prep = await db.get_heist_prep(uid)
+        if not prep['pacific_prep1']:
+            return await ctx.send(embed=embed_error("Debes completar primero la Preparatoria I con `-prep pacific1`."))
+        if prep['pacific_prep2']:
+            return await ctx.send(embed=embed_error("Ya has completado la Preparatoria II de Pacific Bank."))
+        await self._notify_lspd(ctx, 2)
+        embed = discord.Embed(
+            title="🏦 PREPARATORIA II — PACIFIC BANK",
+            description="**Objetivos:**\n• Obtener acceso a cámaras.\n• Infiltrar ubicación secundaria.\n• Conseguir credenciales de acceso.\n\n✅ **Preparatoria II completada**\n📦 Recompensa: +250 XP",
+            color=0xFFD700
+        )
+        embed.set_footer(text="Continúa con -prep pacific3")
+        await ctx.send(embed=embed)
+        await db.set_heist_prep(uid, 'pacific_prep2', True)
+        await db.add_xp(uid, 250, "heist")
+        await self.log("PREP_PACIFIC2", f"{ctx.author.name} completó preparatoria II")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @prep.command(name='pacific3')
+    async def prep_pacific3(self, ctx):
+        uid = ctx.author.id
+        prep = await db.get_heist_prep(uid)
+        if not prep['pacific_prep2']:
+            return await ctx.send(embed=embed_error("Debes completar primero la Preparatoria II con `-prep pacific2`."))
+        if prep['pacific_prep3']:
+            return await ctx.send(embed=embed_error("Ya has completado la Preparatoria III de Pacific Bank."))
+        await self._notify_lspd(ctx, 3)
+        embed = discord.Embed(
+            title="🏦 PREPARATORIA III — PACIFIC BANK",
+            description="**Objetivos:**\n• Neutralizar la seguridad.\n• Obtener códigos finales.\n• Preparar el golpe principal.\n\n✅ **Preparatoria III completada**\n📦 Recompensa: +300 XP\n🔓 Ya puedes ejecutar `-rob pacific`",
+            color=0xFFD700
+        )
+        await ctx.send(embed=embed)
+        await db.set_heist_prep(uid, 'pacific_prep3', True)
+        await db.add_xp(uid, 300, "heist")
+        await self.log("PREP_PACIFIC3", f"{ctx.author.name} completó preparatoria III")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+# ====================================================
+# PANEL WEB (con rutas completas)
 # ====================================================
 class WebPanel:
     def __init__(self, bot):
@@ -4775,122 +5835,107 @@ class WebPanel:
         self.app.secret_key = secrets.token_hex(16)
         self.setup_routes()
 
+    def run_async_db(self, coro):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
     def setup_routes(self):
         @self.app.route('/')
         def index():
+            stats = self.get_stats()
             return render_template_string('''
             <!DOCTYPE html>
             <html>
-            <head>
-                <title>Panel Web - Nova Agora RP</title>
-                <style>
-                    * { margin: 0; padding: 0; box-sizing: border-box; }
-                    body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; }
-                    .header { background: #16213e; padding: 20px; text-align: center; border-bottom: 3px solid #e94560; }
-                    .header h1 { color: #e94560; }
-                    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-                    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0; }
-                    .stat-card { background: #0f3460; padding: 20px; border-radius: 10px; text-align: center; }
-                    .stat-card h3 { color: #e94560; margin-bottom: 10px; }
-                    .stat-card .value { font-size: 2em; font-weight: bold; }
-                    .section { background: #16213e; padding: 20px; margin: 20px 0; border-radius: 10px; }
-                    .section h2 { color: #e94560; margin-bottom: 15px; border-bottom: 2px solid #0f3460; padding-bottom: 10px; }
-                    table { width: 100%; border-collapse: collapse; }
-                    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #0f3460; }
-                    th { color: #e94560; }
-                    .badge { background: #e94560; padding: 3px 8px; border-radius: 5px; font-size: 0.8em; }
-                    .nav { margin-bottom: 20px; }
-                    .nav a { color: #e94560; margin-right: 20px; text-decoration: none; }
-                </style>
-            </head>
-            <body>
-                <div class="header"><h1>🎮 NOVA AGORA RP — Panel de Administración</h1><p>Estadísticas en tiempo real</p></div>
-                <div class="container">
-                    <div class="nav"><a href="/">Inicio</a> <a href="/blacklist">Blacklist</a></div>
-                    <div class="stats-grid">
-                        <div class="stat-card"><h3>👥 Usuarios Registrados</h3><div class="value">{{ stats.usuarios }}</div></div>
-                        <div class="stat-card"><h3>💰 Dinero Total</h3><div class="value">${{ stats.dinero_total }}</div></div>
-                        <div class="stat-card"><h3>🏦 Caja Municipal</h3><div class="value">${{ stats.caja_municipal }}</div></div>
-                        <div class="stat-card"><h3>🚔 Atracos Hoy</h3><div class="value">{{ stats.atracos_hoy }}</div></div>
-                    </div>
-                    <div class="section"><h2>🏆 Top 10 Niveles</h2>
-                        <table>
-                            <thead><tr><th>#</th><th>Nombre</th><th>Nivel</th><th>XP</th></tr></thead>
-                            <tbody>{% for user in stats.top_niveles %}<tr><td>#{{ loop.index }}</td><td>{{ user.nombre }}</td><td>{{ user.nivel }}</td><td>{{ user.xp }}</td></tr>{% endfor %}</tbody>
-                        </table>
-                    </div>
-                    <div class="section"><h2>💵 Top 10 Económico</h2>
-                        <table>
-                            <thead><tr><th>#</th><th>Nombre</th><th>Efectivo</th><th>Banco</th><th>Total</th></tr></thead>
-                            <tbody>{% for user in stats.top_economia %}<tr><td>#{{ loop.index }}</td><td>{{ user.nombre }}</td><td>${{ user.efectivo }}</td><td>${{ user.banco }}</td><td><span class="badge">${{ user.total }}</span></td></tr>{% endfor %}</tbody>
-                        </table>
-                    </div>
-                    <div class="section"><h2>📊 Estadísticas de Atracos</h2><p><strong>Total:</strong> {{ stats.robos_totales }} | <strong>Hoy:</strong> {{ stats.atracos_hoy }}</p></div>
-                    <div class="section"><h2>🎫 Tickets Recientes</h2>
-                        表
-                            <thead><tr><th>ID</th><th>Usuario</th><th>Categoría</th><th>Estado</th><th>Fecha</th></tr></thead>
-                            <tbody>{% for t in stats.tickets %}<tr><td>{{ t.id }}</td><td>{{ t.user }}</td><td>{{ t.categoria }}</td><td>{{ t.status }}</td><td>{{ t.fecha[:10] }}</td></tr>{% endfor %}</tbody>
-                        </table>
-                    </div>
-                </div>
-            </body>
-            </html>
-            ''', stats=self.get_stats())
-
-        @self.app.route('/blacklist', methods=['GET', 'POST'])
-        def blacklist_page():
-            token = request.args.get('token') or (request.form.get('token') if request.method == 'POST' else None)
-            if not token:
-                return '<form method="get"><input type="text" name="token" placeholder="Token"><button>Acceder</button></form>'
-            if token != ADMIN_TOKEN:
-                abort(401)
+            <head><title>Nova Agora RP</title><style>body{background:#1a1a2e;color:#eee;font-family:sans-serif;text-align:center;padding:50px;} .btn{background:#ffd700;color:#1a1a2e;padding:15px 30px;border-radius:50px;text-decoration:none;margin:10px;display:inline-block;}</style></head>
+            <body><h1>⚡ Nova Agora Roleplay ⚡</h1><p>Bot profesional con +30 comandos y 20 trabajos.</p><a href="/login" class="btn">🔐 Panel Usuario</a><a href="https://discord.gg/2RTVjmPwMJ" class="btn">💬 Discord</a><a href="/tienda" class="btn">🛒 Tienda</a></body></html>
+            ''')
+        @self.app.route('/tienda')
+        def tienda():
+            return "<h1>Tienda Nova Agora</h1><p>Usa -comprar en Discord.</p><a href='/'>Volver</a>"
+        @self.app.route('/login', methods=['GET','POST'])
+        def login():
             if request.method == 'POST':
-                action = request.form.get('action')
-                user_id = request.form.get('user_id')
-                if action == 'add' and user_id:
-                    asyncio.run_coroutine_threadsafe(db.add_to_blacklist(int(user_id), request.form.get('reason',''), 0), self.bot.loop)
-                    asyncio.run_coroutine_threadsafe(db.update_user_state(int(user_id), banned=True), self.bot.loop)
-                elif action == 'remove' and user_id:
-                    asyncio.run_coroutine_threadsafe(db.remove_from_blacklist(int(user_id)), self.bot.loop)
-                    asyncio.run_coroutine_threadsafe(db.update_user_state(int(user_id), banned=False), self.bot.loop)
-                return redirect(url_for('blacklist_page', token=token))
-            blacklist = asyncio.run_coroutine_threadsafe(db.get_blacklist(), self.bot.loop).result()
-            return render_template_string('''
-            <html><head><title>Blacklist</title><style>body{background:#1a1a2e;color:#eee;font-family:sans-serif;}</style></head>
-            <body><h1>Blacklist Global</h1><form method="post"><input type="hidden" name="token" value="{{ token }}">
-            <label>ID:</label><input name="user_id" required><label>Razón:</label><input name="reason"><button name="action" value="add">Añadir</button></form>
-            <table border="1"><tr><th>ID</th><th>Razón</th><th>Baneado por</th><th>Fecha</th><th></th></tr>
-            {% for item in blacklist %}<tr><td>{{ item.user_id }}</td><td>{{ item.reason }}</td><td>{{ item.banned_by }}</td><td>{{ item.ban_date[:16] }}</td>
-            <td><form method="post"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="user_id" value="{{ item.user_id }}"><button name="action" value="remove">Quitar</button></form></td></tr>{% endfor %}
-            </table></body></html>
-            ''', blacklist=blacklist, token=ADMIN_TOKEN)
-
-        @self.app.route('/api/stats')
-        def api_stats():
-            return jsonify(self.get_stats())
+                username = request.form['username']
+                password = request.form['password']
+                user = self.run_async_db(db.get_web_user(username))
+                if user and check_password_hash(user['password_hash'], password):
+                    session['user_id'] = user['id']
+                    session['username'] = user['username']
+                    return redirect('/perfil')
+                flash('Credenciales inválidas')
+            return render_template_string('<form method="post"><input name="username" placeholder="Usuario"><input name="password" type="password"><button>Entrar</button></form><a href="/register">Registrarse</a>')
+        @self.app.route('/register', methods=['GET','POST'])
+        def register():
+            if request.method == 'POST':
+                username = request.form['username']
+                password = request.form['password']
+                if self.run_async_db(db.get_web_user(username)):
+                    flash('Usuario existe')
+                    return redirect('/register')
+                hash_pw = generate_password_hash(password)
+                self.run_async_db(db.create_web_user(username, hash_pw))
+                flash('Registro exitoso')
+                return redirect('/login')
+            return '<form method="post"><input name="username"><input name="password" type="password"><button>Registrar</button></form>'
+        @self.app.route('/perfil')
+        def perfil():
+            if 'user_id' not in session:
+                return redirect('/login')
+            user_id = session['user_id']
+            web_user = self.run_async_db(db.get_web_user_by_id(user_id))
+            if not web_user:
+                return redirect('/login')
+            discord_id = web_user.get('discord_id')
+            if discord_id:
+                eco = self.run_async_db(db.get_economy(discord_id))
+                inv = self.run_async_db(db.get_inventory(discord_id, "personal"))
+                nivel = self.run_async_db(db.get_nivel(discord_id))
+            else:
+                eco = {"cash":0,"bank":0,"black_money":0}
+                inv = {}
+                nivel = {"nivel":0,"xp":0}
+            return render_template_string(f'<h1>Perfil de {web_user["username"]}</h1><p>Efectivo: ${eco["cash"]}<br>Banco: ${eco["bank"]}<br>Dinero negro: ${eco["black_money"]}<br>Nivel: {nivel["nivel"]}<br>XP: {nivel["xp"]}</p><h2>Inventario</h2><ul>{"".join(f"<li>{i} x{c}</li>" for i,c in inv.items()) or "<li>Vacío</li>"}</ul><a href="/logout">Cerrar sesión</a>')
+        @self.app.route('/logout')
+        def logout():
+            session.clear()
+            return redirect('/')
+        @self.app.route('/blacklist', methods=['GET','POST'])
+        def blacklist():
+            token = request.args.get('token')
+            if token != ADMIN_TOKEN:
+                return 'Acceso denegado'
+            if request.method == 'POST':
+                action = request.form['action']
+                uid = int(request.form['user_id'])
+                if action == 'add':
+                    self.run_async_db(db.add_to_blacklist(uid, request.form.get('reason',''), 0))
+                    self.run_async_db(db.update_user_state(uid, banned=True))
+                elif action == 'remove':
+                    self.run_async_db(db.remove_from_blacklist(uid))
+                    self.run_async_db(db.update_user_state(uid, banned=False))
+                return redirect(f'/blacklist?token={ADMIN_TOKEN}')
+            blacklist = self.run_async_db(db.get_blacklist())
+            return render_template_string(f'<h1>Blacklist</h1><form method="post"><input name="user_id" placeholder="ID"><input name="reason" placeholder="Razón"><button name="action" value="add">Añadir</button></form><ul>{"".join(f"<li>{b['user_id']} - {b['reason']} <form method='post' style='display:inline'><input type='hidden' name='user_id' value='{b['user_id']}'><button name='action' value='remove'>Quitar</button></form></li>" for b in blacklist)}</ul>')
+        @self.app.route('/owner/emojis', methods=['GET','POST'])
+        def owner_emojis():
+            token = request.args.get('token')
+            if token != ADMIN_TOKEN:
+                return 'Acceso denegado'
+            if request.method == 'POST':
+                key = request.form['key']
+                emoji = request.form['emoji']
+                self.run_async_db(db.set_emoji(key, emoji))
+                return redirect(f'/owner/emojis?token={ADMIN_TOKEN}')
+            emojis = self.run_async_db(db.get_all_emojis())
+            return render_template_string(f'<h1>Gestión de emojis</h1><form method="post"><select name="key">{"".join(f"<option value='{k}'>{k}</option>" for k in DEFAULT_EMOJIS.keys())}</select><input name="emoji" placeholder="Nuevo emoji"><button>Actualizar</button></form><ul>{"".join(f"<li>{k}: {v}</li>" for k,v in emojis.items())}</ul>')
 
     def get_stats(self):
-        try:
-            async def fetch():
-                row = await db.fetchone("SELECT SUM(cash+bank) FROM economy")
-                dinero_total = row[0] if row else 0
-                caja = await db.get_caja_municipal()
-                atracos_hoy = await db.get_estadistica('atracos_hoy')
-                robos_totales = await db.get_estadistica('robos_totales')
-                top_econ = await db.fetchall("SELECT user_id,cash,bank FROM economy ORDER BY (cash+bank) DESC LIMIT 10")
-                top_niv = await db.get_ranking_niveles(10)
-                tickets = await db.fetchall("SELECT id,user_id,category,status,created_at FROM tickets ORDER BY created_at DESC LIMIT 10")
-                usuarios = (await db.fetchone("SELECT COUNT(*) FROM economy"))[0]
-                return {'dinero_total': dinero_total, 'caja_municipal': caja, 'atracos_hoy': atracos_hoy, 'robos_totales': robos_totales,
-                        'top_economia': top_econ, 'top_niveles': top_niv, 'tickets': tickets, 'usuarios': usuarios}
-            data = asyncio.run_coroutine_threadsafe(fetch(), self.bot.loop).result()
-            top_econ = [{'nombre': self.bot.get_user(uid).display_name if self.bot.get_user(uid) else str(uid), 'efectivo': f"{cash:,}", 'banco': f"{bank:,}", 'total': f"{cash+bank:,}"} for uid,cash,bank in data['top_economia']]
-            top_niv = [{'nombre': self.bot.get_user(uid).display_name if self.bot.get_user(uid) else str(uid), 'nivel': nivel, 'xp': xp} for uid,xp,nivel in data['top_niveles']]
-            tickets = [{'id':t[0], 'user': self.bot.get_user(t[1]).display_name if self.bot.get_user(t[1]) else str(t[1]), 'categoria':t[2], 'status':t[3], 'fecha':t[4][:10]} for t in data['tickets']]
-            return {'usuarios': data['usuarios'], 'dinero_total': f"{data['dinero_total']:,}", 'caja_municipal': f"{data['caja_municipal']:,}",
-                    'atracos_hoy': data['atracos_hoy'], 'robos_totales': data['robos_totales'], 'top_economia': top_econ, 'top_niveles': top_niv, 'tickets': tickets}
-        except:
-            return {'usuarios':0,'dinero_total':'0','caja_municipal':'0','atracos_hoy':0,'robos_totales':0,'top_economia':[],'top_niveles':[],'tickets':[]}
+        # Simplificado para la web
+        return {}
 
     def run(self):
         threading.Thread(target=lambda: self.app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False), daemon=True).start()
@@ -4920,33 +5965,38 @@ async def on_ready():
     print(f"✅ Bot conectado como {bot.user}")
     if bot.guilds:
         guild = bot.guilds[0]
-        if not discord.utils.get(guild.roles, name="Muted"):
-            await guild.create_role(name="Muted")
-        if not discord.utils.get(guild.categories, name="🎫 Tickets"):
-            await guild.create_category("🎫 Tickets")
-        if not discord.utils.get(guild.roles, name="Staff"):
-            await guild.create_role(name="Staff")
+        for role_id in [ROL_INICIADOR_ID, ROL_EQUIPO_ESPECIAL_ID, ROL_DASHBOARD_ID, ROL_LSPD_OPERATIVO_ID, ROL_LSMD_ID, ROL_SHERIFF_ID, ROL_USUARIO_ID, ROL_MINERO_ID, ROL_AUTOBUSERO_ID, ROL_CHATARRERO_ID]:
+            if not guild.get_role(role_id):
+                print(f"⚠️ Advertencia: El rol con ID {role_id} no existe en el servidor. Crea los roles necesarios.")
     try:
         synced = await bot.tree.sync()
         print(f"✅ {len(synced)} comandos slash sincronizados.")
     except Exception as e:
         print(f"❌ Error al sincronizar slash: {e}")
 
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(embed=embed_error(f"Falta argumento: {error.param.name}"))
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(embed=embed_error(str(error)))
+        return
+    if isinstance(error, commands.NoPrivateMessage):
+        await ctx.send(embed=embed_error("Este comando no se puede usar en DM."))
+        return
+    if isinstance(error, commands.CommandInvokeError):
+        await ctx.send(embed=embed_error("Error al ejecutar el comando. Intenta de nuevo."))
+        print(f"Error al ejecutar comando {ctx.command}: {error}")
+        return
+    await ctx.send(embed=embed_error("Error al usar el comando. Revisa los parámetros e intenta de nuevo."))
+
 async def main():
     async with bot:
         await db.init()
-        expiry = await db.get_expiry()
-        if expiry:
-            if expiry < datetime.now():
-                print(f"⚠️ ADVERTENCIA: El bot ha expirado ({expiry}). Usa '-bot <días>' para reactivar.")
-            else:
-                tiempo_restante = expiry - datetime.now()
-                dias = tiempo_restante.days
-                horas = tiempo_restante.seconds // 3600
-                print(f"✅ Bot activo - Expira en {dias}d {horas}h ({expiry})")
-        else:
-            print("ℹ️ Bot no configurado. Usa '-bot <días>' para activar.")
-        # Añadir todos los cogs
+        # Registrar todos los cogs
         await bot.add_cog(Principal(bot))
         await bot.add_cog(Drogas(bot))
         await bot.add_cog(Vehiculos(bot))
@@ -4973,15 +6023,20 @@ async def main():
         await bot.add_cog(CheckUsers(bot))
         await bot.add_cog(TabletPolicial(bot))
         await bot.add_cog(DNI(bot))
+        await bot.add_cog(Trabajos(bot))
         await bot.add_cog(Kits(bot))
-
+        await bot.add_cog(OwnerMenu(bot))
+        await bot.add_cog(Dashboard(bot))
+        await bot.add_cog(Alertas(bot))
+        await bot.add_cog(Disponibilidad(bot))
+        await bot.add_cog(Preparatorias(bot))
+        # Iniciar tareas y web
         hosting_cog = bot.get_cog("Hosting")
         if hosting_cog:
             hosting_cog.check_expiry.start()
-
         web = WebPanel(bot)
         web.run()
-        print(f"🌐 Panel web: http://localhost:5000  |  Token blacklist: {ADMIN_TOKEN}")
+        print(f"🌐 Panel web: http://localhost:5000  |  Token admin: {ADMIN_TOKEN}")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
