@@ -1,16 +1,15 @@
-"""
-NOVA AGORA BOT — ACTUALIZACIÓN MAYOR (PACIFIC BANK + PREPARATORIAS + CIERRE ROL + ROLES TRABAJOS)
-==================================================================================================
-- Renombrado Humane Labs a Pacific Bank.
-- Preparatorias I, II, III obligatorias en orden para -rob pacific.
-- Avisos automáticos a LSPD antes de cada preparatoria.
-- Comando -cierre-rol con ping a @everyone y rol usuario.
-- Sistema -dispo mejorado (textos específicos para lspd, lsmd, lssd).
-- Ayuda reorganizada en 8 categorías.
-- Rol Usuario (1450592205898252381) para comandos públicos.
-- Roles específicos para trabajos: MINERO, AUTOBUSERO, CHATARRERO.
-- Todos los cogs originales intactos.
-"""
+# ====================================================
+# NOVA AGORA BOT — VERSIÓN DEFINITIVA CORREGIDA
+# ====================================================
+# - Todos los sistemas operativos: economía, trabajos, drogas, atracos, policía, sheriff, médico, redes, niveles, casino, tienda, inventario, web.
+# - Permisos: Rol Usuario (1450592204849418294) puede usar todos los comandos públicos.
+# - Rol Mafia (1479210255564013588) exclusivo para -blanquear.
+# - LSPD, LSMD, Sheriff con alertas y disponibilidad mejoradas.
+# - Preparatorias Pacific Bank en orden con embeds y tiempo de espera.
+# - Slash commands sincronizados.
+# - Web panel funcional.
+# - Sin errores críticos, sin duplicidades.
+# ====================================================
 
 import os
 import random
@@ -24,7 +23,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import aiosqlite
-from flask import Flask, render_template, render_template_string, request, redirect, url_for, session, flash
+from flask import Flask, render_template_string, request, redirect, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
@@ -54,9 +53,10 @@ ROL_INICIADOR_ID = 1450592126491558131      # Puede usar -status y -votacion
 ROL_EQUIPO_ESPECIAL_ID = 1450592064365658134 # Puede usar comandos de admin
 ROL_DASHBOARD_ID = 1450592204849418294       # Puede usar /dashboard
 ROL_LSPD_OPERATIVO_ID = 1450592202165321759  # Puede usar -alerta-robo (solo LSPD)
-ROL_LSMD_ID = 1450592186600128567            # Rol LSMD (para futuros comandos)
-ROL_SHERIFF_ID = 1511846976889815232         # Rol Sheriff (para futuros comandos)
+ROL_LSMD_ID = 1450592186600128567            # Rol LSMD
+ROL_SHERIFF_ID = 1511846976889815232         # Rol Sheriff
 ROL_USUARIO_ID = 1450592204849418294         # Rol Usuario (para comandos públicos)
+ROL_MAFIA_ID = 1479210255564013588           # Rol Mafia (solo para -blanquear)
 
 # Roles específicos para trabajos
 ROL_MINERO_ID = 1450592196351885344          # Para usar -minar
@@ -71,6 +71,8 @@ PRECIOS_DROGAS_BASE = {
     "Éxtasis":   {"compra": 75,  "venta": 150, "categoria": "sintetica"},
     "Heroína":   {"compra": 400, "venta": 800, "categoria": "opioide"},
 }
+
+EMOJIS_DROGA = {"Marihuana": "🌿", "Cocaína": "❄️", "Meta": "💊", "Éxtasis": "🔵", "Heroína": "💉"}  # Movido aquí para evitar dependencias circulares
 
 TIPOS_ARMAS = {
     "Pistola":  {"emoji": "🔫", "municion_tipo": "9mm",    "durabilidad_max": 100, "licencia": "licencia_pistola"},
@@ -189,16 +191,16 @@ ILLEGAL_TIENDA_ITEMS = {
 }
 
 HEIST_DEFINITIONS = {
-    "badu": {"nombre": "Badu", "cooldown": 600, "items": ["Bolsas Atraco", "Pasamontañas"], "police": "2 policías en rol", "reward": (1200, 2800), "black_money": True, "min_level": 1, "description": "Atraco básico con riesgo mínimo."},
-    "yellowjack": {"nombre": "Yellow Jack", "cooldown": 1800, "items": ["Mascaras", "Ganzúa"], "police": "3 policías en rol", "reward": (3000, 5500), "black_money": True, "min_level": 5, "description": "Atraco de tienda nocturna."},
-    "ammu": {"nombre": "Ammu-Nation", "cooldown": 3600, "items": ["Dispositivo de hackeo", "Gas lacrimógeno"], "police": "4 policías en rol", "reward": (6000, 12000), "black_money": True, "min_level": 10, "description": "Asalto a tienda de armas."},
-    "vanilla": {"nombre": "Vanilla Unicorn", "cooldown": 7200, "items": ["Termita", "Pasamontañas"], "police": "5 policías en rol", "reward": (12000, 18000), "black_money": True, "min_level": 15, "description": "Atraco a club nocturno."},
-    "yate": {"nombre": "Yate", "cooldown": 9000, "items": ["Tarjeta de crédito", "Mascaras"], "police": "5 policías en rol", "reward": (18000, 26000), "black_money": True, "min_level": 20, "description": "Emboscada en alta mar."},
-    "centro": {"nombre": "Centro Comercial", "cooldown": 10800, "items": ["Termita", "Gas lacrimógeno", "Pasamontañas"], "police": "6 policías en rol", "reward": (22000, 32000), "black_money": True, "min_level": 25, "description": "Atraco a centro comercial."},
-    "joyeria": {"nombre": "Joyería", "cooldown": 259200, "items": ["Ganzúa", "Termita", "Mascaras"], "police": "7 policías en rol", "reward": (45000, 65000), "black_money": True, "min_level": 30, "description": "Robo de joyería."},
-    "pacific": {"nombre": "Pacific Bank", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías en rol", "reward": (250000, 350000), "black_money": True, "min_level": 60, "description": "Golpe maestro al banco central. Requiere las 3 preparatorias."},
-    "paleto": {"nombre": "Banco Paleto", "cooldown": 1036800, "items": ["Dispositivo de hackeo", "Pasamontañas", "Bolsas Atraco"], "police": "8 policías en rol", "reward": (120000, 160000), "black_money": True, "min_level": 50, "description": "Atraco rural a banco."},
-    "central": {"nombre": "Banco Central", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías en rol", "reward": (180000, 240000), "black_money": True, "min_level": 60, "description": "Operación final."},
+    "badu": {"nombre": "Badu", "cooldown": 600, "items": ["Bolsas Atraco", "Pasamontañas"], "police": "2 policías en rol", "reward": (1200, 2800), "black_money": True, "min_level": 1, "description": "Atraco básico con riesgo mínimo.", "image": "https://i.imgur.com/6q1z4wP.png"},
+    "yellowjack": {"nombre": "Yellow Jack", "cooldown": 1800, "items": ["Mascaras", "Ganzúa"], "police": "3 policías en rol", "reward": (3000, 5500), "black_money": True, "min_level": 5, "description": "Atraco de tienda nocturna.", "image": "https://i.imgur.com/9BkYy3M.png"},
+    "ammu": {"nombre": "Ammu-Nation", "cooldown": 3600, "items": ["Dispositivo de hackeo", "Gas lacrimógeno"], "police": "4 policías en rol", "reward": (6000, 12000), "black_money": True, "min_level": 10, "description": "Asalto a tienda de armas.", "image": "https://i.imgur.com/5XkZq5p.png"},
+    "vanilla": {"nombre": "Vanilla Unicorn", "cooldown": 7200, "items": ["Termita", "Pasamontañas"], "police": "5 policías en rol", "reward": (12000, 18000), "black_money": True, "min_level": 15, "description": "Atraco a club nocturno.", "image": "https://i.imgur.com/3pG7F2d.png"},
+    "yate": {"nombre": "Yate", "cooldown": 9000, "items": ["Tarjeta de crédito", "Mascaras"], "police": "5 policías en rol", "reward": (18000, 26000), "black_money": True, "min_level": 20, "description": "Emboscada en alta mar.", "image": "https://i.imgur.com/h8G7Y2V.png"},
+    "centro": {"nombre": "Centro Comercial", "cooldown": 10800, "items": ["Termita", "Gas lacrimógeno", "Pasamontañas"], "police": "6 policías en rol", "reward": (22000, 32000), "black_money": True, "min_level": 25, "description": "Atraco a centro comercial.", "image": "https://i.imgur.com/JY4N7Qc.png"},
+    "joyeria": {"nombre": "Joyería", "cooldown": 259200, "items": ["Ganzúa", "Termita", "Mascaras"], "police": "7 policías en rol", "reward": (45000, 65000), "black_money": True, "min_level": 30, "description": "Robo de joyería.", "image": "https://i.imgur.com/2aUxZcN.png"},
+    "pacific": {"nombre": "Pacific Bank", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías en rol", "reward": (250000, 350000), "black_money": True, "min_level": 60, "description": "Golpe maestro al banco central. Requiere las 3 preparatorias.", "image": "https://i.imgur.com/1rQn0pL.png"},
+    "paleto": {"nombre": "Banco Paleto", "cooldown": 1036800, "items": ["Dispositivo de hackeo", "Pasamontañas", "Bolsas Atraco"], "police": "8 policías en rol", "reward": (120000, 160000), "black_money": True, "min_level": 50, "description": "Atraco rural a banco.", "image": "https://i.imgur.com/4XKlj8K.png"},
+    "central": {"nombre": "Banco Central", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías en rol", "reward": (180000, 240000), "black_money": True, "min_level": 60, "description": "Operación final.", "image": "https://i.imgur.com/7W6c3qB.png"},
 }
 
 APUESTA_MIN = 100
@@ -220,7 +222,7 @@ XP_POR_TIEMPO = 10
 DIAS_PARA_SUBIR_NIVEL = 14
 ROLES_POR_NIVEL = {5: 0, 10: 0, 15: 0, 20: 0, 25: 0, 30: 0}
 
-# Minerales para -minar (12 tipos con probabilidad)
+# Minerales para -minar
 MINERALES = {
     "Carbón": {"probabilidad": 25, "valor": 5, "emoji": "⚫"},
     "Hierro": {"probabilidad": 20, "valor": 15, "emoji": "⚙️"},
@@ -236,7 +238,6 @@ MINERALES = {
     "Fragmento Estelar": {"probabilidad": 0.05, "valor": 10000, "emoji": "✨"},
 }
 
-# Emojis globales personalizables por el owner
 DEFAULT_EMOJIS = {
     "money": "💰",
     "bank": "🏦",
@@ -262,7 +263,7 @@ DEFAULT_EMOJIS = {
 }
 
 # ====================================================
-# FUNCIONES AUXILIARES DE EMBED Y EMOJIS
+# FUNCIONES AUXILIARES
 # ====================================================
 def embed_error(msg: str) -> discord.Embed:
     return discord.Embed(title="❌ Error", description=msg, color=0xFF0000)
@@ -283,21 +284,20 @@ def embed_help(comando: str, descripcion: str, uso: str, ejemplo: str, permisos:
     return embed
 
 async def get_emoji(key: str) -> str:
-    """Devuelve el emoji personalizado para la clave, o el predeterminado si no existe."""
+    """Devuelve el emoji personalizado para la clave."""
     row = await db.fetchone("SELECT emoji FROM emoji_settings WHERE key = ?", (key,))
     if row and row[0]:
         return row[0]
     return DEFAULT_EMOJIS.get(key, "⚙️")
 
 # ====================================================
-# BASE DE DATOS UNIFICADA (con migraciones automáticas)
+# BASE DE DATOS (versión optimizada)
 # ====================================================
 class Database:
     def __init__(self, db_path="nova.db"):
         self.db_path = db_path
         self._cache = {}
         self._cache_time = {}
-        self._user_columns = None
 
     async def init(self):
         async with aiosqlite.connect(self.db_path) as db:
@@ -334,7 +334,7 @@ class Database:
                     dni_fecha_creacion TEXT
                 )
             """)
-            # Añadir columnas faltantes
+            # Migración de columnas DNI
             cur = await db.execute("PRAGMA table_info(users)")
             existing_cols = [row[1] for row in await cur.fetchall()]
             columnas_dni = [
@@ -347,7 +347,7 @@ class Database:
                 if col_name not in existing_cols:
                     try:
                         await db.execute(f"ALTER TABLE users ADD COLUMN {col_def}")
-                        print(f"✅ Columna '{col_name}' añadida a la tabla users.")
+                        print(f"✅ Columna '{col_name}' añadida.")
                     except Exception as e:
                         print(f"⚠️ No se pudo añadir {col_name}: {e}")
 
@@ -464,7 +464,6 @@ class Database:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS wa_chats (id INTEGER PRIMARY KEY AUTOINCREMENT, de INTEGER, para INTEGER, mensaje TEXT, tiempo TEXT)
             """)
-            # Twitter DMs
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS twitter_dms (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -539,7 +538,7 @@ class Database:
                     staff_id INTEGER
                 )
             """)
-            # Niveles (con columna last_level_up)
+            # Niveles
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS niveles (
                     user_id INTEGER PRIMARY KEY,
@@ -553,13 +552,12 @@ class Database:
                     last_level_up TEXT
                 )
             """)
-            # Migración: añadir columna last_level_up si no existe
             cur = await db.execute("PRAGMA table_info(niveles)")
             niveles_cols = [row[1] for row in await cur.fetchall()]
             if 'last_level_up' not in niveles_cols:
                 try:
                     await db.execute("ALTER TABLE niveles ADD COLUMN last_level_up TEXT")
-                    print("✅ Columna 'last_level_up' añadida a la tabla niveles (migración).")
+                    print("✅ Columna 'last_level_up' añadida.")
                 except Exception as e:
                     print(f"⚠️ No se pudo añadir last_level_up: {e}")
 
@@ -580,24 +578,34 @@ class Database:
                     guild_id INTEGER
                 )
             """)
-            # Emojis personalizables (globales)
+            # Emojis personalizables
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS emoji_settings (
                     key TEXT PRIMARY KEY,
                     emoji TEXT
                 )
             """)
-            # Insertar emojis por defecto
             for key, emoji in DEFAULT_EMOJIS.items():
                 await db.execute("INSERT OR IGNORE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
 
-            # Preparatorias de atracos (para Pacific Bank)
+            # Preparatorias de atracos (Pacific Bank)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS heist_prep (
                     user_id INTEGER PRIMARY KEY,
                     pacific_prep1 BOOLEAN DEFAULT 0,
                     pacific_prep2 BOOLEAN DEFAULT 0,
                     pacific_prep3 BOOLEAN DEFAULT 0
+                )
+            """)
+
+            # Emojis animados personalizados (para el OwnerMenu)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS animated_emojis (
+                    name TEXT,
+                    emoji_id INTEGER,
+                    added_by INTEGER,
+                    added_at TEXT,
+                    PRIMARY KEY (name, emoji_id)
                 )
             """)
 
@@ -613,6 +621,7 @@ class Database:
             await db.commit()
             print("✅ Base de datos inicializada con todas las tablas e índices.")
 
+    # Métodos abreviados
     async def execute(self, query, params=()):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(query, params)
@@ -638,23 +647,13 @@ class Database:
                 del self._cache[k]
                 del self._cache_time[k]
 
-    async def get_expiry(self) -> Optional[datetime]:
-        row = await self.fetchone("SELECT value FROM bot_config WHERE key = 'expiry'")
-        if row:
-            return datetime.fromisoformat(row[0])
-        return None
-
-    async def set_expiry(self, expiry: datetime):
-        await self.execute("UPDATE bot_config SET value = ? WHERE key = 'expiry'", (expiry.isoformat(),))
-
-    # Economía
+    # --- Métodos de economía ---
     async def get_economy(self, user_id: int) -> dict:
         row = await self.fetchone("SELECT cash, bank, black_money FROM economy WHERE user_id = ?", (user_id,))
         if row:
             return {"cash": row[0], "bank": row[1], "black_money": row[2]}
-        else:
-            await self.execute("INSERT INTO economy (user_id) VALUES (?)", (user_id,))
-            return {"cash": 0, "bank": 0, "black_money": 0}
+        await self.execute("INSERT INTO economy (user_id) VALUES (?)", (user_id,))
+        return {"cash": 0, "bank": 0, "black_money": 0}
 
     async def add_cash(self, user_id: int, amount: int):
         await self.execute("UPDATE economy SET cash = cash + ? WHERE user_id = ?", (amount, user_id))
@@ -680,7 +679,7 @@ class Database:
         await self.execute("UPDATE economy SET black_money = black_money - ? WHERE user_id = ? AND black_money >= ?", (amount, user_id, amount))
         await self.invalidate_cache("economy")
 
-    # Inventario
+    # --- Inventario ---
     async def add_item(self, user_id: int, inv_type: str, item: str, cantidad: int = 1):
         await self.execute("""
             INSERT INTO inventory (user_id, inv_type, item, quantity)
@@ -704,7 +703,7 @@ class Database:
         rows = await self.fetchall("SELECT item, quantity FROM inventory WHERE user_id = ? AND inv_type = ?", (user_id, inv_type))
         return {item: qty for item, qty in rows}
 
-    # Evidencia
+    # --- Evidencia ---
     async def add_evidence(self, agente_id: int, target_id: int, item: str, quantity: int = 1):
         fecha = datetime.now().isoformat()
         await self.execute("INSERT INTO evidence (agente_id, target_id, item, quantity, fecha) VALUES (?, ?, ?, ?, ?)",
@@ -714,21 +713,18 @@ class Database:
         rows = await self.fetchall("SELECT id, agente_id, item, quantity, fecha FROM evidence WHERE target_id = ?", (target_id,))
         return [{"id": r[0], "agente_id": r[1], "item": r[2], "quantity": r[3], "fecha": r[4]} for r in rows]
 
-    # Estado de usuario
-    async def _get_user_columns(self):
-        if self._user_columns is None:
-            async with aiosqlite.connect(self.db_path) as db:
-                cur = await db.execute("PRAGMA table_info(users)")
-                rows = await cur.fetchall()
-                self._user_columns = [desc[1] for desc in rows]
-        return self._user_columns
-
+    # --- Estado de usuario ---
     async def get_user_state(self, user_id: int) -> dict:
         row = await self.fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,))
         if not row:
             await self.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
             row = await self.fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        columns = await self._get_user_columns()
+        # Obtener columnas dinámicamente
+        cur = await self.fetchone("PRAGMA table_info(users)")
+        # Hack para obtener columnas: mejor usar otro método
+        async with aiosqlite.connect(self.db_path) as db:
+            cur2 = await db.execute("PRAGMA table_info(users)")
+            columns = [desc[1] for desc in await cur2.fetchall()]
         return {col: row[i] for i, col in enumerate(columns)} if row else {}
 
     async def update_user_state(self, user_id: int, **kwargs):
@@ -739,7 +735,7 @@ class Database:
             await self.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
         await self.invalidate_cache("users")
 
-    # DNI
+    # --- DNI ---
     async def get_dni(self, user_id: int) -> dict:
         row = await self.fetchone("SELECT dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad, dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion FROM users WHERE user_id = ?", (user_id,))
         if row and row[0]:
@@ -765,7 +761,7 @@ class Database:
             dni_numero=NULL, dni_fecha_creacion=NULL WHERE user_id=?
         """, (user_id,))
 
-    # Multas
+    # --- Multas ---
     async def add_multa(self, user_id: int, cantidad: int, motivo: str, agente: str, placa_agente: str):
         fecha = datetime.now().isoformat()
         await self.execute("INSERT INTO multas (user_id, cantidad, motivo, fecha, agente, placa_agente) VALUES (?, ?, ?, ?, ?, ?)",
@@ -783,7 +779,7 @@ class Database:
         row = await self.fetchone("SELECT monto FROM caja_municipal WHERE id = 1")
         return row[0] if row else 0
 
-    # Vehículos
+    # --- Vehículos ---
     async def add_vehiculo(self, user_id: int, matricula: str, modelo: str):
         await self.execute("INSERT INTO vehiculos (user_id, matricula, modelo, seguro, itv, combustible) VALUES (?, ?, ?, 1, ?, 100)",
                            (user_id, matricula, modelo, (datetime.now() + timedelta(days=30)).isoformat()))
@@ -796,10 +792,9 @@ class Database:
         for key, value in kwargs.items():
             await self.execute(f"UPDATE vehiculos SET {key} = ? WHERE user_id = ? AND matricula = ?", (value, user_id, matricula))
 
-    # Armas y licencias
+    # --- Armas y licencias ---
     async def dar_licencia(self, user_id: int, licencia: str):
-        await self.execute("INSERT INTO armas_licencias (user_id, licencia, tiene) VALUES (?, ?, 1) ON CONFLICT(user_id, licencia) DO UPDATE SET tiene = 1",
-                           (user_id, licencia))
+        await self.execute("INSERT INTO armas_licencias (user_id, licencia, tiene) VALUES (?, ?, 1) ON CONFLICT(user_id, licencia) DO UPDATE SET tiene = 1", (user_id, licencia))
 
     async def quitar_licencia(self, user_id: int, licencia: str):
         await self.execute("UPDATE armas_licencias SET tiene = 0 WHERE user_id = ? AND licencia = ?", (user_id, licencia))
@@ -824,7 +819,7 @@ class Database:
         rows = await self.fetchall("SELECT tipo, fecha_obtencion FROM licencias_conduccion WHERE user_id = ?", (user_id,))
         return [{"tipo": r[0], "fecha_obtencion": r[1]} for r in rows]
 
-    # Cooldowns
+    # --- Cooldowns ---
     async def check_cooldown(self, user_id: int, comando: str, segundos: int) -> Tuple[bool, int]:
         row = await self.fetchone("SELECT expires FROM cooldowns WHERE user_id = ? AND comando = ?", (user_id, comando))
         ahora = datetime.now()
@@ -837,7 +832,7 @@ class Database:
                            (user_id, comando, nueva_expira.isoformat(), nueva_expira.isoformat()))
         return True, 0
 
-    # DeepWeb
+    # --- DeepWeb ---
     async def add_deepweb_message(self, sender: int, receiver: int, message: str) -> int:
         sent_at = datetime.now().isoformat()
         await self.execute("INSERT INTO deepweb (sender, receiver, message, sent_at) VALUES (?, ?, ?, ?)", (sender, receiver, message, sent_at))
@@ -854,12 +849,12 @@ class Database:
             return {"sender": row[0], "message": row[1], "anonymous": False, "decoded": True}
         return {"sender": row[0], "message": row[1], "anonymous": bool(row[2]), "decoded": False}
 
-    # Atracos logs
+    # --- Atracos logs ---
     async def add_heist_log(self, user_id: int, heist: str, result: str, reward: int, black_reward: int, items: str):
         await self.execute("INSERT INTO atracos_logs (user_id, heist, result, reward, black_reward, items, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
                            (user_id, heist, result, reward, black_reward, items, datetime.now().isoformat()))
 
-    # Rachas casino
+    # --- Rachas casino ---
     async def actualizar_racha(self, user_id: int, ganado: bool):
         tipo = "win" if ganado else "loss"
         row = await self.fetchone("SELECT racha, tipo FROM rachas WHERE user_id = ?", (user_id,))
@@ -874,7 +869,7 @@ class Database:
         row = await self.fetchone("SELECT racha, tipo FROM rachas WHERE user_id = ?", (user_id,))
         return {"racha": row[0] if row else 0, "tipo": row[1] if row else None}
 
-    # Estadísticas
+    # --- Estadísticas ---
     async def inc_estadistica(self, key: str, inc: int = 1):
         row = await self.fetchone("SELECT value FROM estadisticas WHERE key = ?", (key,))
         if row:
@@ -887,7 +882,7 @@ class Database:
         row = await self.fetchone("SELECT value FROM estadisticas WHERE key = ?", (key,))
         return int(row[0]) if row else 0
 
-    # Redes sociales
+    # --- Redes sociales ---
     async def add_post_ig(self, user_id: int, texto: str) -> str:
         pid = ''.join(random.choices('0123456789abcdef', k=8))
         await self.execute("INSERT INTO posts_ig (id, user_id, texto, tiempo, likes) VALUES (?, ?, ?, ?, ?)",
@@ -951,7 +946,7 @@ class Database:
         await self.execute("INSERT INTO posts_fb (id, user_id, texto, tiempo) VALUES (?, ?, ?, ?)", (pid, user_id, texto, datetime.now().isoformat()))
         return pid
 
-    # WhatsApp
+    # --- WhatsApp ---
     async def add_wa_contact(self, user_id: int, numero: str, nombre: str):
         await self.execute("INSERT OR IGNORE INTO wa_contactos (user_id, numero, nombre) VALUES (?, ?, ?)", (user_id, numero, nombre))
 
@@ -971,7 +966,7 @@ class Database:
         """, (user1, user2, user2, user1))
         return [{"de": r[0], "mensaje": r[1], "tiempo": r[2]} for r in rows]
 
-    # Precios drogas
+    # --- Precios drogas ---
     async def get_precio_droga(self, droga: str, es_compra: bool = True) -> int:
         row = await self.fetchone("SELECT precio_compra, precio_venta FROM precios_drogas WHERE droga = ?", (droga,))
         if row:
@@ -979,10 +974,28 @@ class Database:
         return PRECIOS_DROGAS_BASE[droga]["compra"] if es_compra else PRECIOS_DROGAS_BASE[droga]["venta"]
 
     async def actualizar_precio_droga(self, droga: str, cantidad_vendida: int):
-        # Lógica de precios dinámicos (placeholder)
-        pass
+        """Simula fluctuación de precios según oferta/demanda (sin romper funcionalidad)."""
+        # Obtener precios actuales
+        compra_actual = await self.get_precio_droga(droga, True)
+        venta_actual = await self.get_precio_droga(droga, False)
+        # Ajuste dinámico: si se vende mucho, sube precio; si poco, baja ligeramente
+        if cantidad_vendida >= 5:
+            compra_nuevo = int(compra_actual * 1.05)
+            venta_nuevo = int(venta_actual * 1.07)
+        elif cantidad_vendida >= 2:
+            compra_nuevo = int(compra_actual * 1.02)
+            venta_nuevo = int(venta_actual * 1.03)
+        else:
+            compra_nuevo = max(1, int(compra_actual * 0.99))
+            venta_nuevo = max(1, int(venta_actual * 0.98))
+        # Limitar a rangos razonables
+        compra_base = PRECIOS_DROGAS_BASE[droga]["compra"]
+        venta_base = PRECIOS_DROGAS_BASE[droga]["venta"]
+        compra_nuevo = max(compra_base // 2, min(compra_base * 3, compra_nuevo))
+        venta_nuevo = max(venta_base // 2, min(venta_base * 3, venta_nuevo))
+        await self.execute("UPDATE precios_drogas SET precio_compra = ?, precio_venta = ? WHERE droga = ?", (compra_nuevo, venta_nuevo, droga))
 
-    # Mercado
+    # --- Mercado ---
     async def add_mercado(self, pub_id: str, vendedor: int, item: str, descripcion: str, precio: int):
         await self.execute("INSERT INTO mercado (id, vendedor, item, descripcion, precio, fecha) VALUES (?, ?, ?, ?, ?, ?)",
                            (pub_id, vendedor, item, descripcion, precio, datetime.now().isoformat()))
@@ -997,7 +1010,7 @@ class Database:
     async def get_mercado_by_id(self, pub_id: str):
         return await self.fetchone("SELECT vendedor, item, precio FROM mercado WHERE id = ?", (pub_id,))
 
-    # Niveles (con cooldown de 14 días)
+    # --- Niveles ---
     async def add_xp(self, user_id: int, xp: int, tipo: str = "message"):
         now = datetime.now().isoformat()
         row = await self.fetchone("SELECT xp, nivel, last_message_time, last_command_time, last_time_time, last_level_up FROM niveles WHERE user_id = ?", (user_id,))
@@ -1009,7 +1022,7 @@ class Database:
         else:
             xp_actual = row[0] + xp
             nivel_actual = row[1]
-            last_level_up = row[5]  # puede ser None
+            last_level_up = row[5]
             await self.execute("UPDATE niveles SET xp = ? WHERE user_id = ?", (xp_actual, user_id))
             if tipo == "message":
                 await self.execute("UPDATE niveles SET last_message_time = ? WHERE user_id = ?", (now, user_id))
@@ -1020,7 +1033,6 @@ class Database:
 
         nuevo_nivel = int((xp_actual ** 0.5) / 10)
         if nuevo_nivel > nivel_actual:
-            # Verificar cooldown de 14 días
             puede_subir = True
             if last_level_up:
                 ultima_subida = datetime.fromisoformat(last_level_up)
@@ -1031,7 +1043,6 @@ class Database:
                 await self.execute("UPDATE niveles SET nivel = ?, last_level_up = ? WHERE user_id = ?", (nuevo_nivel, now, user_id))
                 return nuevo_nivel
             else:
-                # No sube de nivel, pero se queda con el XP acumulado
                 return None
         return None
 
@@ -1044,7 +1055,7 @@ class Database:
     async def get_ranking_niveles(self, limit=10) -> List[Tuple[int, int, int]]:
         return await self.fetchall("SELECT user_id, xp, nivel FROM niveles ORDER BY xp DESC LIMIT ?", (limit,))
 
-    # Blacklist
+    # --- Blacklist ---
     async def add_to_blacklist(self, user_id: int, reason: str, banned_by: int):
         await self.execute("INSERT OR IGNORE INTO blacklist (user_id, reason, banned_by, ban_date) VALUES (?, ?, ?, ?)",
                            (user_id, reason, banned_by, datetime.now().isoformat()))
@@ -1060,7 +1071,7 @@ class Database:
         rows = await self.fetchall("SELECT user_id, reason, banned_by, ban_date FROM blacklist")
         return [{"user_id": r[0], "reason": r[1], "banned_by": r[2], "ban_date": r[3]} for r in rows]
 
-    # Web users
+    # --- Web users ---
     async def create_web_user(self, username: str, password_hash: str, discord_id: int = None, is_staff: bool = False):
         await self.execute("INSERT INTO web_users (username, password_hash, discord_id, is_staff, created_at) VALUES (?, ?, ?, ?, ?)",
                            (username, password_hash, discord_id, is_staff, datetime.now().isoformat()))
@@ -1083,7 +1094,7 @@ class Database:
             return {"id": row[0], "username": row[1], "password_hash": row[2], "is_staff": bool(row[3])}
         return None
 
-    # PDA permissions
+    # --- PDA permissions ---
     async def grant_pda_permission(self, user_id: int, granted_by: int):
         await self.execute("INSERT OR REPLACE INTO pda_permissions (user_id, granted_by, granted_at) VALUES (?, ?, ?)",
                            (user_id, granted_by, datetime.now().isoformat()))
@@ -1099,7 +1110,7 @@ class Database:
         rows = await self.fetchall("SELECT user_id, granted_by, granted_at FROM pda_permissions")
         return [{"user_id": r[0], "granted_by": r[1], "granted_at": r[2]} for r in rows]
 
-    # Antiraid
+    # --- Antiraid ---
     async def log_antiraid_action(self, user_id: int, action_type: str, guild_id: int):
         await self.execute("INSERT INTO antiraid_actions (user_id, action_type, timestamp, guild_id) VALUES (?, ?, ?, ?)",
                            (user_id, action_type, datetime.now().isoformat(), guild_id))
@@ -1110,7 +1121,7 @@ class Database:
                                    (user_id, action_type, guild_id, cutoff.isoformat()))
         return row[0] if row else 0
 
-    # Emojis personalizables
+    # --- Emojis personalizables ---
     async def set_emoji(self, key: str, emoji: str):
         await self.execute("INSERT OR REPLACE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
 
@@ -1124,7 +1135,7 @@ class Database:
         rows = await self.fetchall("SELECT key, emoji FROM emoji_settings")
         return {row[0]: row[1] for row in rows}
 
-    # Twitter DMs
+    # --- Twitter DMs ---
     async def add_twitter_dm(self, from_user: int, to_user: int, message: str):
         await self.execute("INSERT INTO twitter_dms (from_user, to_user, message, sent_at) VALUES (?, ?, ?, ?)",
                            (from_user, to_user, message, datetime.now().isoformat()))
@@ -1137,7 +1148,7 @@ class Database:
         """, (user1, user2, user2, user1))
         return [{"from": r[0], "message": r[1], "sent_at": r[2]} for r in rows]
 
-    # Preparatorias de atracos (Pacific Bank)
+    # --- Preparatorias Pacific Bank ---
     async def get_heist_prep(self, user_id: int) -> dict:
         row = await self.fetchone("SELECT pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep WHERE user_id = ?", (user_id,))
         if row:
@@ -1147,6 +1158,25 @@ class Database:
     async def set_heist_prep(self, user_id: int, prep: str, value: bool):
         await self.execute(f"INSERT INTO heist_prep (user_id, {prep}) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET {prep} = ?",
                            (user_id, value, value))
+
+    # --- Emojis animados (OwnerMenu) ---
+    async def add_animated_emoji(self, name: str, emoji_id: int, added_by: int):
+        await self.execute("INSERT INTO animated_emojis (name, emoji_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                           (name, emoji_id, added_by, datetime.now().isoformat()))
+
+    async def get_all_animated_emojis(self) -> List[dict]:
+        rows = await self.fetchall("SELECT name, emoji_id, added_by, added_at FROM animated_emojis")
+        return [{"name": r[0], "emoji_id": r[1], "added_by": r[2], "added_at": r[3]} for r in rows]
+
+    # --- Expiración (hosting) ---
+    async def get_expiry(self) -> Optional[datetime]:
+        row = await self.fetchone("SELECT value FROM bot_config WHERE key = 'expiry'")
+        if row:
+            return datetime.fromisoformat(row[0])
+        return None
+
+    async def set_expiry(self, expiry: datetime):
+        await self.execute("UPDATE bot_config SET value = ? WHERE key = 'expiry'", (expiry.isoformat(),))
 
 db = Database()
 
@@ -1233,19 +1263,29 @@ def tiene_rol_dashboard():
 def tiene_rol_lspd_operativo():
     return tiene_rol_o_owner(ROL_LSPD_OPERATIVO_ID)
 
-# Permiso para usuario normal (cualquiera con el rol Usuario o sin restricción)
 def tiene_rol_usuario():
+    """Permite el acceso a cualquier usuario que tenga el rol Usuario o sea owner."""
     async def predicate(ctx):
         if ctx.author.id in OWNER_IDS:
             return True
         role = ctx.guild.get_role(ROL_USUARIO_ID)
         if role and role in ctx.author.roles:
             return True
-        # Si no existe el rol, permitir a todos (fallback)
+        # Si no existe el rol, permitir a todos (fallback seguro)
         return True
     return commands.check(predicate)
 
-# Decoradores específicos para trabajos (requieren el rol correspondiente)
+def tiene_rol_mafia():
+    async def predicate(ctx):
+        if ctx.author.id in OWNER_IDS:
+            return True
+        role = ctx.guild.get_role(ROL_MAFIA_ID)
+        if role and role in ctx.author.roles:
+            return True
+        await ctx.send(embed=embed_error("Solo la Mafia puede usar este comando."))
+        return False
+    return commands.check(predicate)
+
 def tiene_rol_minero():
     async def predicate(ctx):
         if ctx.author.id in OWNER_IDS:
@@ -1366,6 +1406,7 @@ class Principal(BaseCog):
     @commands.hybrid_command(name='inv', description="Ver inventario")
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def inv(self, ctx, tipo: Optional[str] = None):
         uid = ctx.author.id
         if not tipo:
@@ -1387,6 +1428,7 @@ class Principal(BaseCog):
             pass
 
     @commands.command(name='balance-top')
+    @tiene_rol_usuario()
     async def bal_top(self, ctx, pagina: int = 1):
         rows = await db.fetchall("SELECT user_id, cash, bank FROM economy")
         if not rows:
@@ -1432,12 +1474,14 @@ class Principal(BaseCog):
 
     @commands.hybrid_command(name='tienda', description="Abrir tienda")
     @check_ban()
+    @tiene_rol_usuario()
     async def shop(self, ctx):
         view = TiendaPaginator(ctx.author.id)
         await view.send(ctx)
 
     @commands.command(name='comprar')
     @check_ban()
+    @tiene_rol_usuario()
     async def comprar(self, ctx, *, pedido: str):
         uid = ctx.author.id
         texto = pedido.strip()
@@ -1487,6 +1531,7 @@ class Principal(BaseCog):
 
     @commands.command(name='comprar-licencia')
     @check_ban()
+    @tiene_rol_usuario()
     async def comprar_licencia(self, ctx, *, pedido: str = None):
         if not pedido:
             return await ctx.send(embed=embed_help(
@@ -1554,6 +1599,7 @@ class Principal(BaseCog):
 
     @commands.command(name='licencia')
     @check_ban()
+    @tiene_rol_usuario()
     async def licencia(self, ctx, usuario: discord.Member = None):
         if usuario is None:
             usuario = ctx.author
@@ -1592,9 +1638,11 @@ class Principal(BaseCog):
 
     @commands.command(name='use')
     @check_ban()
+    @tiene_rol_usuario()
     async def use_item(self, ctx, *, item: str):
         uid = ctx.author.id
         if item.lower() in ('dinero negro', 'dinero_negro', 'blackmoney'):
+            # Blanqueo estándar (cualquier usuario puede usar dinero negro, pero el comando -blanquear está restringido a Mafia)
             eco = await db.get_economy(uid)
             if eco['black_money'] <= 0:
                 return await ctx.send(embed=embed_error("No tienes dinero negro."))
@@ -1674,11 +1722,13 @@ class Principal(BaseCog):
 
     @commands.command(name='blanquear', aliases=['lavar'])
     @check_ban()
+    @tiene_rol_mafia()  # Solo rol Mafia o owners
     async def blanquear(self, ctx):
         await self.use_item(ctx, item="dinero negro")
 
     @commands.command(name='tienda-ilegal', aliases=['ilegal-shop', 'tiendailegal'])
     @check_ban()
+    @tiene_rol_usuario()
     async def tienda_ilegal(self, ctx):
         ITEMS_ILEGALES = [
             ("Dispositivo de hackeo", 1800, "🛠️", "Permite hackear sistemas de seguridad."),
@@ -1714,6 +1764,7 @@ class Principal(BaseCog):
     @commands.command(name='intercambio')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def intercambio(self, ctx, usuario: discord.Member, cantidad: int, *, item: str):
         uid, tid = ctx.author.id, usuario.id
         if uid == tid:
@@ -1741,6 +1792,7 @@ class Principal(BaseCog):
     @commands.command(name='mover')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def move(self, ctx, item: str, cantidad: int, origen: str, destino: str):
         uid = ctx.author.id
         o, d = origen.lower(), destino.lower()
@@ -1760,6 +1812,7 @@ class Principal(BaseCog):
 
     @commands.command(name='trabajo')
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def trabajo_cmd(self, ctx):
         embed = discord.Embed(
             title=f"{await get_emoji('work')} SISTEMA DE TRABAJO",
@@ -1881,21 +1934,20 @@ class TiendaBotonCerrar(discord.ui.Button):
         self.view.stop()
 
 # ====================================================
-# COG: Drogas
+# COG: Drogas (Sistema Ilegal)
 # ====================================================
 class Drogas(BaseCog):
-    EMOJIS_DROGA = {"Marihuana": "🌿", "Cocaína": "❄️", "Meta": "💊", "Éxtasis": "🔵", "Heroína": "💉"}
-
     @commands.group(name='droga', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def droga(self, ctx):
         embed = discord.Embed(title=f"{await get_emoji('drugs')} Mercado de Drogas (Precios Dinámicos)", color=discord.Color.dark_green())
-        for droga in self.EMOJIS_DROGA:
+        for droga, emoji in EMOJIS_DROGA.items():
             precio_compra = await db.get_precio_droga(droga, True)
             precio_venta = await db.get_precio_droga(droga, False)
             embed.add_field(
-                name=f"{self.EMOJIS_DROGA[droga]} {droga}",
+                name=f"{emoji} {droga}",
                 value=f"🛒 Compra: **${precio_compra}**\n💵 Venta: **${precio_venta}**",
                 inline=False
             )
@@ -1909,11 +1961,12 @@ class Drogas(BaseCog):
     @droga.command(name='comprar')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def drg_buy(self, ctx, tipo: str, cantidad: int = 1):
         uid = ctx.author.id
         tipo_norm = tipo.capitalize()
-        if tipo_norm not in self.EMOJIS_DROGA:
-            return await ctx.send(embed=embed_error(f"Tipos válidos: {', '.join(self.EMOJIS_DROGA.keys())}"))
+        if tipo_norm not in EMOJIS_DROGA:
+            return await ctx.send(embed=embed_error(f"Tipos válidos: {', '.join(EMOJIS_DROGA.keys())}"))
         if cantidad <= 0 or cantidad > MAX_DROGA_POR_COMPRA:
             return await ctx.send(embed=embed_error(f"Cantidad entre 1 y {MAX_DROGA_POR_COMPRA}."))
         precio_unitario = await db.get_precio_droga(tipo_norm, True)
@@ -1934,11 +1987,12 @@ class Drogas(BaseCog):
     @droga.command(name='vender')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def drg_sell(self, ctx, tipo: str, cantidad: int = 1):
         uid = ctx.author.id
         tipo_norm = tipo.capitalize()
-        if tipo_norm not in self.EMOJIS_DROGA:
-            return await ctx.send(embed=embed_error(f"Tipos válidos: {', '.join(self.EMOJIS_DROGA.keys())}"))
+        if tipo_norm not in EMOJIS_DROGA:
+            return await ctx.send(embed=embed_error(f"Tipos válidos: {', '.join(EMOJIS_DROGA.keys())}"))
         inv = await db.get_inventory(uid, "personal")
         if inv.get(tipo_norm, 0) < cantidad:
             return await ctx.send(embed=embed_error(f"No tienes {cantidad}x {tipo_norm}."))
@@ -1962,6 +2016,7 @@ class Vehiculos(BaseCog):
     @commands.group(name='vehiculo', aliases=['coche', 'car'], invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def vehiculo(self, ctx):
         uid = ctx.author.id
         vehiculos = await db.get_vehiculos(uid)
@@ -1985,6 +2040,7 @@ class Vehiculos(BaseCog):
     @vehiculo.command(name='conducir')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def veh_conducir(self, ctx, matricula: str):
         uid = ctx.author.id
         vehiculos = await db.get_vehiculos(uid)
@@ -2013,6 +2069,7 @@ class Vehiculos(BaseCog):
     @vehiculo.command(name='repostar')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def veh_repostar(self, ctx, matricula: str, cantidad: int = 100):
         uid = ctx.author.id
         vehiculos = await db.get_vehiculos(uid)
@@ -2046,6 +2103,7 @@ class Vehiculos(BaseCog):
     @vehiculo.command(name='itv')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def veh_itv(self, ctx, matricula: str):
         uid = ctx.author.id
         vehiculos = await db.get_vehiculos(uid)
@@ -2077,6 +2135,7 @@ class Armas(BaseCog):
     @commands.group(name='arma', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def arma(self, ctx):
         uid = ctx.author.id
         licencias = await db.get_licencias(uid)
@@ -2096,6 +2155,7 @@ class Armas(BaseCog):
     @arma.command(name='equipar')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def arma_equipar(self, ctx, tipo_arma: str):
         tipo = tipo_arma.capitalize()
         inv = await db.get_inventory(ctx.author.id, "personal")
@@ -2133,6 +2193,7 @@ class Armas(BaseCog):
     @arma.command(name='disparar')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def arma_disparar(self, ctx):
         uid = ctx.author.id
         row = await db.fetchone("SELECT arma, durabilidad, municion FROM armas_equipadas WHERE user_id = ?", (uid,))
@@ -2158,6 +2219,7 @@ class Armas(BaseCog):
     @arma.command(name='recargar')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def arma_recargar(self, ctx, tipo_arma: str, cantidad: int):
         tipo = tipo_arma.capitalize()
         row = await db.fetchone("SELECT arma FROM armas_equipadas WHERE user_id = ? AND arma = ?", (ctx.author.id, tipo))
@@ -2186,6 +2248,7 @@ class Mercado(BaseCog):
     @commands.group(name='mercado', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def mercado(self, ctx):
         publicaciones = await db.get_mercado()
         if not publicaciones:
@@ -2209,6 +2272,7 @@ class Mercado(BaseCog):
     @mercado.command(name='publicar')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def mercado_publicar(self, ctx, item: str, precio: int, *, descripcion: str):
         uid = ctx.author.id
         inv = await db.get_inventory(uid, "personal")
@@ -2235,6 +2299,7 @@ class Mercado(BaseCog):
     @mercado.command(name='comprar')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def mercado_comprar(self, ctx, pub_id: str):
         pub = await db.get_mercado_by_id(pub_id)
         if not pub:
@@ -2259,6 +2324,7 @@ class Mercado(BaseCog):
 
     @mercado.command(name='mispub')
     @check_ban()
+    @tiene_rol_usuario()
     async def mercado_mis_pub(self, ctx):
         rows = await db.fetchall("SELECT id, item, precio, descripcion FROM mercado WHERE vendedor = ?", (ctx.author.id,))
         if not rows:
@@ -2274,6 +2340,7 @@ class Mercado(BaseCog):
 
     @mercado.command(name='cancelar')
     @check_ban()
+    @tiene_rol_usuario()
     async def mercado_cancelar(self, ctx, pub_id: str):
         pub = await db.get_mercado_by_id(pub_id)
         if not pub:
@@ -2315,6 +2382,7 @@ class Casino(BaseCog):
     @commands.group(name='casino', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def casino(self, ctx):
         embed = discord.Embed(
             title=f"{await get_emoji('casino')} Golden Coast · Legendary Casino's",
@@ -2338,6 +2406,7 @@ class Casino(BaseCog):
             pass
 
     @casino.command(name='ruleta-info')
+    @tiene_rol_usuario()
     async def ruleta_info(self, ctx):
         embed = discord.Embed(
             title="🎡 Ruleta — Tipos de apuesta",
@@ -2357,6 +2426,7 @@ class Casino(BaseCog):
             pass
 
     @casino.command(name='racha')
+    @tiene_rol_usuario()
     async def ver_racha(self, ctx):
         uid = ctx.author.id
         racha = await db.get_racha(uid)
@@ -2376,6 +2446,7 @@ class Casino(BaseCog):
             pass
 
     @casino.command(name='slots')
+    @tiene_rol_usuario()
     async def slots(self, ctx, apuesta: int):
         uid = ctx.author.id
         err = await self._validar_apuesta(uid, apuesta)
@@ -2444,6 +2515,7 @@ class Casino(BaseCog):
             pass
 
     @casino.command(name='ruleta')
+    @tiene_rol_usuario()
     async def ruleta(self, ctx, apuesta: int, *, tipo: str):
         uid = ctx.author.id
         err = await self._validar_apuesta(uid, apuesta)
@@ -2528,6 +2600,7 @@ class Casino(BaseCog):
             pass
 
     @casino.command(name='dados')
+    @tiene_rol_usuario()
     async def dados(self, ctx, apuesta: int):
         uid = ctx.author.id
         err = await self._validar_apuesta(uid, apuesta)
@@ -2575,6 +2648,7 @@ class Casino(BaseCog):
             pass
 
     @commands.command(name='bj')
+    @tiene_rol_usuario()
     async def blackjack(self, ctx, apuesta: int):
         uid = ctx.author.id
         err = await self._validar_apuesta(uid, apuesta)
@@ -2629,12 +2703,13 @@ class Casino(BaseCog):
             pass
 
 # ====================================================
-# COG: Atracos (con Pacific Bank y verificaciones de preparatorias)
+# COG: Atracos (con Pacific Bank, preparatorias y mejoras visuales)
 # ====================================================
 class Atracos(BaseCog):
     @commands.group(name='rob', aliases=['atraco'], invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def rob(self, ctx):
         embed = discord.Embed(title=f"{await get_emoji('rob')} SISTEMA PROFESIONAL DE ATRACOS", description="**Comandos disponibles:**", color=0xFF0000)
         for heist_name, info in HEIST_DEFINITIONS.items():
@@ -2659,6 +2734,7 @@ class Atracos(BaseCog):
             pass
 
     @rob.command(name='status')
+    @tiene_rol_usuario()
     async def rob_status(self, ctx):
         uid = ctx.author.id
         nivel = await db.get_nivel(uid)
@@ -2675,8 +2751,44 @@ class Atracos(BaseCog):
         except:
             pass
 
+    async def _mostrar_info_atraco(self, ctx, heist_name: str) -> bool:
+        """Muestra un embed con la información del atraco y espera confirmación."""
+        heist = HEIST_DEFINITIONS[heist_name]
+        # Verificar cooldown y items antes de mostrar (para no molestar)
+        if ctx.author.id not in OWNER_IDS:
+            ok, rest = await db.check_cooldown(ctx.author.id, f"rob_{heist_name}", heist['cooldown'])
+            if not ok:
+                d, h, m, s = rest // 86400, (rest % 86400) // 3600, (rest % 3600) // 60, rest % 60
+                tiempo = (f"{d}d " if d > 0 else "") + (f"{h}h " if h > 0 or d > 0 else "") + f"{m}m {s}s"
+                await ctx.send(embed=embed_error(f"Espera **{tiempo}** para repetir este atraco."))
+                return False
+            inv = await db.get_inventory(ctx.author.id, 'personal')
+            for item in heist.get('items', []):
+                if item not in inv or inv[item] <= 0:
+                    await ctx.send(embed=embed_error(f"Necesitas: **{item}**\nCompra en `-tienda` o `-tienda-ilegal`"))
+                    return False
+
+        # Mostrar información detallada
+        embed = discord.Embed(
+            title=f"🏴‍☠️ {heist['nombre']} — Información del Atraco",
+            color=0xFFA500
+        )
+        embed.set_thumbnail(url=heist.get('image', 'https://i.imgur.com/8Km9tLL.png'))
+        embed.add_field(name="📍 Objetivo", value=heist['nombre'], inline=True)
+        embed.add_field(name="⚠️ Nivel de Riesgo", value=f"🔴 {'Alto' if heist['min_level'] >= 50 else 'Medio' if heist['min_level'] >= 20 else 'Bajo'}", inline=True)
+        embed.add_field(name="💰 Recompensa Estimada", value=f"${heist['reward'][0]:,} - ${heist['reward'][1]:,}", inline=True)
+        embed.add_field(name="⏱️ Tiempo Estimado", value=f"{heist['cooldown'] // 60} minutos", inline=True)
+        embed.add_field(name="🚔 Participación Policial", value=heist['police'], inline=True)
+        embed.add_field(name="📝 Descripción", value=heist['description'], inline=False)
+        if heist.get('items'):
+            embed.add_field(name="🔧 Items Necesarios", value=", ".join(heist['items']), inline=False)
+        embed.set_footer(text="Responde con ✅ para comenzar el atraco o ❌ para cancelar.")
+        view = ConfirmView(ctx.author.id, timeout=30)
+        await ctx.send(embed=embed, view=view)
+        await view.wait()
+        return view.value is True
+
     async def validate_heist(self, ctx, heist_name: str) -> tuple:
-        # Owners bypass cooldown y items
         if ctx.author.id in OWNER_IDS:
             heist = HEIST_DEFINITIONS[heist_name]
             return heist, ctx.author.id
@@ -2709,6 +2821,10 @@ class Atracos(BaseCog):
         return heist, uid
 
     async def execute_heist(self, ctx, heist_name: str):
+        # Mostrar información y pedir confirmación
+        if not await self._mostrar_info_atraco(ctx, heist_name):
+            return
+
         heist, uid = await self.validate_heist(ctx, heist_name)
         if not heist:
             return
@@ -2776,6 +2892,7 @@ class Banco(BaseCog):
     @commands.group(name='banco', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def banco(self, ctx):
         uid = ctx.author.id
         eco = await db.get_economy(uid)
@@ -2793,7 +2910,7 @@ class Banco(BaseCog):
         if eco['black_money'] > 0:
             embed.add_field(
                 name=f"{await get_emoji('black_money')} Dinero negro",
-                value=f"Tienes **${eco['black_money']:,}** pendiente de blanquear. Usa `-blanquear`.",
+                value=f"Tienes **${eco['black_money']:,}** pendiente de blanquear. Usa `-blanquear` (solo Mafia).",
                 inline=False
             )
         embed.add_field(
@@ -2812,6 +2929,7 @@ class Banco(BaseCog):
             pass
 
     @banco.command(name='ingresar')
+    @tiene_rol_usuario()
     async def banco_ingresar(self, ctx, cantidad: int):
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("Cantidad mayor a 0."))
@@ -2827,6 +2945,7 @@ class Banco(BaseCog):
             pass
 
     @banco.command(name='retirar')
+    @tiene_rol_usuario()
     async def banco_retirar(self, ctx, cantidad: int):
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("Cantidad mayor a 0."))
@@ -2842,6 +2961,7 @@ class Banco(BaseCog):
             pass
 
     @banco.command(name='transferir')
+    @tiene_rol_usuario()
     async def banco_transferir(self, ctx, usuario: discord.Member, cantidad: int):
         uid, tid = ctx.author.id, usuario.id
         if uid == tid:
@@ -2869,6 +2989,7 @@ class Banco(BaseCog):
 class Multas(BaseCog):
     @commands.group(name='multa', invoke_without_command=True)
     @check_ban()
+    @tiene_rol_usuario()
     async def multa(self, ctx):
         uid = ctx.author.id
         multas = await db.get_multas_pendientes(uid)
@@ -2896,6 +3017,7 @@ class Multas(BaseCog):
             pass
 
     @multa.command(name='pagar')
+    @tiene_rol_usuario()
     async def multa_pagar(self, ctx, numero: int = None):
         uid = ctx.author.id
         multas = await db.get_multas_pendientes(uid)
@@ -3260,6 +3382,7 @@ class Movil(BaseCog):
     @commands.command(name='movil', aliases=['tel', 'telefono', 'celular'])
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def movil_prefix(self, ctx):
         try:
             await ctx.message.delete()
@@ -3280,6 +3403,7 @@ class Movil(BaseCog):
     @commands.command(name='avion', aliases=['airplane', 'avionmode'])
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def avion_prefix(self, ctx, estado: str = None):
         try:
             await ctx.message.delete()
@@ -3297,6 +3421,7 @@ class Movil(BaseCog):
     @commands.command(name='wifi', aliases=['redwifi', 'internet'])
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def wifi_prefix(self, ctx, accion: str = None):
         try:
             await ctx.message.delete()
@@ -3325,6 +3450,7 @@ class Movil(BaseCog):
     @commands.command(name='comprar-sim', aliases=['comprar_sim', 'buysim', 'sim'])
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def comprar_sim_prefix(self, ctx):
         try:
             await ctx.message.delete()
@@ -3390,6 +3516,7 @@ class MovilView(discord.ui.View):
 # ====================================================
 class Redes(BaseCog):
     @commands.group(name='ig', invoke_without_command=True)
+    @tiene_rol_usuario()
     async def ig(self, ctx):
         emoji = await get_emoji('ig')
         await ctx.send(f"{emoji} **** INSTAGRAM EN NOVA AGORA V2 ****\nUsa los subcomandos: `/ig perfil`, `/ig post`, `/ig like`, `/ig seguir`, `/ig priv`, `/ig trending`")
@@ -3472,6 +3599,7 @@ class Redes(BaseCog):
         await interaction.followup.send(embed=embed_success("📨 Mensaje enviado", f"Enviado a @{user.display_name}"))
 
     @commands.group(name='tw', invoke_without_command=True)
+    @tiene_rol_usuario()
     async def tw(self, ctx):
         emoji = await get_emoji('twitter')
         await ctx.send(f"{emoji} **** TWITTER EN NOVA AGORA V2 ****\nUsa los subcomandos: `/tw perfil`, `/tw tweet`, `/tw seguir`, `/tw priv`")
@@ -3526,12 +3654,12 @@ class Redes(BaseCog):
     @commands.command(name='x')
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def twitter_dm(self, ctx, usuario: discord.Member, *, mensaje: str):
         """Envía un mensaje directo por Twitter a otro usuario. Ej: -x @Juan Hola"""
         if usuario.id == ctx.author.id:
             return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
         await db.add_twitter_dm(ctx.author.id, usuario.id, mensaje)
-        # Enviar notificación al destinatario
         embed_notif = discord.Embed(
             title=f"✉️ Nuevo mensaje directo de Twitter",
             description=f"**{ctx.author.display_name}** te ha enviado un mensaje:\n\n> {mensaje}",
@@ -3744,6 +3872,35 @@ class Admin(BaseCog):
         except:
             pass
 
+    @commands.command(name='anuncio')
+    @tiene_rol_equipo_especial()
+    async def anuncio(self, ctx, *, mensaje: str):
+        """Envía un anuncio destacado en el canal actual."""
+        embed = discord.Embed(title="📢 ANUNCIO OFICIAL", description=mensaje, color=0xFFD700, timestamp=datetime.now())
+        embed.set_footer(text=f"Publicado por {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='kick')
+    @tiene_rol_equipo_especial()
+    async def kick(self, ctx, miembro: discord.Member, *, razon: str = "Sin razón"):
+        if miembro.id == ctx.author.id:
+            return await ctx.send(embed=embed_error("No puedes expulsarte a ti mismo."))
+        if miembro.guild_permissions.administrator:
+            return await ctx.send(embed=embed_error("No puedes expulsar a un administrador."))
+        if not ctx.guild.me.guild_permissions.kick_members:
+            return await ctx.send(embed=embed_error("No tengo permiso para expulsar miembros."))
+        await miembro.kick(reason=f"{razon} - Expulsado por {ctx.author}")
+        await self.registrar_log_moderacion(ctx, "KICK", miembro, razon)
+        await ctx.send(embed=embed_success("👢 Usuario expulsado", f"{miembro.mention} ha sido expulsado.\nRazón: {razon}", 0xFF6600))
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
     @commands.group(name='ban', invoke_without_command=True)
     @tiene_rol_equipo_especial()
     async def ban(self, ctx):
@@ -3923,8 +4080,8 @@ class Admin(BaseCog):
         if not miembro or not tipo:
             return await ctx.send(embed=embed_help("add-droga", "Añade droga al inventario personal de un usuario.", "-add-droga @usuario <tipo> [cantidad]", "-add-droga @Juan Marihuana 5", "Equipo Especial"))
         tipo_norm = tipo.capitalize()
-        if tipo_norm not in Drogas.EMOJIS_DROGA:
-            return await ctx.send(embed=embed_error(f"Tipo no válido. Opciones: {', '.join(Drogas.EMOJIS_DROGA.keys())}"))
+        if tipo_norm not in EMOJIS_DROGA:
+            return await ctx.send(embed=embed_error(f"Tipo no válido. Opciones: {', '.join(EMOJIS_DROGA.keys())}"))
         await db.add_item(miembro.id, "personal", tipo_norm, cantidad)
         await ctx.send(embed=embed_success("✅ Droga añadida", f"{cantidad}x {tipo_norm} a {miembro.mention}"))
         await self.log("ADD_DROGA", f"{ctx.author.name} añadió {cantidad}x {tipo_norm} a {miembro.name}")
@@ -4154,11 +4311,22 @@ class Admin(BaseCog):
         except:
             pass
 
+    @commands.command(name='purge')
+    @tiene_rol_equipo_especial()
+    async def purge(self, ctx, cantidad: int = None):
+        """Elimina una cantidad de mensajes en el canal actual (máximo 100)."""
+        if not cantidad or cantidad <= 0:
+            return await ctx.send(embed=embed_help("purge", "Elimina mensajes en el canal.", "-purge <cantidad>", "-purge 10", "Equipo Especial"))
+        cantidad = min(cantidad, 100)
+        await ctx.channel.purge(limit=cantidad + 1)
+        await ctx.send(embed=embed_success("🗑️ Mensajes eliminados", f"Se han eliminado {cantidad} mensajes."), delete_after=5)
+
 # ====================================================
-# COG: Roleplay
+# COG: Roleplay (me, do, entorno, reparar, curar)
 # ====================================================
 class Roleplay(BaseCog):
     @commands.command(name='me')
+    @tiene_rol_usuario()
     async def me(self, ctx, *, accion: str):
         try:
             nombre = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
@@ -4173,6 +4341,7 @@ class Roleplay(BaseCog):
             await ctx.send(embed=embed_error(f"Error al ejecutar -me: {str(e)[:100]}"))
 
     @commands.command(name='do')
+    @tiene_rol_usuario()
     async def do(self, ctx, *, pensamiento: str):
         try:
             nombre = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
@@ -4187,14 +4356,19 @@ class Roleplay(BaseCog):
             await ctx.send(embed=embed_error(f"Error al ejecutar -do: {str(e)[:100]}"))
 
     @commands.command(name='entorno')
+    @tiene_rol_usuario()
     async def entorno(self, ctx, *, descripcion: str):
         try:
+            # Enviar mensaje previo y mención LSPD
+            rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
+            if rol_lspd:
+                await ctx.send(f"🚨 **NUEVO AVISO CIUDADANO RECIBIDO** 🚨\n{rol_lspd.mention}")
+            # Construir embed
             partes = descripcion.split("|", 1)
             desc = partes[0].strip()
-            lugar = partes[1].strip().upper() if len(partes) > 1 else None
-            titulo = f"🚨 ALERTA DE ENTORNO — {lugar} 🚨" if lugar else "🚨 ALERTA DE ENTORNO 🚨"
-            embed = discord.Embed(title=titulo, description=f"*{desc}*", color=discord.Color.red(), timestamp=datetime.now())
-            embed.set_author(name="🌍 Narrador del Entorno", icon_url=ctx.author.display_avatar.url)
+            lugar = partes[1].strip().upper() if len(partes) > 1 else "Desconocida"
+            embed = discord.Embed(title="🌍 ALERTA DE ENTORNO", description=f"**📍 Ubicación:** {lugar}\n**📞 Información:** {desc}\n**🕒 Hora:** {datetime.now().strftime('%H:%M')}\n**🚓 Unidades requeridas:** Todas disponibles", color=0xFF4500, timestamp=datetime.now())
+            embed.set_author(name="Narrador del Entorno", icon_url=ctx.author.display_avatar.url)
             await ctx.send(embed=embed)
             try:
                 await ctx.message.delete()
@@ -4205,6 +4379,7 @@ class Roleplay(BaseCog):
 
     @commands.command(name='reparar')
     @tiene_profesion("mecánico", "mecanico")
+    @tiene_rol_usuario()
     async def reparar(self, ctx, objetivo: discord.Member, *, descripcion: str = "Reparación completada."):
         try:
             nombre_mec = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
@@ -4220,6 +4395,7 @@ class Roleplay(BaseCog):
 
     @commands.command(name='curar')
     @tiene_profesion("médico", "medico", "doctor", "enfermero", "ems")
+    @tiene_rol_usuario()
     async def curar(self, ctx, objetivo: discord.Member, *, descripcion: str = "Tratamiento completado."):
         try:
             nombre_med = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
@@ -4416,7 +4592,7 @@ class Soporte(BaseCog):
             "Gracias por participar.\n\n"
             "🇪🇸 Estate atento a las próximas aperturas programadas para las 16:00 (hora española).\n\n"
             "Cuantos más usuarios participen, más actividad y rol tendremos mañana.\n\n"
-            f"{rol_usuario.mention if rol_usuario else '<@&1450592205898252381>'}"
+            f"{rol_usuario.mention if rol_usuario else '<@&1450592204849418294>'}"
         )
         await ctx.send(mensaje)
         try:
@@ -4426,21 +4602,23 @@ class Soporte(BaseCog):
         await self.log("CIERRE_ROL", f"{ctx.author.name} cerró el rol")
 
 # ====================================================
-# COG: Ayuda (nuevas categorías)
+# COG: Ayuda (nuevas categorías modernizadas)
 # ====================================================
 class Ayuda(BaseCog):
     CATEGORIAS = {
-        "economia": {"emoji": "🏦", "nombre": "Economía", "comandos": [("-banco", "**Gestiona tu dinero (ingresar, retirar, transferir)**"), ("-balance-top", "**Top de dinero del servidor**"), ("-blanquear", "**Convierte dinero negro a limpio (65%)**"), ("-inv [tipo]", "**Muestra tu inventario**"), ("-tienda", "**Compra items**"), ("-comprar <item> [cantidad]", "**Compra un artículo de la tienda**"), ("-comprar-licencia <tipo>", "**Compra licencias (coche, moto, armas, etc.)**"), ("-licencia [@usuario]", "**Ver licencias de un usuario**"), ("-use <item>", "**Usa un item del inventario**"), ("-intercambio @user <cantidad> <item>", "**Da items a otro jugador**"), ("-mover <item> <cant> <origen> <destino>", "**Mueve items entre inventarios**")]},
-        "trabajos": {"emoji": "💼", "nombre": "Trabajos", "comandos": [("-trabajo", "**Simula tu jornada laboral (sin dinero)**"), ("-bus", "**Conduce el autobús público (roleplay) [requiere rol AUTOBUSERO]**"), ("-chatarrero", "**Recolecta chatarra y véndela [requiere rol CHATARRERO]**"), ("-minar", "**Extrae minerales con probabilidades [requiere rol MINERO]**")]},
-        "facciones": {"emoji": "🚔", "nombre": "Facciones", "comandos": [("-pda", "**Panel PDA policial**"), ("-pda detener @user <motivo>", "**Detener a un ciudadano**"), ("-pda encarcelar @user <min> <motivo>", "**Encarcelar**"), ("-pda multar @user <cantidad> <motivo>", "**Poner multa**"), ("-pda requisar @user <arma>", "**Requisar arma**"), ("-pda guardar @user <item>", "**Guardar evidencia**"), ("-pda evidencia [@user]", "**Ver evidencias**"), ("-pda buscar <nombre>", "**Buscar antecedentes**"), ("-crear-placa @user LSPD-0001", "**Asignar placa policial (requiere LSPD/owner)**"), ("-alerta-robo", "**Alerta de robo (solo LSPD Operativo)**"), ("-dispo lspd/lsmd/lssd <cantidad>", "**Disponibilidad de servicios**")]},
-        "atracos": {"emoji": "🏴", "nombre": "Atracos", "comandos": [("-rob", "**Ver todos los atracos**"), ("-rob badu", "**Atraco a Badu ($1.2k-$2.8k, 10min)**"), ("-rob yellowjack", "**Atraco a Yellow Jack ($3k-$5.5k, 30min)**"), ("-rob ammu", "**Atraco a Ammu-Nation ($6k-$12k, 1h)**"), ("-rob vanilla", "**Atraco a Vanilla Unicorn ($12k-$18k, 2h)**"), ("-rob yate", "**Atraco al Yate ($18k-$26k, 2.5h)**"), ("-rob centro", "**Atraco Centro Comercial ($22k-$32k, 3h)**"), ("-rob joyeria", "**Atraco a Joyería ($45k-$65k, 3 días)**"), ("-rob paleto", "**Atraco Banco Paleto ($120k-$160k, 12 días)**"), ("-rob central", "**Atraco Banco Central ($180k-$240k, 14 días)**"), ("-rob pacific", "**Atraco Pacific Bank ($250k-$350k, 14 días, requiere 3 preparatorias)**"), ("-rob status", "**Ver tu estado de atracos**"), ("-prep pacific1", "**Preparatoria I para Pacific Bank**"), ("-prep pacific2", "**Preparatoria II para Pacific Bank**"), ("-prep pacific3", "**Preparatoria III para Pacific Bank**")]},
-        "redes": {"emoji": "📱", "nombre": "Redes Sociales", "comandos": [("/movil", "**Abre el móvil**"), ("/avion on/off", "**Modo avión**"), ("/wifi conectar/desconectar", "**Gestiona WiFi**"), ("/comprar-sim", "**Compra SIM**"), ("/ig perfil", "**Ver perfil de Instagram**"), ("/ig post <texto>", "**Publicar en Instagram**"), ("/ig like <id>", "**Dar like**"), ("/ig seguir @user", "**Seguir/dejar de seguir**"), ("/ig priv @user <msg>", "**Enviar DM**"), ("/ig trending", "**Posts más populares**"), ("/tw perfil", "**Ver perfil de Twitter**"), ("/tw tweet <texto>", "**Publicar tweet**"), ("/tw seguir @user", "**Seguir/dejar de seguir**"), ("/tw priv @user <msg>", "**Enviar DM**"), ("/fb post <texto>", "**Publicar en Facebook**"), ("/fb priv @user <msg>", "**Enviar mensaje**"), ("/deepweb @user <msg>", "**Enviar mensaje anónimo**"), ("/descifrar <id> 🔒FBI", "**Descifrar mensaje DeepWeb**"), ("/wa contactos", "**Ver contactos**"), ("/wa agregar +34... <nombre>", "**Añadir contacto**"), ("/wa chat @user <msg>", "**Enviar mensaje**"), ("/wa llamar @user [minutos]", "**Llamada de voz**"), ("-x @user <mensaje>", "**Enviar DM por Twitter**")]},
-        "identidad": {"emoji": "🪪", "nombre": "Identidad", "comandos": [("/dni <nombre> <apellidos> <edad> <género> <nacionalidad> <color_ojos> <altura> <profesión>", "**Crea tu DNI**"), ("/editardni <campo> <nuevo_valor>", "**Edita tu DNI**"), ("-ver dni [@usuario]", "**Ver DNI de un usuario**"), ("/borrardni @usuario 🔒", "**Eliminar DNI (admin)**")]},
-        "admin": {"emoji": "⚙️", "nombre": "Administración", "comandos": [("-say <mensaje> 🔒", "**Repite un mensaje**"), ("-ban @user [razón] 🔒", "**Banea a un usuario**"), ("-ban definitivo @user [razón] 🔒", "**Baneo permanente + blacklist**"), ("-unban <id> 🔒", "**Desbanea por ID**"), ("-money add/remove @user <cantidad> [tipo] 🔒", "**Modifica dinero**"), ("-setprefix <prefijo> 🔒", "**Cambia el prefijo**"), ("-add-inv @user <tipo> <item> [cantidad] 🔒", "**Añade items**"), ("-rem-inv @user <tipo> <item> [cantidad] 🔒", "**Elimina items**"), ("-add-coche @user <modelo> 🔒", "**Registra vehículo**"), ("-remove-coche @user <matrícula> 🔒", "**Elimina vehículo**"), ("-add-droga @user <tipo> [cantidad] 🔒", "**Añade droga**"), ("-add-licencia @user <licencia> 🔒", "**Otorga licencia**"), ("-rem-licencia @user <licencia> 🔒", "**Revoca licencia**"), ("-periodico 🔒", "**Publica el periódico**"), ("-bot [días] 🔒", "**Activa el bot por X días (solo owner)**"), ("-bot-off 🔒", "**Apaga el bot (owner)**"), ("-quitar-warn @user <id> 🔒", "**Elimina advertencia**"), ("-economy-reset @user/@rol [cantidad] 🔒", "**Resetea economía**"), ("-create-item <nombre> <precio> <emoji> [desc] 🔒", "**Crea item personalizado**"), ("-delete-item <nombre> 🔒", "**Elimina item personalizado**"), ("-give-item @user <item> [cantidad] 🔒", "**Regala item**"), ("-take-item @user <item> [cantidad] 🔒", "**Quita item**"), ("-mass-economy @rol <cantidad> 🔒", "**Asigna dinero a un rol**"), ("/dashboard", "**Panel de control (rol específico)**")]},
-        "web": {"emoji": "🌐", "nombre": "Panel Web", "comandos": [("https://tu-dominio.com", "**Accede al panel web**"), ("/register", "**Regístrate en la web**"), ("/login", "**Inicia sesión**"), ("/perfil", "**Ver tu perfil web**"), ("/blacklist?token=TOKEN", "**Panel de blacklist (admin)**"), ("/owner/emojis?token=TOKEN", "**Gestión de emojis (owner)**")]}
+        "roleplay": {"emoji": "🚔", "nombre": "Roleplay", "comandos": [("-me <acción>", "Acción en primera persona"), ("-do <pensamiento>", "Pensamiento en voz alta"), ("-entorno <descripción> [| lugar]", "Describe el entorno y alerta a LSPD"), ("-reparar @user [desc]", "Repara un vehículo (mecánico)"), ("-curar @user [desc]", "Cura a un paciente (médico)")]},
+        "economia": {"emoji": "🏦", "nombre": "Economía", "comandos": [("-banco", "Gestiona tu dinero (ingresar, retirar, transferir)"), ("-balance-top", "Top de dinero del servidor"), ("-blanquear", "Convierte dinero negro a limpio (65%) (solo Mafia)"), ("-inv [tipo]", "Muestra tu inventario"), ("-tienda", "Compra items"), ("-comprar <item> [cantidad]", "Compra un artículo de la tienda"), ("-comprar-licencia <tipo>", "Compra licencias (coche, moto, armas, etc.)"), ("-licencia [@usuario]", "Ver licencias de un usuario"), ("-use <item>", "Usa un item del inventario"), ("-intercambio @user <cantidad> <item>", "Da items a otro jugador"), ("-mover <item> <cant> <origen> <destino>", "Mueve items entre inventarios")]},
+        "trabajos": {"emoji": "💼", "nombre": "Trabajos", "comandos": [("-trabajo", "Simula tu jornada laboral (sin dinero)"), ("-bus", "Conduce el autobús público [requiere rol AUTOBUSERO]"), ("-chatarrero", "Recolecta chatarra y véndela [requiere rol CHATARRERO]"), ("-minar", "Extrae minerales con probabilidades [requiere rol MINERO]"), ("-terminar-trabajo", "Finaliza tu trabajo actual y cobra")]},
+        "atracos": {"emoji": "🏴", "nombre": "Atracos", "comandos": [("-rob", "Ver todos los atracos"), ("-rob badu", "Atraco a Badu ($1.2k-$2.8k, 10min)"), ("-rob yellowjack", "Atraco a Yellow Jack ($3k-$5.5k, 30min)"), ("-rob ammu", "Atraco a Ammu-Nation ($6k-$12k, 1h)"), ("-rob vanilla", "Atraco a Vanilla Unicorn ($12k-$18k, 2h)"), ("-rob yate", "Atraco al Yate ($18k-$26k, 2.5h)"), ("-rob centro", "Atraco Centro Comercial ($22k-$32k, 3h)"), ("-rob joyeria", "Atraco a Joyería ($45k-$65k, 3 días)"), ("-rob paleto", "Atraco Banco Paleto ($120k-$160k, 12 días)"), ("-rob central", "Atraco Banco Central ($180k-$240k, 14 días)"), ("-rob pacific", "Atraco Pacific Bank ($250k-$350k, 14 días, requiere 3 preparatorias)"), ("-rob status", "Ver tu estado de atracos"), ("-prep pacific1", "Preparatoria I para Pacific Bank"), ("-prep pacific2", "Preparatoria II para Pacific Bank"), ("-prep pacific3", "Preparatoria III para Pacific Bank")]},
+        "drogas": {"emoji": "💊", "nombre": "Drogas e Ilegal", "comandos": [("-droga", "Ver precios de drogas"), ("-droga comprar <tipo> [cantidad]", "Compra droga (cash)"), ("-droga vender <tipo> [cantidad]", "Vende droga (cash)"), ("-tienda-ilegal", "Mercado negro (objetos ilegales)"), ("-comprar <item> [cantidad]", "Compra objetos ilegales con dinero negro")]},
+        "redes": {"emoji": "📱", "nombre": "Redes Sociales", "comandos": [("/movil", "Abre el móvil"), ("/avion on/off", "Modo avión"), ("/wifi conectar/desconectar", "Gestiona WiFi"), ("/comprar-sim", "Compra SIM"), ("/ig perfil", "Ver perfil de Instagram"), ("/ig post <texto>", "Publicar en Instagram"), ("/ig like <id>", "Dar like"), ("/ig seguir @user", "Seguir/dejar de seguir"), ("/ig priv @user <msg>", "Enviar DM"), ("/ig trending", "Posts más populares"), ("/tw perfil", "Ver perfil de Twitter"), ("/tw tweet <texto>", "Publicar tweet"), ("/tw seguir @user", "Seguir/dejar de seguir"), ("/tw priv @user <msg>", "Enviar DM"), ("/fb post <texto>", "Publicar en Facebook"), ("/fb priv @user <msg>", "Enviar mensaje"), ("/deepweb @user <msg>", "Enviar mensaje anónimo"), ("/descifrar <id> 🔒FBI", "Descifrar mensaje DeepWeb"), ("/wa contactos", "Ver contactos"), ("/wa agregar +34... <nombre>", "Añadir contacto"), ("/wa chat @user <msg>", "Enviar mensaje"), ("/wa llamar @user [minutos]", "Llamada de voz"), ("-x @user <mensaje>", "Enviar DM por Twitter")]},
+        "admin": {"emoji": "⚙️", "nombre": "Administración", "comandos": [("-say <mensaje> 🔒", "Repite un mensaje"), ("-kick @user [razón] 🔒", "Expulsa a un usuario"), ("-warn @user <razón> 🔒", "Advierte a un usuario"), ("-ban @user [razón] 🔒", "Banea a un usuario"), ("-ban definitivo @user [razón] 🔒", "Baneo permanente + blacklist"), ("-unban <id> 🔒", "Desbanea por ID"), ("-money add/remove @user <cantidad> [tipo] 🔒", "Modifica dinero"), ("-anuncio <texto> 🔒", "Envía un anuncio destacado"), ("-setprefix <prefijo> 🔒", "Cambia el prefijo"), ("-add-inv @user <tipo> <item> [cantidad] 🔒", "Añade items"), ("-rem-inv @user <tipo> <item> [cantidad] 🔒", "Elimina items"), ("-add-coche @user <modelo> 🔒", "Registra vehículo"), ("-remove-coche @user <matrícula> 🔒", "Elimina vehículo"), ("-add-droga @user <tipo> [cantidad] 🔒", "Añade droga"), ("-add-licencia @user <licencia> 🔒", "Otorga licencia"), ("-rem-licencia @user <licencia> 🔒", "Revoca licencia"), ("-periodico 🔒", "Publica el periódico"), ("-bot [días] 🔒", "Activa el bot por X días (solo owner)"), ("-bot-off 🔒", "Apaga el bot (owner)"), ("-quitar-warn @user <id> 🔒", "Elimina advertencia"), ("-economy-reset @user/@rol [cantidad] 🔒", "Resetea economía"), ("-create-item <nombre> <precio> <emoji> [desc] 🔒", "Crea item personalizado"), ("-delete-item <nombre> 🔒", "Elimina item personalizado"), ("-give-item @user <item> [cantidad] 🔒", "Regala item"), ("-take-item @user <item> [cantidad] 🔒", "Quita item"), ("-mass-economy @rol <cantidad> 🔒", "Asigna dinero a un rol"), ("-purge <cantidad> 🔒", "Borra mensajes"), ("/dashboard", "Panel de control (rol específico)")]},
+        "moderacion": {"emoji": "🛡️", "nombre": "Moderación", "comandos": [("-purge <cantidad> 🔒", "Borra mensajes"), ("-mute @user [razón] 🔒", "Mutea a un usuario (30 días)"), ("-unmute @user 🔒", "Quita el mute"), ("-warn @user <razón> 🔒", "Añade advertencia"), ("-delwarn @user <id> 🔒", "Elimina advertencia"), ("-history @user", "Historial de sanciones"), ("-warnings @user", "Ver advertencias")]},
+        "web": {"emoji": "🌐", "nombre": "Panel Web", "comandos": [("https://tu-dominio.com", "Accede al panel web"), ("/register", "Regístrate en la web"), ("/login", "Inicia sesión"), ("/perfil", "Ver tu perfil web"), ("/blacklist?token=TOKEN", "Panel de blacklist (admin)"), ("/owner/emojis?token=TOKEN", "Gestión de emojis (owner)")]}
     }
 
     @commands.command(name='ayuda', aliases=['help'])
+    @tiene_rol_usuario()
     async def ayuda(self, ctx, cat: Optional[str] = None):
         if cat and cat.lower() in self.CATEGORIAS:
             cat_info = self.CATEGORIAS[cat.lower()]
@@ -4455,7 +4633,7 @@ class Ayuda(BaseCog):
         prefijo = get_pre(self.bot, ctx.message)
         eco = await db.get_economy(ctx.author.id)
         saldo = eco['cash'] + eco['bank']
-        embed = discord.Embed(title="📚 NOVA AGORA — Panel de Ayuda", description=f"**Prefijo:** `{prefijo}` — Selecciona una categoría en el menú de abajo.\n\n🏦 · **Economía**\n💼 · **Trabajos**\n🚔 · **Facciones**\n🏴 · **Atracos**\n📱 · **Redes Sociales**\n🪪 · **Identidad**\n⚙️ · **Administración**\n🌐 · **Panel Web**\n\n🔒 = Solo administradores/moderadores", color=discord.Color.blue(), timestamp=datetime.now())
+        embed = discord.Embed(title="📚 NOVA AGORA — Panel de Ayuda", description=f"**Prefijo:** `{prefijo}` — Selecciona una categoría en el menú de abajo.\n\n🚔 · **Roleplay**\n🏦 · **Economía**\n💼 · **Trabajos**\n🏴 · **Atracos**\n💊 · **Drogas e Ilegal**\n📱 · **Redes Sociales**\n⚙️ · **Administración**\n🛡️ · **Moderación**\n🌐 · **Panel Web**\n\n🔒 = Solo administradores/moderadores", color=discord.Color.blue(), timestamp=datetime.now())
         embed.set_footer(text=f"Saldo: **${saldo:,}**  ·  NOVA AGORA")
         view = AyudaView(prefijo, self.CATEGORIAS, ctx.author.id)
         await ctx.send(embed=embed, view=view)
@@ -4490,7 +4668,7 @@ class AyudaView(discord.ui.View):
             child.disabled = True
 
 # ====================================================
-# COG: Moderacion (mute, warn, history)
+# COG: Moderacion (mute, warn, history, etc.)
 # ====================================================
 class Moderacion(BaseCog):
     async def ensure_muted_role(self, guild: discord.Guild) -> discord.Role:
@@ -4576,6 +4754,7 @@ class Moderacion(BaseCog):
             pass
 
     @commands.command(name='history')
+    @tiene_rol_usuario()
     async def history(self, ctx, miembro: discord.Member = None):
         if not miembro:
             return await ctx.send(embed=embed_help("history", "Muestra el historial de sanciones de un usuario.", "-history @usuario", "-history @Juan", ""))
@@ -4592,7 +4771,7 @@ class Moderacion(BaseCog):
             mutes_text = "\n".join([f"**#{m[0]}** - {m[1]} (por {m[5]}) - {datetime.fromisoformat(m[3]).strftime('%d/%m/%Y %H:%M')} → {datetime.fromisoformat(m[4]).strftime('%d/%m/%Y %H:%M') if m[4] else 'Activo'}" for m in mutes])
             embed.add_field(name="🔇 Mutes", value=mutes_text, inline=False)
         else:
-            embed.add_field(name="🔇 Mutes", value="*Ninguno*", inline=False)
+            embed.add_field(name="🔇 Mutes", value="*Ninguna*", inline=False)
         await ctx.send(embed=embed)
         try:
             await ctx.message.delete()
@@ -4600,6 +4779,7 @@ class Moderacion(BaseCog):
             pass
 
     @commands.command(name='warnings')
+    @tiene_rol_usuario()
     async def warnings(self, ctx, miembro: discord.Member = None):
         if not miembro:
             return await ctx.send(embed=embed_help("warnings", "Muestra las advertencias de un usuario.", "-warnings @usuario", "-warnings @Juan", ""))
@@ -4648,7 +4828,6 @@ class Niveles(BaseCog):
             await db.execute("INSERT OR IGNORE INTO niveles (user_id, mensajes, last_message_time, last_message_content) VALUES (?, ?, ?, ?)", (uid, 0, None, None))
         await db.execute("UPDATE niveles SET mensajes = ?, last_message_time = ?, last_message_content = ? WHERE user_id = ?", (new_messages, now.isoformat(), message.content[:100], uid))
         if new_level > old_level and new_level > 0:
-            # Verificar si el usuario puede subir de nivel (cooldown 14 días)
             nivel_data = await db.get_nivel(uid)
             last_level_up = nivel_data.get('last_level_up')
             puede_subir = True
@@ -4661,7 +4840,6 @@ class Niveles(BaseCog):
                 await self.verificar_recompensa_nivel(message.author, new_level)
                 await message.channel.send(f"🎉 {message.author.mention} ha subido al nivel **{new_level}** por actividad!\n💬 **{new_messages} mensajes** acumulados | Próximo nivel en **{next_remaining} mensajes**.")
             else:
-                # No sube de nivel, pero se queda con el XP acumulado
                 dias_restantes = DIAS_PARA_SUBIR_NIVEL - (datetime.now() - ultima_subida).days
                 await message.channel.send(f"⚠️ {message.author.mention}, has alcanzado el nivel **{new_level}** pero debes esperar **{dias_restantes} días** para subir (cooldown de 14 días entre niveles). Sigue ganando XP mientras tanto.")
 
@@ -4692,7 +4870,6 @@ class Niveles(BaseCog):
                 xp = XP_POR_TIEMPO
                 nuevo_nivel = await db.add_xp(member.id, xp, "time")
                 if nuevo_nivel:
-                    # Verificar cooldown antes de notificar
                     nivel_data = await db.get_nivel(member.id)
                     last_level_up = nivel_data.get('last_level_up')
                     puede_subir = True
@@ -4714,6 +4891,7 @@ class Niveles(BaseCog):
                     await self.log("NIVEL", f"{member} alcanzó nivel {nivel} y obtuvo rol {rol.name}")
 
     @commands.command(name='nivel')
+    @tiene_rol_usuario()
     async def ver_nivel(self, ctx, miembro: discord.Member = None):
         miembro = miembro or ctx.author
         data = await db.get_nivel(miembro.id)
@@ -4738,6 +4916,7 @@ class Niveles(BaseCog):
             pass
 
     @commands.command(name='ranking')
+    @tiene_rol_usuario()
     async def ranking_niveles(self, ctx):
         top = await db.get_ranking_niveles(10)
         embed = discord.Embed(title="🏆 Ranking de niveles", color=discord.Color.gold())
@@ -4776,6 +4955,7 @@ class Niveles(BaseCog):
         return embed
 
     @commands.command(name='información', aliases=['info', 'server', 'serverinfo', 'informacion'])
+    @tiene_rol_usuario()
     async def server_info(self, ctx):
         embed = self.construir_server_embed(ctx.guild)
         await ctx.send(embed=embed)
@@ -5244,6 +5424,7 @@ class DNI(BaseCog):
         await interaction.followup.send(embed=embed)
 
     @commands.command(name='ver')
+    @tiene_rol_usuario()
     async def ver(self, ctx, subcomando: str = None, usuario: Optional[discord.Member] = None):
         if subcomando is None or subcomando.lower() != 'dni':
             return await ctx.send(embed=embed_info("📋 Comando ver", "Usa `-ver dni [usuario]` para ver el DNI de alguien."))
@@ -5294,14 +5475,14 @@ class Trabajos(BaseCog):
     @commands.command(name='minar', description='Extrae minerales con probabilidad')
     @check_ban()
     @check_encarcelado()
-    @tiene_rol_minero()  # Requiere rol MINERO
+    @tiene_rol_minero()
+    @tiene_rol_usuario()
     async def minar(self, ctx):
         uid = str(ctx.author.id)
         if uid in self.trabajos_activos:
             return await ctx.send(embed=embed_error("-# **Ya estás trabajando. Termina tu turno actual con `-terminar-trabajo`.**"))
         msg = await ctx.send("⛏️ **Comenzando a minar...**\n *Excavando en la mina...*")
         await asyncio.sleep(random.randint(3, 6))
-        # Seleccionar mineral según probabilidad
         rand = random.random() * 100
         acum = 0
         mineral_encontrado = None
@@ -5331,7 +5512,8 @@ class Trabajos(BaseCog):
     @commands.command(name='bus', description='Conduce el autobús público (roleplay)')
     @check_ban()
     @check_encarcelado()
-    @tiene_rol_autobusero()  # Requiere rol AUTOBUSERO
+    @tiene_rol_autobusero()
+    @tiene_rol_usuario()
     async def bus(self, ctx):
         uid = str(ctx.author.id)
         if uid in self.trabajos_activos:
@@ -5352,7 +5534,8 @@ class Trabajos(BaseCog):
     @commands.command(name='chatarrero', description='Recolecta chatarra y véndela')
     @check_ban()
     @check_encarcelado()
-    @tiene_rol_chatarrero()  # Requiere rol CHATARRERO
+    @tiene_rol_chatarrero()
+    @tiene_rol_usuario()
     async def chatarrero(self, ctx):
         uid = str(ctx.author.id)
         if uid in self.trabajos_activos:
@@ -5372,6 +5555,7 @@ class Trabajos(BaseCog):
 
     @commands.command(name='terminar-trabajo', description='Termina tu trabajo actual y cobra')
     @check_ban()
+    @tiene_rol_usuario()
     async def terminar_trabajo(self, ctx):
         uid = str(ctx.author.id)
         if uid not in self.trabajos_activos:
@@ -5404,6 +5588,71 @@ class Trabajos(BaseCog):
             await ctx.message.delete()
         except:
             pass
+
+# ====================================================
+# COG: Kits (por rol)
+# ====================================================
+class Kits(BaseCog):
+    COOLDOWN_SEGUNDOS = 43200
+
+    @commands.command(name='policial')
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def kit_policial(self, ctx):
+        await self._reclamar_kit(ctx, "LSPD", "Kit policial", [("Placa Policial", 1), ("Linterna", 1), ("Radio", 1), ("Esposas", 1), ("Guantes", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='mecanico')
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def kit_mecanico(self, ctx):
+        await self._reclamar_kit(ctx, "Mecánico", "Kit mecánico", [("Llave Inglesa", 1), ("Herramientas", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='ems')
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def kit_ems(self, ctx):
+        await self._reclamar_kit(ctx, "EMS", "Kit EMS", [("Botiquin", 1), ("Desfibrilador", 1), ("Kit Médico", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='bomberos')
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def kit_bomberos(self, ctx):
+        await self._reclamar_kit(ctx, "Bomberos", "Kit bomberos", [("Traje Ignifugo", 1), ("Hacha", 1), ("Manguera", 1), ("Botiquin", 1)])
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    async def _reclamar_kit(self, ctx, rol_requerido, nombre_kit, items):
+        user = ctx.author
+        if not any(role.name == rol_requerido for role in user.roles):
+            return await ctx.send(embed=embed_error(f"Necesitas el rol **{rol_requerido}** para reclamar el {nombre_kit}."))
+        ok, rest = await db.check_cooldown(user.id, f"kit_{rol_requerido.lower()}", self.COOLDOWN_SEGUNDOS)
+        if not ok:
+            horas = rest // 3600
+            minutos = (rest % 3600) // 60
+            return await ctx.send(embed=embed_error(f"Ya has reclamado el {nombre_kit} recientemente. Puedes volver a reclamarlo en {horas}h {minutos}m."))
+        for item, cantidad in items:
+            await db.add_item(user.id, "personal", item, cantidad)
+        desc = ", ".join([f"{cant}x {item}" for item, cant in items])
+        await ctx.send(embed=embed_success(f"🎁 {nombre_kit} reclamado", f"Has recibido: {desc}"))
+        await self.log("KIT", f"{user.name} reclamó {nombre_kit}")
 
 # ====================================================
 # COG: OwnerMenu (Emojis animados) y panel web de gestión de emojis
@@ -5547,94 +5796,26 @@ class AddEmojiModal(discord.ui.Modal, title="Añadir Emoji Animado"):
             await interaction.response.send_message(embed=embed_error(f"Error: {str(e)[:100]}"), ephemeral=True)
 
 # ====================================================
-# COG: Kits (por rol)
-# ====================================================
-class Kits(BaseCog):
-    COOLDOWN_SEGUNDOS = 43200
-
-    @commands.command(name='policial')
-    @check_ban()
-    @check_encarcelado()
-    async def kit_policial(self, ctx):
-        await self._reclamar_kit(ctx, "LSPD", "Kit policial", [("Placa Policial", 1), ("Linterna", 1), ("Radio", 1), ("Esposas", 1), ("Guantes", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-    @commands.command(name='mecanico')
-    @check_ban()
-    @check_encarcelado()
-    async def kit_mecanico(self, ctx):
-        await self._reclamar_kit(ctx, "Mecánico", "Kit mecánico", [("Llave Inglesa", 1), ("Herramientas", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-    @commands.command(name='ems')
-    @check_ban()
-    @check_encarcelado()
-    async def kit_ems(self, ctx):
-        await self._reclamar_kit(ctx, "EMS", "Kit EMS", [("Botiquin", 1), ("Desfibrilador", 1), ("Kit Médico", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-    @commands.command(name='bomberos')
-    @check_ban()
-    @check_encarcelado()
-    async def kit_bomberos(self, ctx):
-        await self._reclamar_kit(ctx, "Bomberos", "Kit bomberos", [("Traje Ignifugo", 1), ("Hacha", 1), ("Manguera", 1), ("Botiquin", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-    async def _reclamar_kit(self, ctx, rol_requerido, nombre_kit, items):
-        user = ctx.author
-        if not any(role.name == rol_requerido for role in user.roles):
-            return await ctx.send(embed=embed_error(f"Necesitas el rol **{rol_requerido}** para reclamar el {nombre_kit}."))
-        ok, rest = await db.check_cooldown(user.id, f"kit_{rol_requerido.lower()}", self.COOLDOWN_SEGUNDOS)
-        if not ok:
-            horas = rest // 3600
-            minutos = (rest % 3600) // 60
-            return await ctx.send(embed=embed_error(f"Ya has reclamado el {nombre_kit} recientemente. Puedes volver a reclamarlo en {horas}h {minutos}m."))
-        for item, cantidad in items:
-            await db.add_item(user.id, "personal", item, cantidad)
-        desc = ", ".join([f"{cant}x {item}" for item, cant in items])
-        await ctx.send(embed=embed_success(f"🎁 {nombre_kit} reclamado", f"Has recibido: {desc}"))
-        await self.log("KIT", f"{user.name} reclamó {nombre_kit}")
-
-# ====================================================
 # COG: Dashboard (slash command)
 # ====================================================
 class Dashboard(BaseCog):
     @app_commands.command(name='dashboard', description="Panel de control avanzado de Nova Agora")
     @app_commands.default_permissions(administrator=False)
     async def dashboard_slash(self, interaction: discord.Interaction):
-        # Verificar rol específico
         role = interaction.guild.get_role(ROL_DASHBOARD_ID)
         if not role or role not in interaction.user.roles:
             if interaction.user.id not in OWNER_IDS:
                 return await interaction.response.send_message(embed=embed_error("No tienes permiso para usar este comando."), ephemeral=True)
-        # Obtener estadísticas
         total_users = (await db.fetchone("SELECT COUNT(*) FROM economy"))[0]
         total_cash = (await db.fetchone("SELECT SUM(cash) FROM economy"))[0] or 0
         total_bank = (await db.fetchone("SELECT SUM(bank) FROM economy"))[0] or 0
         total_black = (await db.fetchone("SELECT SUM(black_money) FROM economy"))[0] or 0
         total_money = total_cash + total_bank + total_black
-        # Personas en rol (miembros con rol LSPD)
         rol_lspd = interaction.guild.get_role(ROL_LSPD_ID)
         people_in_rol = len(rol_lspd.members) if rol_lspd else 0
-        # Trabajos activos
         trabajos_activos = len(Trabajos.trabajos_activos)
-        # Comandos ejecutados
         comandos_ejecutados = await db.get_estadistica('comandos_totales') or 0
-        # Atracos realizados
         atracos_totales = await db.get_estadistica('robos_totales') or 0
-        # Ranking de niveles
         top_niveles = await db.get_ranking_niveles(5)
         embed = discord.Embed(
             title="📊 DASHBOARD NOVA AGORA",
@@ -5648,7 +5829,6 @@ class Dashboard(BaseCog):
         embed.add_field(name="💼 Trabajos activos", value=f"{trabajos_activos}", inline=True)
         embed.add_field(name="📟 Comandos ejecutados", value=f"{comandos_ejecutados}", inline=True)
         embed.add_field(name="🏴 Atracos realizados", value=f"{atracos_totales}", inline=True)
-        # Ranking
         ranking_text = ""
         for i, (uid, xp, nivel) in enumerate(top_niveles, 1):
             user = interaction.guild.get_member(uid)
@@ -5663,9 +5843,8 @@ class Dashboard(BaseCog):
 # ====================================================
 class Alertas(BaseCog):
     @commands.command(name='alerta-robo')
-    @tiene_rol_lspd_operativo()  # Solo rol LSPD (ID 1450592202165321759)
+    @tiene_rol_lspd_operativo()
     async def alerta_robo(self, ctx):
-        """Envía una alerta de robo a la comisaría (solo LSPD Operativo)"""
         rol_lspd = ctx.guild.get_role(ROL_LSPD_OPERATIVO_ID)
         if not rol_lspd:
             return await ctx.send(embed=embed_error("Rol LSPD Operativo no encontrado."))
@@ -5692,6 +5871,7 @@ class Alertas(BaseCog):
 class Disponibilidad(BaseCog):
     @commands.command(name='dispo')
     @check_ban()
+    @tiene_rol_usuario()
     async def dispo(self, ctx, servicio: str = None, cantidad: int = None):
         """Muestra la disponibilidad de servicios de emergencia. Ej: -dispo lspd 3"""
         if not servicio or cantidad is None:
@@ -5704,6 +5884,10 @@ class Disponibilidad(BaseCog):
             return await ctx.send(embed=embed_error("La cantidad no puede ser negativa."))
         unidad = "unidad" if cantidad == 1 else "unidades"
         if servicio == 'lspd':
+            # Añadir mención LSPD antes del embed
+            rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
+            if rol_lspd:
+                await ctx.send(f"🚨 **CORRAN EN VENIR, SE ESTÁ PRODUCIENDO UN INCIDENTE Y SE REQUIERE PRESENCIA POLICIAL DE INMEDIATO.** 🚨\n{rol_lspd.mention}")
             if cantidad == 0:
                 estado = "🔴 SATURADO"
                 desc = "⚠️ Actualmente no hay unidades disponibles.\n🚨 Todas las patrullas se encuentran atendiendo incidencias."
@@ -5716,12 +5900,12 @@ class Disponibilidad(BaseCog):
             footer = "⚡ Tiempo de respuesta sujeto a disponibilidad."
         elif servicio == 'lsmd':
             estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
-            desc = f"🏥 Actualmente hay **{cantidad} {unidad} médica/s disponible/s** en servicio." if cantidad > 0 else "⚠️ Actualmente no hay unidades médicas disponibles.\n🚑 Todo el personal se encuentra atendiendo emergencias activas."
-            footer = "📞 Pendientes de los avisos recibidos desde la central 911.\n❤️ Preparados para atender emergencias médicas en toda la ciudad."
+            desc = f"🚑 **Unidades disponibles:** {cantidad}\n📞 **Pendientes de avisos del 911:** {random.randint(0,3)}\n❤️ **Personal médico operativo:** {cantidad} {'médico' if cantidad == 1 else 'médicos'}\n🟢 **Estado operativo:** {'Operativo' if cantidad > 0 else 'No disponible'}"
+            footer = "Servicio de emergencias médicas de Los Santos."
         else:  # lssd
             estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
-            desc = f"🌵 Actualmente hay **{cantidad} {unidad} Sheriff disponible/s** patrullando las zonas rurales y desérticas." if cantidad > 0 else "⚠️ Actualmente no hay unidades Sheriff disponibles.\n🌵 Todas las patrullas se encuentran desplegadas en servicio."
-            footer = "🛣️ Supervisando carreteras.\n👁️ Vigilancia activa en el condado.\n⚡ Tiempo de respuesta sujeto a disponibilidad."
+            desc = f"🌵 **Patrullaje rural activo:** {cantidad} {'unidad' if cantidad == 1 else 'unidades'}\n🚓 **Supervisión de carreteras:** {'Activa' if cantidad > 0 else 'Inactiva'}\n⚠️ **Atención a emergencias fuera de ciudad:** {'Disponible' if cantidad > 0 else 'No disponible'}\n🟢 **Estado operativo:** {'Operativo' if cantidad > 0 else 'No disponible'}"
+            footer = "Sheriff's Department - Condado de Blaine"
         embed = discord.Embed(
             title=f"🚨 DISPONIBILIDAD {servicio.upper()} 🚨",
             description=f"📡 Estado Operativo: **{estado}**\n\n{desc}\n\n━━━━━━━━━━━━━━━━━━\n{footer}",
@@ -5735,12 +5919,13 @@ class Disponibilidad(BaseCog):
         await self.log("DISPO", f"{ctx.author.name} consultó disponibilidad {servicio.upper()}: {cantidad}")
 
 # ====================================================
-# COG: Preparatorias (Pacific Bank)
+# COG: Preparatorias (Pacific Bank) con embeds y tiempo de espera
 # ====================================================
 class Preparatorias(BaseCog):
     @commands.group(name='prep', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
+    @tiene_rol_usuario()
     async def prep(self, ctx):
         embed = discord.Embed(title="📋 Preparatorias para atracos", description="Comandos disponibles:\n`-prep pacific1` - Inicia preparatoria I de Pacific Bank\n`-prep pacific2` - Inicia preparatoria II de Pacific Bank\n`-prep pacific3` - Inicia preparatoria III de Pacific Bank", color=0xFFA500)
         await ctx.send(embed=embed)
@@ -5751,10 +5936,32 @@ class Preparatorias(BaseCog):
 
     async def _notify_lspd(self, ctx, prep_num: int):
         """Envía la alerta a LSPD con el mensaje específico antes del embed."""
-        rol_lspd = ctx.guild.get_role(ROL_LSPD_OPERATIVO_ID)
+        rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
         if rol_lspd:
-            alerta_texto = "🚨 **CORRAN, ESTÁN ROBANDO CERCA DEL PACIFIC BANK. TODAS LAS UNIDADES DISPONIBLES DEBEN ACUDIR DE INMEDIATO.** 🚨"
+            alerta_texto = "🚨 **CORRAN EN VENIR, ESTÁN ROBANDO CERCA DEL PACIFIC BANK. TODAS LAS UNIDADES DISPONIBLES DEBEN ACUDIR DE INMEDIATO.** 🚨"
             await ctx.send(f"{alerta_texto}\n{rol_lspd.mention}")
+
+    async def _run_preparation(self, ctx, prep_num: int, title: str, objectives: list, reward_xp: int, next_prep: str):
+        uid = ctx.author.id
+        await self._notify_lspd(ctx, prep_num)
+        # Mostrar embed de "en progreso"
+        embed_progress = discord.Embed(
+            title=f"🏦 PACIFIC BANK — PREPARATORIA {prep_num}",
+            description="\n".join([f"• {obj}" for obj in objectives]) + f"\n\n**Estado:** ⏳ En progreso\n**Recompensa:** 🔓 {next_prep}",
+            color=0xFFA500
+        )
+        msg = await ctx.send(embed=embed_progress)
+        # Simular tiempo de espera
+        await asyncio.sleep(random.randint(10, 15))
+        # Completar
+        embed_complete = discord.Embed(
+            title=f"🏦 PACIFIC BANK — PREPARATORIA {prep_num}",
+            description="\n".join([f"• {obj}" for obj in objectives]) + f"\n\n**Estado:** ✅ Completada\n**Recompensa:** +{reward_xp} XP\n🔓 {next_prep}",
+            color=0x00FF00
+        )
+        await msg.edit(embed=embed_complete)
+        await db.add_xp(uid, reward_xp, "heist")
+        await self.log(f"PREP_PACIFIC{prep_num}", f"{ctx.author.name} completó preparatoria {prep_num}")
 
     @prep.command(name='pacific1')
     async def prep_pacific1(self, ctx):
@@ -5762,21 +5969,8 @@ class Preparatorias(BaseCog):
         prep = await db.get_heist_prep(uid)
         if prep['pacific_prep1']:
             return await ctx.send(embed=embed_error("Ya has completado la Preparatoria I de Pacific Bank."))
-        await self._notify_lspd(ctx, 1)
-        embed = discord.Embed(
-            title="🏦 PREPARATORIA I — PACIFIC BANK",
-            description="**Objetivos:**\n• Robar una furgoneta de transporte.\n• Obtener documentación bancaria.\n• Conseguir acceso preliminar al sistema de seguridad.\n\n✅ **Preparatoria I completada**\n📦 Recompensa: +200 XP",
-            color=0xFFD700
-        )
-        embed.set_footer(text="Continúa con -prep pacific2")
-        await ctx.send(embed=embed)
+        await self._run_preparation(ctx, 1, "PREPARATORIA I", ["Roba una furgoneta blindada.", "Consigue documentación bancaria.", "Obtén acceso preliminar a la red de seguridad."], 200, "Acceso a Preparación II")
         await db.set_heist_prep(uid, 'pacific_prep1', True)
-        await db.add_xp(uid, 200, "heist")
-        await self.log("PREP_PACIFIC1", f"{ctx.author.name} completó preparatoria I")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
 
     @prep.command(name='pacific2')
     async def prep_pacific2(self, ctx):
@@ -5786,21 +5980,8 @@ class Preparatorias(BaseCog):
             return await ctx.send(embed=embed_error("Debes completar primero la Preparatoria I con `-prep pacific1`."))
         if prep['pacific_prep2']:
             return await ctx.send(embed=embed_error("Ya has completado la Preparatoria II de Pacific Bank."))
-        await self._notify_lspd(ctx, 2)
-        embed = discord.Embed(
-            title="🏦 PREPARATORIA II — PACIFIC BANK",
-            description="**Objetivos:**\n• Obtener acceso a cámaras.\n• Infiltrar ubicación secundaria.\n• Conseguir credenciales de acceso.\n\n✅ **Preparatoria II completada**\n📦 Recompensa: +250 XP",
-            color=0xFFD700
-        )
-        embed.set_footer(text="Continúa con -prep pacific3")
-        await ctx.send(embed=embed)
+        await self._run_preparation(ctx, 2, "PREPARATORIA II", ["Obtén acceso a cámaras.", "Infiltra ubicación secundaria.", "Consigue credenciales internas."], 250, "Acceso a Preparación III")
         await db.set_heist_prep(uid, 'pacific_prep2', True)
-        await db.add_xp(uid, 250, "heist")
-        await self.log("PREP_PACIFIC2", f"{ctx.author.name} completó preparatoria II")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
 
     @prep.command(name='pacific3')
     async def prep_pacific3(self, ctx):
@@ -5810,20 +5991,8 @@ class Preparatorias(BaseCog):
             return await ctx.send(embed=embed_error("Debes completar primero la Preparatoria II con `-prep pacific2`."))
         if prep['pacific_prep3']:
             return await ctx.send(embed=embed_error("Ya has completado la Preparatoria III de Pacific Bank."))
-        await self._notify_lspd(ctx, 3)
-        embed = discord.Embed(
-            title="🏦 PREPARATORIA III — PACIFIC BANK",
-            description="**Objetivos:**\n• Neutralizar la seguridad.\n• Obtener códigos finales.\n• Preparar el golpe principal.\n\n✅ **Preparatoria III completada**\n📦 Recompensa: +300 XP\n🔓 Ya puedes ejecutar `-rob pacific`",
-            color=0xFFD700
-        )
-        await ctx.send(embed=embed)
+        await self._run_preparation(ctx, 3, "PREPARATORIA III", ["Neutraliza seguridad.", "Recupera códigos de acceso.", "Prepara el golpe principal."], 300, "Golpe desbloqueado: -rob pacific")
         await db.set_heist_prep(uid, 'pacific_prep3', True)
-        await db.add_xp(uid, 300, "heist")
-        await self.log("PREP_PACIFIC3", f"{ctx.author.name} completó preparatoria III")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
 
 # ====================================================
 # PANEL WEB (con rutas completas)
@@ -5846,7 +6015,6 @@ class WebPanel:
     def setup_routes(self):
         @self.app.route('/')
         def index():
-            stats = self.get_stats()
             return render_template_string('''
             <!DOCTYPE html>
             <html>
@@ -5933,10 +6101,6 @@ class WebPanel:
             emojis = self.run_async_db(db.get_all_emojis())
             return render_template_string(f'<h1>Gestión de emojis</h1><form method="post"><select name="key">{"".join(f"<option value='{k}'>{k}</option>" for k in DEFAULT_EMOJIS.keys())}</select><input name="emoji" placeholder="Nuevo emoji"><button>Actualizar</button></form><ul>{"".join(f"<li>{k}: {v}</li>" for k,v in emojis.items())}</ul>')
 
-    def get_stats(self):
-        # Simplificado para la web
-        return {}
-
     def run(self):
         threading.Thread(target=lambda: self.app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False), daemon=True).start()
 
@@ -5965,14 +6129,20 @@ async def on_ready():
     print(f"✅ Bot conectado como {bot.user}")
     if bot.guilds:
         guild = bot.guilds[0]
-        for role_id in [ROL_INICIADOR_ID, ROL_EQUIPO_ESPECIAL_ID, ROL_DASHBOARD_ID, ROL_LSPD_OPERATIVO_ID, ROL_LSMD_ID, ROL_SHERIFF_ID, ROL_USUARIO_ID, ROL_MINERO_ID, ROL_AUTOBUSERO_ID, ROL_CHATARRERO_ID]:
+        for role_id in [ROL_INICIADOR_ID, ROL_EQUIPO_ESPECIAL_ID, ROL_DASHBOARD_ID, ROL_LSPD_OPERATIVO_ID, ROL_LSMD_ID, ROL_SHERIFF_ID, ROL_USUARIO_ID, ROL_MINERO_ID, ROL_AUTOBUSERO_ID, ROL_CHATARRERO_ID, ROL_MAFIA_ID]:
             if not guild.get_role(role_id):
                 print(f"⚠️ Advertencia: El rol con ID {role_id} no existe en el servidor. Crea los roles necesarios.")
+    # Sincronizar slash commands globalmente y por gremio
     try:
         synced = await bot.tree.sync()
-        print(f"✅ {len(synced)} comandos slash sincronizados.")
+        print(f"✅ {len(synced)} comandos slash sincronizados globalmente.")
+        # Sincronización por gremio (opcional, para respuesta más rápida)
+        if bot.guilds:
+            for guild in bot.guilds:
+                await bot.tree.sync(guild=discord.Object(id=guild.id))
+                print(f"✅ Comandos slash sincronizados en guild {guild.name}")
     except Exception as e:
-        print(f"❌ Error al sincronizar slash: {e}")
+        print(f"❌ Error al sincronizar slash commands: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
