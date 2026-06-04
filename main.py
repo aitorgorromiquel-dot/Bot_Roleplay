@@ -1,16 +1,7 @@
 # ====================================================
-# NOVA AGORA BOT — VERSIÓN DEFINITIVA CORREGIDA
+# NOVA AGORA BOT — VERSIÓN DEFINITIVA CON PERMISOS CORREGIDOS
+# TODOS LOS COMANDOS PÚBLICOS ACCESIBLES PARA ROL USUARIO (1450592204849418294)
 # ====================================================
-# - Todos los sistemas operativos: economía, trabajos, drogas, atracos, policía, sheriff, médico, redes, niveles, casino, tienda, inventario, web.
-# - Permisos: Rol Usuario (1450592204849418294) puede usar todos los comandos públicos.
-# - Rol Mafia (1479210255564013588) exclusivo para -blanquear.
-# - LSPD, LSMD, Sheriff con alertas y disponibilidad mejoradas.
-# - Preparatorias Pacific Bank en orden con embeds y tiempo de espera.
-# - Slash commands sincronizados.
-# - Web panel funcional.
-# - Sin errores críticos, sin duplicidades.
-# ====================================================
-
 import os
 import random
 import asyncio
@@ -18,7 +9,7 @@ import json
 import threading
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -29,9 +20,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ====================================================
-# CONFIGURACIÓN GLOBAL
-# ====================================================
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     raise ValueError("No se ha configurado DISCORD_TOKEN. Crea un archivo .env con DISCORD_TOKEN=tu_token")
@@ -291,7 +279,7 @@ async def get_emoji(key: str) -> str:
     return DEFAULT_EMOJIS.get(key, "⚙️")
 
 # ====================================================
-# BASE DE DATOS (versión optimizada)
+# BASE DE DATOS (versión completa)
 # ====================================================
 class Database:
     def __init__(self, db_path="nova.db"):
@@ -720,11 +708,9 @@ class Database:
             await self.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
             row = await self.fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,))
         # Obtener columnas dinámicamente
-        cur = await self.fetchone("PRAGMA table_info(users)")
-        # Hack para obtener columnas: mejor usar otro método
         async with aiosqlite.connect(self.db_path) as db:
-            cur2 = await db.execute("PRAGMA table_info(users)")
-            columns = [desc[1] for desc in await cur2.fetchall()]
+            cur = await db.execute("PRAGMA table_info(users)")
+            columns = [desc[1] for desc in await cur.fetchall()]
         return {col: row[i] for i, col in enumerate(columns)} if row else {}
 
     async def update_user_state(self, user_id: int, **kwargs):
@@ -974,11 +960,8 @@ class Database:
         return PRECIOS_DROGAS_BASE[droga]["compra"] if es_compra else PRECIOS_DROGAS_BASE[droga]["venta"]
 
     async def actualizar_precio_droga(self, droga: str, cantidad_vendida: int):
-        """Simula fluctuación de precios según oferta/demanda (sin romper funcionalidad)."""
-        # Obtener precios actuales
         compra_actual = await self.get_precio_droga(droga, True)
         venta_actual = await self.get_precio_droga(droga, False)
-        # Ajuste dinámico: si se vende mucho, sube precio; si poco, baja ligeramente
         if cantidad_vendida >= 5:
             compra_nuevo = int(compra_actual * 1.05)
             venta_nuevo = int(venta_actual * 1.07)
@@ -988,7 +971,6 @@ class Database:
         else:
             compra_nuevo = max(1, int(compra_actual * 0.99))
             venta_nuevo = max(1, int(venta_actual * 0.98))
-        # Limitar a rangos razonables
         compra_base = PRECIOS_DROGAS_BASE[droga]["compra"]
         venta_base = PRECIOS_DROGAS_BASE[droga]["venta"]
         compra_nuevo = max(compra_base // 2, min(compra_base * 3, compra_nuevo))
@@ -1264,14 +1246,15 @@ def tiene_rol_lspd_operativo():
     return tiene_rol_o_owner(ROL_LSPD_OPERATIVO_ID)
 
 def tiene_rol_usuario():
-    """Permite el acceso a cualquier usuario que tenga el rol Usuario o sea owner."""
+    """Permite el acceso solo a usuarios con el rol Usuario (o owners). Si el rol no existe, permite a todos."""
     async def predicate(ctx):
         if ctx.author.id in OWNER_IDS:
             return True
         role = ctx.guild.get_role(ROL_USUARIO_ID)
-        if role and role in ctx.author.roles:
-            return True
-        # Si no existe el rol, permitir a todos (fallback seguro)
+        if role:
+            # Si el rol existe, el usuario DEBE tenerlo
+            return role in ctx.author.roles
+        # Si el rol no existe (fallback), permitir a todos
         return True
     return commands.check(predicate)
 
@@ -1642,7 +1625,6 @@ class Principal(BaseCog):
     async def use_item(self, ctx, *, item: str):
         uid = ctx.author.id
         if item.lower() in ('dinero negro', 'dinero_negro', 'blackmoney'):
-            # Blanqueo estándar (cualquier usuario puede usar dinero negro, pero el comando -blanquear está restringido a Mafia)
             eco = await db.get_economy(uid)
             if eco['black_money'] <= 0:
                 return await ctx.send(embed=embed_error("No tienes dinero negro."))
@@ -6132,11 +6114,9 @@ async def on_ready():
         for role_id in [ROL_INICIADOR_ID, ROL_EQUIPO_ESPECIAL_ID, ROL_DASHBOARD_ID, ROL_LSPD_OPERATIVO_ID, ROL_LSMD_ID, ROL_SHERIFF_ID, ROL_USUARIO_ID, ROL_MINERO_ID, ROL_AUTOBUSERO_ID, ROL_CHATARRERO_ID, ROL_MAFIA_ID]:
             if not guild.get_role(role_id):
                 print(f"⚠️ Advertencia: El rol con ID {role_id} no existe en el servidor. Crea los roles necesarios.")
-    # Sincronizar slash commands globalmente y por gremio
     try:
         synced = await bot.tree.sync()
         print(f"✅ {len(synced)} comandos slash sincronizados globalmente.")
-        # Sincronización por gremio (opcional, para respuesta más rápida)
         if bot.guilds:
             for guild in bot.guilds:
                 await bot.tree.sync(guild=discord.Object(id=guild.id))
