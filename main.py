@@ -1,7 +1,8 @@
 # ====================================================
-# NOVA AGORA BOT — VERSIÓN FINAL CON SISTEMA DE GRAMOS
-# COMANDOS: -droga (solo MAFIA ADMIN), -inv ilegal, -blanquear (MAFIA)
-# PRECIO INFINITY EN -create-item y -editar-item
+# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA CORREGIDA
+# CON SISTEMA DE DROGAS, GRAMOS, BLANQUEO, INFINITY
+# TODOS LOS COGS, FUNCIONES Y COMANDOS
+# ROL CIUDADANO: 1450592204849418294
 # ====================================================
 
 import os
@@ -634,7 +635,6 @@ class Database:
             # Migración de datos antiguos de heist_prep a la nueva tabla (si existe)
             await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='heist_prep'")
             if await db.fetchone():
-                # Migrar datos de Pacific Bank
                 rows = await db.fetchall("SELECT user_id, pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep")
                 for uid, p1, p2, p3 in rows:
                     if p1:
@@ -646,7 +646,6 @@ class Database:
                     if p3:
                         await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
                                            (uid, "pacific", 3, True))
-                # Eliminar tabla antigua
                 await db.execute("DROP TABLE heist_prep")
                 print("✅ Datos migrados de heist_prep a heist_preparations")
 
@@ -1427,7 +1426,6 @@ class Principal(BaseCog):
         if t not in ['personal', 'vehiculo', 'propiedad', 'negocios', 'ilegal']:
             return await ctx.send(embed=embed_error("Tipos: personal, vehiculo, propiedad, negocios, ilegal"))
         if t == 'ilegal':
-            # Mostrar gramos de droga
             grams = await db.get_drug_grams(uid)
             if not grams:
                 return await ctx.send(embed=embed_info("💊 Inventario Ilegal", "No tienes gramos de droga acumulados."))
@@ -1746,7 +1744,6 @@ class Principal(BaseCog):
         except:
             pass
 
-    # Comando -blanquear modificado
     @commands.command(name='blanquear', aliases=['lavar'])
     @check_ban()
     @tiene_rol_mafia()
@@ -1761,12 +1758,10 @@ class Principal(BaseCog):
         if gramos <= 0:
             return await ctx.send(embed=embed_error("La cantidad de gramos debe ser positiva."))
         uid = ctx.author.id
-        # Obtener gramos totales del usuario (suma de todas las drogas)
         drug_grams = await db.get_drug_grams(uid)
         total_grams = sum(drug_grams.values())
         if total_grams < gramos:
             return await ctx.send(embed=embed_error(f"No tienes suficientes gramos. Disponibles: {total_grams} gramos."))
-        # Eliminar gramos proporcionalmente? Lo simplificamos: quitamos primero de la droga con más gramos
         remaining = gramos
         for drug, g in sorted(drug_grams.items(), key=lambda x: -x[1]):
             if remaining <= 0:
@@ -1774,13 +1769,12 @@ class Principal(BaseCog):
             take = min(g, remaining)
             await db.remove_drug_grams(uid, drug, take)
             remaining -= take
-        # Conversión
         if tipo == 'limpio':
-            ganancia = gramos * 100  # 1 gramo = $100
+            ganancia = gramos * 100
             await db.add_cash(uid, ganancia)
             mensaje = f"Has convertido {gramos} gramos en **${ganancia:,}** de dinero limpio."
-        else:  # negro
-            ganancia = gramos * 50   # 1 gramo = $50
+        else:
+            ganancia = gramos * 50
             await db.add_black(uid, ganancia)
             mensaje = f"Has convertido {gramos} gramos en **${ganancia:,}** de dinero negro."
         embed = discord.Embed(title="💱 BLANQUEO DE GRAMOS", description=mensaje, color=0x00FF00)
@@ -2056,20 +2050,17 @@ class TransferirGramosModal(discord.ui.Modal, title="Transferir gramos"):
         except ValueError:
             await interaction.response.send_message("Cantidad inválida.", ephemeral=True)
             return
-        # Verificar si tiene suficientes gramos
         drug_grams = await db.get_drug_grams(uid)
         if drug_grams.get(self.drug_type, 0) < grams:
             await interaction.response.send_message(f"No tienes suficientes gramos de {self.drug_type}.", ephemeral=True)
             return
-        # Realizar transferencia
         await db.remove_drug_grams(uid, self.drug_type, grams)
         await db.add_drug_grams(target.id, self.drug_type, grams)
         await interaction.response.send_message(f"✅ Has transferido {grams} gramos de **{self.drug_type}** a {target.mention}.", ephemeral=True)
         await db.log_antiraid_action(uid, f"transferir_gramos_{self.drug_type}", interaction.guild.id)
 
-# ==================== COG: Drogas (modificado) ====================
+# ==================== COG: Drogas ====================
 class Drogas(BaseCog):
-    # Contador por usuario para evitar rachas de 0
     ventas_sin_fallo = {}
 
     @commands.group(name='droga', invoke_without_command=True)
@@ -2122,7 +2113,7 @@ class Drogas(BaseCog):
     @droga.command(name='vender')
     @check_ban()
     @check_encarcelado()
-    @tiene_rol_mafia_admin()  # Solo MAFIA ADMIN puede vender
+    @tiene_rol_mafia_admin()
     async def drg_sell(self, ctx, tipo: str, cantidad: int = 1):
         uid = ctx.author.id
         tipo_norm = tipo.capitalize()
@@ -2133,7 +2124,6 @@ class Drogas(BaseCog):
         if inv.get(tipo_norm, 0) < cantidad:
             return await ctx.send(embed=embed_error(f"No tienes {cantidad}x {tipo_norm}."))
 
-        # Lógica de cantidad aleatoria 0-7 con balanceo
         contador = self.ventas_sin_fallo.get(uid, 0)
         forzar_fallo = (contador >= 5 and random.randint(0, 1) == 0) or contador >= 6
 
@@ -2153,9 +2143,7 @@ class Drogas(BaseCog):
             self.ventas_sin_fallo[uid] = contador + 1
 
         if unidades_vendidas > 0:
-            # Venta exitosa: en lugar de dar dinero, acumula gramos
             await db.remove_item(uid, "personal", tipo_norm, unidades_vendidas)
-            # Añadir gramos a la tabla drug_grams
             await db.add_drug_grams(uid, tipo_norm, unidades_vendidas)
             await db.actualizar_precio_droga(tipo_norm, unidades_vendidas)
             embed = discord.Embed(
@@ -2166,7 +2154,6 @@ class Drogas(BaseCog):
             await ctx.send(embed=embed)
             await self.log("VENTA_DROGA_GRAMOS", f"{ctx.author.name}: {unidades_vendidas}x {tipo_norm} -> +{unidades_vendidas}g")
         else:
-            # Resultado 0: alerta policial
             rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
             if rol_lspd:
                 await ctx.send(rol_lspd.mention)
@@ -2444,24 +2431,31 @@ class Mercado(BaseCog):
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
-    async def mercado_publicar(self, ctx, item: str, precio: int, *, descripcion: str):
+    async def mercado_publicar(self, ctx, item: str, precio, *, descripcion: str):
         uid = ctx.author.id
         inv = await db.get_inventory(uid, "personal")
         item_real = next((k for k in inv if k.lower() == item.lower()), None)
         if not item_real:
             return await ctx.send(embed=embed_error("No tienes ese item."))
-        if precio <= 0 and not es_precio_infinito(precio):
-            return await ctx.send(embed=embed_error("Precio debe ser mayor a 0."))
+        if isinstance(precio, str) and precio.upper() == "INFINITY":
+            precio_int = PRECIO_INFINITO
+        else:
+            try:
+                precio_int = int(precio)
+                if precio_int <= 0:
+                    raise ValueError
+            except ValueError:
+                return await ctx.send(embed=embed_error("Precio debe ser número positivo o INFINITY."))
         pub_id = ''.join(random.choices('0123456789ABCDEF', k=6))
         await db.remove_item(uid, "personal", item_real, 1)
-        await db.add_mercado(pub_id, uid, item_real, descripcion, precio)
+        await db.add_mercado(pub_id, uid, item_real, descripcion, precio_int)
         embed = discord.Embed(
             title="✅ Publicación creada",
-            description=f"Item: {item_real}\nPrecio: {formatear_precio(precio)}\nID: {pub_id}",
+            description=f"Item: {item_real}\nPrecio: {formatear_precio(precio_int)}\nID: {pub_id}",
             color=0x00FF00
         )
         await ctx.send(embed=embed)
-        await self.log("MERCADO_PUBLICAR", f"{ctx.author.name}: {item_real} por {precio}")
+        await self.log("MERCADO_PUBLICAR", f"{ctx.author.name}: {item_real} por {precio_int}")
         try:
             await ctx.message.delete()
         except:
@@ -4489,7 +4483,6 @@ class Admin(BaseCog):
         nombre = nombre.strip()
         if not nombre:
             return await ctx.send(embed=embed_error("Debes especificar un nombre para el item."))
-        # Permitir precio "INFINITY"
         if isinstance(precio, str) and precio.upper() == "INFINITY":
             precio = PRECIO_INFINITO
         else:
@@ -4514,7 +4507,7 @@ class Admin(BaseCog):
         TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         embed = discord.Embed(title=f"{await get_emoji('shop')} Item creado", description=f"**{nombre}** agregado a la tienda con precio {formatear_precio(precio)} {emoji}\nDescripción: {descripcion if descripcion else 'Sin descripción'}", color=0x00FF00)
         await ctx.send(embed=embed)
-        await self.log("CREATE_ITEM", f"{ctx.author.name} creó item '{nombre}' (${precio})")
+        await self.log("CREATE_ITEM", f"{ctx.author.name} creó item '{nombre}' ({formatear_precio(precio)})")
         try:
             await ctx.message.delete()
         except:
@@ -5037,9 +5030,10 @@ class Soporte(BaseCog):
             await ctx.message.delete()
         except:
             pass
-        await self.log("CIERRE_ROL", f"{ctx.author.name} cerró el rol)
+        # Corrección de la línea problemática: usamos ctx.author.display_name con fallback
+        await self.log("CIERRE_ROL", f"{ctx.author.display_name if ctx.author else 'Desconocido'} cerró el rol")
 
-# ==================== COG: Ayuda (con nueva categoría Preparatorias) ====================
+# ==================== COG: Ayuda ====================
 class Ayuda(BaseCog):
     CATEGORIAS = {
         "roleplay": {"emoji": "🚔", "nombre": "Roleplay", "comandos": [("-me <acción>", "Acción en primera persona"), ("-do <pensamiento>", "Pensamiento en voz alta"), ("-entorno <descripción> [| lugar]", "Describe el entorno y alerta a LSPD"), ("-reparar @user [desc]", "Repara un vehículo (mecánico)"), ("-curar @user [desc]", "Cura a un paciente (médico)")]},
