@@ -43,6 +43,7 @@ OWNER_IDS = [1059183337832468510, 729054497233436775]  # Cámbialos
 
 ROL_INICIADOR_ID = 1450592126491558131
 ROL_EQUIPO_ESPECIAL_ID = 1450592064365658134
+ROL_ADMIN_ID = 1450592064365658134  # Mismo que equipo especial o cambia por tu ID de admin
 ROL_DASHBOARD_ID = 1450592204849418294
 ROL_LSPD_OPERATIVO_ID = 1450592202165321759
 ROL_LSMD_ID = 1450592186600128567
@@ -4165,7 +4166,7 @@ class Admin(BaseCog):
         embed.add_field(name="📢 ANUNCIO ADMINISTRATIVO", value=f"{mensaje}", inline=False)
         embed.add_field(name="​", value="━━━━━━━━━━━━━━━━━━━━\n📣 Sistema oficial de comunicaciones\n⚡ Mantente atento a próximas novedades", inline=False)
         embed.set_footer(text=f"Nova Agora RP • Administración Oficial")
-        await interaction.response.send_message("@everyone", embed=embed)
+        await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
     @commands.command(name='kick')
     @tiene_rol_equipo_especial()
