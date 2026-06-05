@@ -6083,6 +6083,27 @@ class OwnerMenu(BaseCog):
         except Exception as e:
             await interaction.followup.send(embed=embed_error(f"Error al sincronizar: {str(e)[:200]}"), ephemeral=True)
 
+    @commands.command(name='sync')
+    @is_owner()
+    async def sync(self, ctx):
+        """Fuerza sincronización de slash commands en este servidor (instantáneo)"""
+        msg = await ctx.send("⏳ Sincronizando slash commands...")
+        try:
+            # Sync guild first (instantáneo)
+            guild_synced = await self.bot.tree.sync(guild=discord.Object(id=ctx.guild.id))
+            # Sync global también
+            global_synced = await self.bot.tree.sync()
+            total_guild = len(guild_synced)
+            total_global = len(global_synced)
+            embed = discord.Embed(
+                title="✅ Slash commands sincronizados",
+                description=f"**{total_guild}** en servidor | **{total_global}** globales.\nEscribe `/anuncios` para usarlo.",
+                color=0x00FF00
+            )
+            await msg.edit(content=None, embed=embed)
+        except Exception as e:
+            await msg.edit(content=None, embed=embed_error(f"Error: {str(e)[:200]}"))
+
     @commands.group(name='owner', invoke_without_command=True)
     @is_owner()
     async def owner(self, ctx):
@@ -6469,11 +6490,11 @@ async def on_ready():
             if role_id != 0 and not guild.get_role(role_id):
                 print(f"⚠️ Advertencia: El rol con ID {role_id} no existe. Crea los roles necesarios.")
     try:
-        await bot.tree.sync()
-        print("✅ Slash commands globales sincronizados.")
         for guild in bot.guilds:
             await bot.tree.sync(guild=discord.Object(id=guild.id))
             print(f"✅ Slash commands sincronizados en {guild.name}")
+        await bot.tree.sync()
+        print("✅ Slash commands globales sincronizados.")
     except Exception as e:
         print(f"❌ Error al sincronizar slash commands: {e}")
 
