@@ -3,6 +3,7 @@
 # CON SISTEMA DE DROGAS, GRAMOS, BLANQUEO, INFINITY
 # TODOS LOS COGS, FUNCIONES Y COMANDOS
 # ROL CIUDADANO: 1450592204849418294
+# CORREGIDO ERROR DE fetchone EN LA CLASE Database
 # ====================================================
 
 import os
@@ -632,11 +633,11 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_timestamp ON antiraid_actions(timestamp)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_drug_grams_user ON drug_grams(user_id)")
 
-            # Migración de datos antiguos de heist_prep a la nueva tabla (si existe)
-            await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='heist_prep'")
-            if await db.fetchone():
-                rows = await db.fetchall("SELECT user_id, pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep")
-                for uid, p1, p2, p3 in rows:
+            # 🔁 Migración de datos antiguos de heist_prep a la nueva tabla (CORREGIDO)
+            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='heist_prep'")
+            if await cursor.fetchone():
+                rows = await db.execute("SELECT user_id, pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep")
+                async for uid, p1, p2, p3 in rows:
                     if p1:
                         await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
                                            (uid, "pacific", 1, True))
@@ -1311,7 +1312,6 @@ def tiene_rol_minero(): return tiene_rol_o_owner(ROL_MINERO_ID)
 def tiene_rol_autobusero(): return tiene_rol_o_owner(ROL_AUTOBUSERO_ID)
 def tiene_rol_chatarrero(): return tiene_rol_o_owner(ROL_CHATARRERO_ID)
 
-# ✅ DECORADOR PARA ROL CIUDADANO (nueva ID)
 def tiene_rol_usuario():
     async def predicate(ctx):
         if ctx.author.id in OWNER_IDS:
@@ -1319,12 +1319,10 @@ def tiene_rol_usuario():
         role = ctx.guild.get_role(ROL_USUARIO_ID)
         if role:
             return role in ctx.author.roles
-        # Fallback: si el rol no existe, permitir a todos
         return True
     return commands.check(predicate)
 
 def es_owner_o_mafia():
-    """Permite owners y miembros de la mafia (para saltar preparatorias)"""
     async def predicate(ctx):
         if ctx.author.id in OWNER_IDS:
             return True
@@ -5030,7 +5028,6 @@ class Soporte(BaseCog):
             await ctx.message.delete()
         except:
             pass
-        # Corrección de la línea problemática: usamos ctx.author.display_name con fallback
         await self.log("CIERRE_ROL", f"{ctx.author.display_name if ctx.author else 'Desconocido'} cerró el rol")
 
 # ==================== COG: Ayuda ====================
