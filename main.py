@@ -1,9 +1,8 @@
 # ====================================================
-# NOVA AGORA BOT — VERSIÓN FINAL DEFINITIVA
+# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA
+# CON SISTEMA DE DROGAS REAJUSTADO Y EDICIÓN DE ITEMS
+# TODOS LOS COGS, FUNCIONES Y COMANDOS
 # ROL CIUDADANO: 1450592204849418294
-# TODOS LOS COMANDOS PÚBLICOS ACCESIBLES
-# SISTEMA DNI COMPLETO CON NOMBRES IC
-# OPTIMIZADO Y SIN ERRORES
 # ====================================================
 
 import os
@@ -224,90 +223,308 @@ class Database:
 
     async def init(self):
         async with aiosqlite.connect(self.db_path) as db:
-            # Tabla bot_config
+            # Bot config
             await db.execute("CREATE TABLE IF NOT EXISTS bot_config (key TEXT PRIMARY KEY, value TEXT)")
             expiry = (datetime.now() + timedelta(days=30)).isoformat()
             await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('expiry', ?)", (expiry,))
             # Usuarios
-            await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, banned BOOLEAN DEFAULT 0, ban_reason TEXT, banned_by INTEGER, ban_date TEXT, phone_number TEXT, airplane_mode BOOLEAN DEFAULT 0, wifi_connected BOOLEAN DEFAULT 1, ig_public BOOLEAN DEFAULT 1, ig_bio TEXT DEFAULT '', placa TEXT, rango TEXT, encarcelado_hasta TEXT, dni_nombre TEXT, dni_apellidos TEXT, dni_edad INTEGER, dni_genero TEXT, dni_nacionalidad TEXT, dni_color_ojos TEXT, dni_altura TEXT, dni_profesion TEXT, dni_numero TEXT, dni_fecha_creacion TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    banned BOOLEAN DEFAULT 0,
+                    ban_reason TEXT,
+                    banned_by INTEGER,
+                    ban_date TEXT,
+                    phone_number TEXT,
+                    airplane_mode BOOLEAN DEFAULT 0,
+                    wifi_connected BOOLEAN DEFAULT 1,
+                    ig_public BOOLEAN DEFAULT 1,
+                    ig_bio TEXT DEFAULT '',
+                    placa TEXT,
+                    rango TEXT,
+                    encarcelado_hasta TEXT,
+                    dni_nombre TEXT,
+                    dni_apellidos TEXT,
+                    dni_edad INTEGER,
+                    dni_genero TEXT,
+                    dni_nacionalidad TEXT,
+                    dni_color_ojos TEXT,
+                    dni_altura TEXT,
+                    dni_profesion TEXT,
+                    dni_numero TEXT,
+                    dni_fecha_creacion TEXT
+                )
+            """)
             # Licencias conducción
-            await db.execute("CREATE TABLE IF NOT EXISTS licencias_conduccion (user_id INTEGER, tipo TEXT, fecha_obtencion TEXT, PRIMARY KEY (user_id, tipo))")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS licencias_conduccion (
+                    user_id INTEGER,
+                    tipo TEXT,
+                    fecha_obtencion TEXT,
+                    PRIMARY KEY (user_id, tipo)
+                )
+            """)
             # Economía
-            await db.execute("CREATE TABLE IF NOT EXISTS economy (user_id INTEGER PRIMARY KEY, cash INTEGER DEFAULT 0, bank INTEGER DEFAULT 0, black_money INTEGER DEFAULT 0)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS economy (
+                    user_id INTEGER PRIMARY KEY,
+                    cash INTEGER DEFAULT 0,
+                    bank INTEGER DEFAULT 0,
+                    black_money INTEGER DEFAULT 0
+                )
+            """)
             # Inventario
-            await db.execute("CREATE TABLE IF NOT EXISTS inventory (user_id INTEGER, inv_type TEXT, item TEXT, quantity INTEGER, PRIMARY KEY (user_id, inv_type, item))")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS inventory (
+                    user_id INTEGER,
+                    inv_type TEXT,
+                    item TEXT,
+                    quantity INTEGER,
+                    PRIMARY KEY (user_id, inv_type, item)
+                )
+            """)
             # Evidencia
-            await db.execute("CREATE TABLE IF NOT EXISTS evidence (id INTEGER PRIMARY KEY AUTOINCREMENT, agente_id INTEGER, target_id INTEGER, item TEXT, quantity INTEGER, fecha TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS evidence (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agente_id INTEGER,
+                    target_id INTEGER,
+                    item TEXT,
+                    quantity INTEGER,
+                    fecha TEXT
+                )
+            """)
             # Armas
-            await db.execute("CREATE TABLE IF NOT EXISTS armas_licencias (user_id INTEGER, licencia TEXT, tiene BOOLEAN, PRIMARY KEY (user_id, licencia))")
-            await db.execute("CREATE TABLE IF NOT EXISTS armas_equipadas (user_id INTEGER, arma TEXT, durabilidad INTEGER, municion INTEGER, PRIMARY KEY (user_id, arma))")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS armas_licencias (user_id INTEGER, licencia TEXT, tiene BOOLEAN, PRIMARY KEY (user_id, licencia))
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS armas_equipadas (user_id INTEGER, arma TEXT, durabilidad INTEGER, municion INTEGER, PRIMARY KEY (user_id, arma))
+            """)
             # Vehículos
-            await db.execute("CREATE TABLE IF NOT EXISTS vehiculos (user_id INTEGER, matricula TEXT, modelo TEXT, seguro BOOLEAN, itv TEXT, combustible INTEGER, PRIMARY KEY (user_id, matricula))")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS vehiculos (
+                    user_id INTEGER, matricula TEXT, modelo TEXT, seguro BOOLEAN, itv TEXT, combustible INTEGER,
+                    PRIMARY KEY (user_id, matricula)
+                )
+            """)
             # Multas y caja
-            await db.execute("CREATE TABLE IF NOT EXISTS multas (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, cantidad INTEGER, motivo TEXT, fecha TEXT, pagada BOOLEAN DEFAULT 0, agente TEXT, placa_agente TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS multas (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER, cantidad INTEGER, motivo TEXT, fecha TEXT,
+                    pagada BOOLEAN DEFAULT 0, agente TEXT, placa_agente TEXT
+                )
+            """)
             await db.execute("CREATE TABLE IF NOT EXISTS caja_municipal (id INTEGER PRIMARY KEY CHECK (id=1), monto INTEGER DEFAULT 0)")
             await db.execute("INSERT OR IGNORE INTO caja_municipal (id, monto) VALUES (1,0)")
-            # Cooldowns
+            # Cooldowns, rachas, estadísticas
             await db.execute("CREATE TABLE IF NOT EXISTS cooldowns (user_id INTEGER, comando TEXT, expires TIMESTAMP, PRIMARY KEY (user_id, comando))")
-            # Rachas
             await db.execute("CREATE TABLE IF NOT EXISTS rachas (user_id INTEGER PRIMARY KEY, racha INTEGER DEFAULT 0, tipo TEXT)")
-            # Estadísticas
             await db.execute("CREATE TABLE IF NOT EXISTS estadisticas (key TEXT PRIMARY KEY, value TEXT)")
             # Mercado
-            await db.execute("CREATE TABLE IF NOT EXISTS mercado (id TEXT PRIMARY KEY, vendedor INTEGER, item TEXT, descripcion TEXT, precio INTEGER, fecha TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS mercado (
+                    id TEXT PRIMARY KEY, vendedor INTEGER, item TEXT, descripcion TEXT, precio INTEGER, fecha TEXT
+                )
+            """)
             # DeepWeb
-            await db.execute("CREATE TABLE IF NOT EXISTS deepweb (id INTEGER PRIMARY KEY AUTOINCREMENT, sender INTEGER, receiver INTEGER, message TEXT, sent_at TEXT, anonymous BOOLEAN DEFAULT 1, decoded_by INTEGER, decoded_at TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS deepweb (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender INTEGER,
+                    receiver INTEGER,
+                    message TEXT,
+                    sent_at TEXT,
+                    anonymous BOOLEAN DEFAULT 1,
+                    decoded_by INTEGER,
+                    decoded_at TEXT
+                )
+            """)
             # Atracos logs
-            await db.execute("CREATE TABLE IF NOT EXISTS atracos_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, heist TEXT, result TEXT, reward INTEGER, black_reward INTEGER, items TEXT, timestamp TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS atracos_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    heist TEXT,
+                    result TEXT,
+                    reward INTEGER,
+                    black_reward INTEGER,
+                    items TEXT,
+                    timestamp TEXT
+                )
+            """)
             # Redes sociales
-            await db.execute("CREATE TABLE IF NOT EXISTS posts_ig (id TEXT PRIMARY KEY, user_id INTEGER, texto TEXT, tiempo TEXT, likes TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS posts_ig (id TEXT PRIMARY KEY, user_id INTEGER, texto TEXT, tiempo TEXT, likes TEXT)
+            """)
             await db.execute("CREATE TABLE IF NOT EXISTS seguidores_ig (follower INTEGER, following INTEGER, PRIMARY KEY (follower, following))")
-            await db.execute("CREATE TABLE IF NOT EXISTS wa_contactos (user_id INTEGER, numero TEXT, nombre TEXT, PRIMARY KEY (user_id, numero))")
-            await db.execute("CREATE TABLE IF NOT EXISTS wa_chats (id INTEGER PRIMARY KEY AUTOINCREMENT, de INTEGER, para INTEGER, mensaje TEXT, tiempo TEXT)")
-            await db.execute("CREATE TABLE IF NOT EXISTS twitter_dms (id INTEGER PRIMARY KEY AUTOINCREMENT, from_user INTEGER, to_user INTEGER, message TEXT, sent_at TEXT)")
-            # Web users
-            await db.execute("CREATE TABLE IF NOT EXISTS web_users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password_hash TEXT, discord_id INTEGER, is_staff BOOLEAN DEFAULT 0, created_at TEXT)")
-            await db.execute("CREATE TABLE IF NOT EXISTS pda_permissions (user_id INTEGER PRIMARY KEY, granted_by INTEGER, granted_at TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS wa_contactos (user_id INTEGER, numero TEXT, nombre TEXT, PRIMARY KEY (user_id, numero))
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS wa_chats (id INTEGER PRIMARY KEY AUTOINCREMENT, de INTEGER, para INTEGER, mensaje TEXT, tiempo TEXT)
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS twitter_dms (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    from_user INTEGER,
+                    to_user INTEGER,
+                    message TEXT,
+                    sent_at TEXT
+                )
+            """)
+            # Web users y PDA
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS web_users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE,
+                    password_hash TEXT,
+                    discord_id INTEGER,
+                    is_staff BOOLEAN DEFAULT 0,
+                    created_at TEXT
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS pda_permissions (
+                    user_id INTEGER PRIMARY KEY,
+                    granted_by INTEGER,
+                    granted_at TEXT
+                )
+            """)
             # Precios drogas
             await db.execute("CREATE TABLE IF NOT EXISTS precios_drogas (droga TEXT PRIMARY KEY, precio_compra INTEGER, precio_venta INTEGER)")
             for droga, datos in PRECIOS_DROGAS_BASE.items():
-                await db.execute("INSERT OR IGNORE INTO precios_drogas (droga, precio_compra, precio_venta) VALUES (?, ?, ?)", (droga, datos["compra"], datos["venta"]))
+                await db.execute("INSERT OR IGNORE INTO precios_drogas (droga, precio_compra, precio_venta) VALUES (?, ?, ?)",
+                                 (droga, datos["compra"], datos["venta"]))
             # Twitter, Facebook
             await db.execute("CREATE TABLE IF NOT EXISTS posts_tw (id TEXT PRIMARY KEY, user_id INTEGER, texto TEXT, tiempo TEXT)")
             await db.execute("CREATE TABLE IF NOT EXISTS seguidores_tw (follower INTEGER, following INTEGER, since TEXT, PRIMARY KEY (follower, following))")
             await db.execute("CREATE TABLE IF NOT EXISTS posts_fb (id TEXT PRIMARY KEY, user_id INTEGER, texto TEXT, tiempo TEXT)")
             # Moderación
-            await db.execute("CREATE TABLE IF NOT EXISTS warnings (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, razon TEXT, fecha TEXT, agente_id INTEGER, agente_nombre TEXT)")
-            await db.execute("CREATE TABLE IF NOT EXISTS mutes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, razon TEXT, fecha_inicio TEXT, fecha_fin TEXT, agente_id INTEGER, agente_nombre TEXT, activo BOOLEAN DEFAULT 1)")
-            await db.execute("CREATE TABLE IF NOT EXISTS tickets (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, channel_id INTEGER, category TEXT, status TEXT DEFAULT 'abierto', created_at TEXT, closed_at TEXT, rating INTEGER, rating_comment TEXT, staff_id INTEGER)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS warnings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    razon TEXT,
+                    fecha TEXT,
+                    agente_id INTEGER,
+                    agente_nombre TEXT
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS mutes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    razon TEXT,
+                    fecha_inicio TEXT,
+                    fecha_fin TEXT,
+                    agente_id INTEGER,
+                    agente_nombre TEXT,
+                    activo BOOLEAN DEFAULT 1
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS tickets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    channel_id INTEGER,
+                    category TEXT,
+                    status TEXT DEFAULT 'abierto',
+                    created_at TEXT,
+                    closed_at TEXT,
+                    rating INTEGER,
+                    rating_comment TEXT,
+                    staff_id INTEGER
+                )
+            """)
             # Niveles
-            await db.execute("CREATE TABLE IF NOT EXISTS niveles (user_id INTEGER PRIMARY KEY, xp INTEGER DEFAULT 0, nivel INTEGER DEFAULT 0, last_message_time TEXT, last_command_time TEXT, last_time_time TEXT, mensajes INTEGER DEFAULT 0, last_message_content TEXT, last_level_up TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS niveles (
+                    user_id INTEGER PRIMARY KEY,
+                    xp INTEGER DEFAULT 0,
+                    nivel INTEGER DEFAULT 0,
+                    last_message_time TEXT,
+                    last_command_time TEXT,
+                    last_time_time TEXT,
+                    mensajes INTEGER DEFAULT 0,
+                    last_message_content TEXT,
+                    last_level_up TEXT
+                )
+            """)
             # Blacklist y antiraid
-            await db.execute("CREATE TABLE IF NOT EXISTS blacklist (user_id INTEGER PRIMARY KEY, reason TEXT, banned_by INTEGER, ban_date TEXT)")
-            await db.execute("CREATE TABLE IF NOT EXISTS antiraid_actions (user_id INTEGER, action_type TEXT, timestamp TIMESTAMP, guild_id INTEGER)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS blacklist (
+                    user_id INTEGER PRIMARY KEY,
+                    reason TEXT,
+                    banned_by INTEGER,
+                    ban_date TEXT
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS antiraid_actions (
+                    user_id INTEGER,
+                    action_type TEXT,
+                    timestamp TIMESTAMP,
+                    guild_id INTEGER
+                )
+            """)
             # Emojis personalizables
-            await db.execute("CREATE TABLE IF NOT EXISTS emoji_settings (key TEXT PRIMARY KEY, emoji TEXT)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS emoji_settings (
+                    key TEXT PRIMARY KEY,
+                    emoji TEXT
+                )
+            """)
             for key, emoji in DEFAULT_EMOJIS.items():
                 await db.execute("INSERT OR IGNORE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
-            # Preparatorias Pacific Bank
-            await db.execute("CREATE TABLE IF NOT EXISTS heist_prep (user_id INTEGER PRIMARY KEY, pacific_prep1 BOOLEAN DEFAULT 0, pacific_prep2 BOOLEAN DEFAULT 0, pacific_prep3 BOOLEAN DEFAULT 0)")
+            # Preparatorias de atracos (Pacific Bank)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS heist_prep (
+                    user_id INTEGER PRIMARY KEY,
+                    pacific_prep1 BOOLEAN DEFAULT 0,
+                    pacific_prep2 BOOLEAN DEFAULT 0,
+                    pacific_prep3 BOOLEAN DEFAULT 0
+                )
+            """)
             # Emojis animados
-            await db.execute("CREATE TABLE IF NOT EXISTS animated_emojis (name TEXT, emoji_id INTEGER, added_by INTEGER, added_at TEXT, PRIMARY KEY (name, emoji_id))")
-            await db.commit()
-        print("✅ Base de datos lista")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS animated_emojis (
+                    name TEXT,
+                    emoji_id INTEGER,
+                    added_by INTEGER,
+                    added_at TEXT,
+                    PRIMARY KEY (name, emoji_id)
+                )
+            """)
+            # Índices
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_warnings_user ON warnings(user_id)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_niveles_nivel ON niveles(nivel)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_user ON antiraid_actions(user_id)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_timestamp ON antiraid_actions(timestamp)")
 
+            await db.commit()
+            print("✅ Base de datos inicializada con todas las tablas e índices.")
+
+    # Métodos de acceso
     async def execute(self, query, params=()):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(query, params)
             await db.commit()
+
     async def fetchone(self, query, params=()):
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(query, params)
             return await cur.fetchone()
+
     async def fetchall(self, query, params=()):
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(query, params)
             return await cur.fetchall()
+
     async def invalidate_cache(self, pattern=None):
         if pattern is None:
             self._cache.clear()
@@ -318,38 +535,61 @@ class Database:
                 del self._cache[k]
                 del self._cache_time[k]
 
-    # ----- Economía -----
+    # Economía
     async def get_economy(self, user_id):
         row = await self.fetchone("SELECT cash, bank, black_money FROM economy WHERE user_id = ?", (user_id,))
-        if row: return {"cash":row[0],"bank":row[1],"black_money":row[2]}
+        if row:
+            return {"cash": row[0], "bank": row[1], "black_money": row[2]}
         await self.execute("INSERT INTO economy (user_id) VALUES (?)", (user_id,))
-        return {"cash":0,"bank":0,"black_money":0}
-    async def add_cash(self, user_id, amount): await self.execute("UPDATE economy SET cash = cash + ? WHERE user_id = ?", (amount, user_id))
-    async def add_bank(self, user_id, amount): await self.execute("UPDATE economy SET bank = bank + ? WHERE user_id = ?", (amount, user_id))
-    async def add_black(self, user_id, amount): await self.execute("UPDATE economy SET black_money = black_money + ? WHERE user_id = ?", (amount, user_id))
+        return {"cash": 0, "bank": 0, "black_money": 0}
 
-    # ----- Inventario -----
+    async def add_cash(self, user_id, amount):
+        await self.execute("UPDATE economy SET cash = cash + ? WHERE user_id = ?", (amount, user_id))
+        await self.invalidate_cache("economy")
+
+    async def add_bank(self, user_id, amount):
+        await self.execute("UPDATE economy SET bank = bank + ? WHERE user_id = ?", (amount, user_id))
+        await self.invalidate_cache("economy")
+
+    async def add_black(self, user_id, amount):
+        await self.execute("UPDATE economy SET black_money = black_money + ? WHERE user_id = ?", (amount, user_id))
+        await self.invalidate_cache("economy")
+
+    # Inventario
     async def add_item(self, user_id, inv_type, item, cantidad=1):
-        await self.execute("INSERT INTO inventory (user_id, inv_type, item, quantity) VALUES (?,?,?,?) ON CONFLICT(user_id, inv_type, item) DO UPDATE SET quantity = quantity + ?", (user_id, inv_type, item, cantidad, cantidad))
-    async def remove_item(self, user_id, inv_type, item, cantidad=1):
-        row = await self.fetchone("SELECT quantity FROM inventory WHERE user_id=? AND inv_type=? AND item=?", (user_id, inv_type, item))
-        if not row or row[0] < cantidad: return 0
-        if row[0] == cantidad: await self.execute("DELETE FROM inventory WHERE user_id=? AND inv_type=? AND item=?", (user_id, inv_type, item))
-        else: await self.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id=? AND inv_type=? AND item=?", (cantidad, user_id, inv_type, item))
-        return cantidad
-    async def get_inventory(self, user_id, inv_type):
-        rows = await self.fetchall("SELECT item, quantity FROM inventory WHERE user_id=? AND inv_type=?", (user_id, inv_type))
-        return {item:qty for item,qty in rows}
+        await self.execute("""
+            INSERT INTO inventory (user_id, inv_type, item, quantity)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, inv_type, item) DO UPDATE SET quantity = quantity + ?
+        """, (user_id, inv_type, item, cantidad, cantidad))
+        await self.invalidate_cache("inventory")
 
-    # ----- Evidencia -----
+    async def remove_item(self, user_id, inv_type, item, cantidad=1):
+        row = await self.fetchone("SELECT quantity FROM inventory WHERE user_id = ? AND inv_type = ? AND item = ?", (user_id, inv_type, item))
+        if not row or row[0] < cantidad:
+            return 0
+        if row[0] == cantidad:
+            await self.execute("DELETE FROM inventory WHERE user_id = ? AND inv_type = ? AND item = ?", (user_id, inv_type, item))
+        else:
+            await self.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND inv_type = ? AND item = ?", (cantidad, user_id, inv_type, item))
+        await self.invalidate_cache("inventory")
+        return cantidad
+
+    async def get_inventory(self, user_id, inv_type):
+        rows = await self.fetchall("SELECT item, quantity FROM inventory WHERE user_id = ? AND inv_type = ?", (user_id, inv_type))
+        return {item: qty for item, qty in rows}
+
+    # Evidencia
     async def add_evidence(self, agente_id, target_id, item, quantity=1):
         fecha = datetime.now().isoformat()
-        await self.execute("INSERT INTO evidence (agente_id, target_id, item, quantity, fecha) VALUES (?,?,?,?,?)", (agente_id, target_id, item, quantity, fecha))
+        await self.execute("INSERT INTO evidence (agente_id, target_id, item, quantity, fecha) VALUES (?, ?, ?, ?, ?)",
+                           (agente_id, target_id, item, quantity, fecha))
+
     async def get_evidence(self, target_id):
         rows = await self.fetchall("SELECT id, agente_id, item, quantity, fecha FROM evidence WHERE target_id = ?", (target_id,))
-        return [{"id":r[0],"agente_id":r[1],"item":r[2],"quantity":r[3],"fecha":r[4]} for r in rows]
+        return [{"id": r[0], "agente_id": r[1], "item": r[2], "quantity": r[3], "fecha": r[4]} for r in rows]
 
-    # ----- Usuario -----
+    # Estado de usuario
     async def get_user_state(self, user_id):
         row = await self.fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,))
         if not row:
@@ -359,127 +599,173 @@ class Database:
             cur = await db.execute("PRAGMA table_info(users)")
             columns = [desc[1] for desc in await cur.fetchall()]
         return {col: row[i] for i, col in enumerate(columns)} if row else {}
+
     async def update_user_state(self, user_id, **kwargs):
         VALID_COLUMNS = {'banned', 'encarcelado_hasta', 'placa', 'airplane_mode', 'wifi_connected', 'phone_number', 'rango', 'ban_reason', 'banned_by', 'ban_date'}
         for key, value in kwargs.items():
-            if key not in VALID_COLUMNS: raise ValueError(f"Columna no valida: {key}")
+            if key not in VALID_COLUMNS:
+                raise ValueError(f"Columna no valida: {key}")
             await self.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
         await self.invalidate_cache("users")
 
-    # ----- DNI -----
+    # DNI
     async def get_dni(self, user_id):
-        row = await self.fetchone("SELECT dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad, dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion FROM users WHERE user_id=?", (user_id,))
-        if row and row[0]: return {"nombre":row[0],"apellidos":row[1],"edad":row[2],"genero":row[3],"nacionalidad":row[4],"color_ojos":row[5],"altura":row[6],"profesion":row[7],"numero":row[8],"fecha_creacion":row[9]}
+        row = await self.fetchone("SELECT dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad, dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion FROM users WHERE user_id = ?", (user_id,))
+        if row and row[0]:
+            return {
+                "nombre": row[0], "apellidos": row[1], "edad": row[2], "genero": row[3],
+                "nacionalidad": row[4], "color_ojos": row[5], "altura": row[6],
+                "profesion": row[7], "numero": row[8], "fecha_creacion": row[9]
+            }
         return None
-    async def set_dni(self, user_id, data):
-        await self.execute("UPDATE users SET dni_nombre=?, dni_apellidos=?, dni_edad=?, dni_genero=?, dni_nacionalidad=?, dni_color_ojos=?, dni_altura=?, dni_profesion=?, dni_numero=?, dni_fecha_creacion=? WHERE user_id=?", (data["nombre"],data["apellidos"],data["edad"],data["genero"],data["nacionalidad"],data["color_ojos"],data["altura"],data["profesion"],data["numero"],data["fecha_creacion"],user_id))
-    async def delete_dni(self, user_id):
-        await self.execute("UPDATE users SET dni_nombre=NULL, dni_apellidos=NULL, dni_edad=NULL, dni_genero=NULL, dni_color_ojos=NULL, dni_altura=NULL, dni_profesion=NULL, dni_numero=NULL, dni_fecha_creacion=NULL WHERE user_id=?", (user_id,))
 
-    # ----- Multas -----
+    async def set_dni(self, user_id, data):
+        await self.execute("""
+            UPDATE users SET dni_nombre=?, dni_apellidos=?, dni_edad=?, dni_genero=?, dni_nacionalidad=?,
+            dni_color_ojos=?, dni_altura=?, dni_profesion=?, dni_numero=?, dni_fecha_creacion=?
+            WHERE user_id=?
+        """, (data["nombre"], data["apellidos"], data["edad"], data["genero"], data["nacionalidad"],
+              data["color_ojos"], data["altura"], data["profesion"], data["numero"], data["fecha_creacion"], user_id))
+
+    async def delete_dni(self, user_id):
+        await self.execute("""
+            UPDATE users SET dni_nombre=NULL, dni_apellidos=NULL, dni_edad=NULL, dni_genero=NULL,
+            dni_color_ojos=NULL, dni_altura=NULL, dni_profesion=NULL,
+            dni_numero=NULL, dni_fecha_creacion=NULL WHERE user_id=?
+        """, (user_id,))
+
+    # Multas
     async def add_multa(self, user_id, cantidad, motivo, agente, placa_agente):
         fecha = datetime.now().isoformat()
-        await self.execute("INSERT INTO multas (user_id, cantidad, motivo, fecha, agente, placa_agente) VALUES (?,?,?,?,?,?)", (user_id, cantidad, motivo, fecha, agente, placa_agente))
+        await self.execute("INSERT INTO multas (user_id, cantidad, motivo, fecha, agente, placa_agente) VALUES (?, ?, ?, ?, ?, ?)",
+                           (user_id, cantidad, motivo, fecha, agente, placa_agente))
         await self.execute("UPDATE caja_municipal SET monto = monto + ? WHERE id = 1", (cantidad,))
+
     async def get_multas_pendientes(self, user_id):
         rows = await self.fetchall("SELECT id, cantidad, motivo, fecha, agente FROM multas WHERE user_id = ? AND pagada = 0", (user_id,))
-        return [{"id":r[0],"cantidad":r[1],"motivo":r[2],"fecha":r[3],"agente":r[4]} for r in rows]
+        return [{"id": r[0], "cantidad": r[1], "motivo": r[2], "fecha": r[3], "agente": r[4]} for r in rows]
+
     async def pagar_multa(self, multa_id):
         await self.execute("UPDATE multas SET pagada = 1 WHERE id = ?", (multa_id,))
+
     async def get_caja_municipal(self):
         row = await self.fetchone("SELECT monto FROM caja_municipal WHERE id = 1")
         return row[0] if row else 0
 
-    # ----- Vehículos -----
+    # Vehículos
     async def add_vehiculo(self, user_id, matricula, modelo):
-        await self.execute("INSERT INTO vehiculos (user_id, matricula, modelo, seguro, itv, combustible) VALUES (?, ?, ?, 1, ?, 100)", (user_id, matricula, modelo, (datetime.now()+timedelta(days=30)).isoformat()))
+        await self.execute("INSERT INTO vehiculos (user_id, matricula, modelo, seguro, itv, combustible) VALUES (?, ?, ?, 1, ?, 100)",
+                           (user_id, matricula, modelo, (datetime.now() + timedelta(days=30)).isoformat()))
+
     async def get_vehiculos(self, user_id):
         rows = await self.fetchall("SELECT matricula, modelo, seguro, itv, combustible FROM vehiculos WHERE user_id = ?", (user_id,))
-        return {r[0]:{"modelo":r[1],"seguro":bool(r[2]),"itv":r[3],"combustible":r[4]} for r in rows}
+        return {r[0]: {"modelo": r[1], "seguro": bool(r[2]), "itv": r[3], "combustible": r[4]} for r in rows}
+
     async def update_vehiculo(self, user_id, matricula, **kwargs):
         for key, value in kwargs.items():
             await self.execute(f"UPDATE vehiculos SET {key} = ? WHERE user_id = ? AND matricula = ?", (value, user_id, matricula))
 
-    # ----- Armas y licencias -----
+    # Armas y licencias
     async def dar_licencia(self, user_id, licencia):
         await self.execute("INSERT INTO armas_licencias (user_id, licencia, tiene) VALUES (?, ?, 1) ON CONFLICT(user_id, licencia) DO UPDATE SET tiene = 1", (user_id, licencia))
+
     async def quitar_licencia(self, user_id, licencia):
         await self.execute("UPDATE armas_licencias SET tiene = 0 WHERE user_id = ? AND licencia = ?", (user_id, licencia))
+
     async def get_licencias(self, user_id):
         rows = await self.fetchall("SELECT licencia, tiene FROM armas_licencias WHERE user_id = ?", (user_id,))
-        return {r[0]:bool(r[1]) for r in rows}
+        return {r[0]: bool(r[1]) for r in rows}
+
     async def get_armas_equipadas(self, user_id):
         rows = await self.fetchall("SELECT arma, durabilidad, municion FROM armas_equipadas WHERE user_id = ?", (user_id,))
-        return {r[0]:{"durabilidad":r[1],"municion":r[2]} for r in rows}
+        return {r[0]: {"durabilidad": r[1], "municion": r[2]} for r in rows}
+
     async def dar_licencia_conduccion(self, user_id, tipo):
-        await self.execute("INSERT OR REPLACE INTO licencias_conduccion (user_id, tipo, fecha_obtencion) VALUES (?, ?, ?)", (user_id, tipo, datetime.now().isoformat()))
+        await self.execute("INSERT OR REPLACE INTO licencias_conduccion (user_id, tipo, fecha_obtencion) VALUES (?, ?, ?)",
+                           (user_id, tipo, datetime.now().isoformat()))
+
     async def tiene_licencia_conduccion(self, user_id, tipo):
         row = await self.fetchone("SELECT 1 FROM licencias_conduccion WHERE user_id = ? AND tipo = ?", (user_id, tipo))
         return row is not None
+
     async def get_licencias_conduccion(self, user_id):
         rows = await self.fetchall("SELECT tipo, fecha_obtencion FROM licencias_conduccion WHERE user_id = ?", (user_id,))
-        return [{"tipo":r[0],"fecha_obtencion":r[1]} for r in rows]
+        return [{"tipo": r[0], "fecha_obtencion": r[1]} for r in rows]
 
-    # ----- Cooldowns -----
+    # Cooldowns
     async def check_cooldown(self, user_id, comando, segundos):
-        row = await self.fetchone("SELECT expires FROM cooldowns WHERE user_id=? AND comando=?", (user_id, comando))
+        row = await self.fetchone("SELECT expires FROM cooldowns WHERE user_id = ? AND comando = ?", (user_id, comando))
         ahora = datetime.now()
         if row and row[0]:
             expires = datetime.fromisoformat(row[0])
-            if expires > ahora: return False, int((expires-ahora).total_seconds())
-        nueva = ahora + timedelta(seconds=segundos)
-        await self.execute("INSERT INTO cooldowns (user_id, comando, expires) VALUES (?,?,?) ON CONFLICT(user_id, comando) DO UPDATE SET expires=?", (user_id, comando, nueva.isoformat(), nueva.isoformat()))
+            if expires > ahora:
+                return False, int((expires - ahora).total_seconds())
+        nueva_expira = ahora + timedelta(seconds=segundos)
+        await self.execute("INSERT INTO cooldowns (user_id, comando, expires) VALUES (?, ?, ?) ON CONFLICT(user_id, comando) DO UPDATE SET expires = ?",
+                           (user_id, comando, nueva_expira.isoformat(), nueva_expira.isoformat()))
         return True, 0
 
-    # ----- DeepWeb -----
+    # DeepWeb
     async def add_deepweb_message(self, sender, receiver, message):
         sent_at = datetime.now().isoformat()
-        await self.execute("INSERT INTO deepweb (sender, receiver, message, sent_at) VALUES (?,?,?,?)", (sender, receiver, message, sent_at))
+        await self.execute("INSERT INTO deepweb (sender, receiver, message, sent_at) VALUES (?, ?, ?, ?)", (sender, receiver, message, sent_at))
         row = await self.fetchone("SELECT last_insert_rowid()")
         return int(row[0]) if row else 0
+
     async def decode_deepweb_message(self, message_id, decoder_id):
         row = await self.fetchone("SELECT sender, message, anonymous FROM deepweb WHERE id = ?", (message_id,))
-        if not row: return None
-        if random.randint(1,10) == 1:
-            await self.execute("UPDATE deepweb SET anonymous = 0, decoded_by = ?, decoded_at = ? WHERE id = ?", (decoder_id, datetime.now().isoformat(), message_id))
-            return {"sender":row[0],"message":row[1],"anonymous":False,"decoded":True}
-        return {"sender":row[0],"message":row[1],"anonymous":bool(row[2]),"decoded":False}
+        if not row:
+            return None
+        if random.randint(1, 10) == 1:
+            await self.execute("UPDATE deepweb SET anonymous = 0, decoded_by = ?, decoded_at = ? WHERE id = ?",
+                               (decoder_id, datetime.now().isoformat(), message_id))
+            return {"sender": row[0], "message": row[1], "anonymous": False, "decoded": True}
+        return {"sender": row[0], "message": row[1], "anonymous": bool(row[2]), "decoded": False}
 
-    # ----- Atracos logs -----
+    # Atracos logs
     async def add_heist_log(self, user_id, heist, result, reward, black_reward, items):
-        await self.execute("INSERT INTO atracos_logs (user_id, heist, result, reward, black_reward, items, timestamp) VALUES (?,?,?,?,?,?,?)", (user_id, heist, result, reward, black_reward, items, datetime.now().isoformat()))
+        await self.execute("INSERT INTO atracos_logs (user_id, heist, result, reward, black_reward, items, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (user_id, heist, result, reward, black_reward, items, datetime.now().isoformat()))
 
-    # ----- Rachas casino -----
+    # Rachas casino
     async def actualizar_racha(self, user_id, ganado):
         tipo = "win" if ganado else "loss"
         row = await self.fetchone("SELECT racha, tipo FROM rachas WHERE user_id = ?", (user_id,))
-        if row and row[1] == tipo: nueva_racha = row[0] + 1
-        else: nueva_racha = 1
-        await self.execute("INSERT INTO rachas (user_id, racha, tipo) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET racha = ?, tipo = ?", (user_id, nueva_racha, tipo, nueva_racha, tipo))
+        if row and row[1] == tipo:
+            nueva_racha = row[0] + 1
+        else:
+            nueva_racha = 1
+        await self.execute("INSERT INTO rachas (user_id, racha, tipo) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET racha = ?, tipo = ?",
+                           (user_id, nueva_racha, tipo, nueva_racha, tipo))
+
     async def get_racha(self, user_id):
         row = await self.fetchone("SELECT racha, tipo FROM rachas WHERE user_id = ?", (user_id,))
-        return {"racha":row[0] if row else 0, "tipo":row[1] if row else None}
+        return {"racha": row[0] if row else 0, "tipo": row[1] if row else None}
 
-    # ----- Estadísticas -----
+    # Estadísticas
     async def inc_estadistica(self, key, inc=1):
         row = await self.fetchone("SELECT value FROM estadisticas WHERE key = ?", (key,))
         if row:
             val = int(row[0]) + inc
             await self.execute("UPDATE estadisticas SET value = ? WHERE key = ?", (str(val), key))
         else:
-            await self.execute("INSERT INTO estadisticas (key, value) VALUES (?,?)", (key, str(inc)))
+            await self.execute("INSERT INTO estadisticas (key, value) VALUES (?, ?)", (key, str(inc)))
+
     async def get_estadistica(self, key):
         row = await self.fetchone("SELECT value FROM estadisticas WHERE key = ?", (key,))
         return int(row[0]) if row else 0
 
-    # ----- Redes sociales -----
+    # Redes sociales
     async def add_post_ig(self, user_id, texto):
         pid = ''.join(random.choices('0123456789abcdef', k=8))
-        await self.execute("INSERT INTO posts_ig (id, user_id, texto, tiempo, likes) VALUES (?,?,?,?,?)", (pid, user_id, texto, datetime.now().isoformat(), json.dumps([])))
+        await self.execute("INSERT INTO posts_ig (id, user_id, texto, tiempo, likes) VALUES (?, ?, ?, ?, ?)",
+                           (pid, user_id, texto, datetime.now().isoformat(), json.dumps([])))
         return pid
+
     async def get_posts_ig(self, user_id):
         rows = await self.fetchall("SELECT id, texto, tiempo, likes FROM posts_ig WHERE user_id = ? ORDER BY tiempo DESC", (user_id,))
-        return [{"id":r[0],"texto":r[1],"tiempo":r[2],"likes":json.loads(r[3]) if r[3] else []} for r in rows]
+        return [{"id": r[0], "texto": r[1], "tiempo": r[2], "likes": json.loads(r[3]) if r[3] else []} for r in rows]
+
     async def add_like_ig(self, post_id, user_id):
         row = await self.fetchone("SELECT likes FROM posts_ig WHERE id = ?", (post_id,))
         if row:
@@ -489,59 +775,77 @@ class Database:
                 await self.execute("UPDATE posts_ig SET likes = ? WHERE id = ?", (json.dumps(likes), post_id))
                 return True
         return False
+
     async def follow_ig(self, follower, following):
         await self.execute("INSERT OR IGNORE INTO seguidores_ig (follower, following) VALUES (?, ?)", (follower, following))
+
     async def unfollow_ig(self, follower, following):
         await self.execute("DELETE FROM seguidores_ig WHERE follower = ? AND following = ?", (follower, following))
+
     async def get_followers_ig(self, user_id):
         row = await self.fetchone("SELECT COUNT(*) FROM seguidores_ig WHERE following = ?", (user_id,))
         return row[0] if row else 0
+
     async def get_following_ig(self, user_id):
         row = await self.fetchone("SELECT COUNT(*) FROM seguidores_ig WHERE follower = ?", (user_id,))
         return row[0] if row else 0
+
     async def is_following_ig(self, follower, following):
         row = await self.fetchone("SELECT 1 FROM seguidores_ig WHERE follower = ? AND following = ?", (follower, following))
         return row is not None
+
     async def add_post_tw(self, user_id, texto):
         pid = ''.join(random.choices('0123456789abcdef', k=8))
-        await self.execute("INSERT INTO posts_tw (id, user_id, texto, tiempo) VALUES (?,?,?,?)", (pid, user_id, texto, datetime.now().isoformat()))
+        await self.execute("INSERT INTO posts_tw (id, user_id, texto, tiempo) VALUES (?, ?, ?, ?)", (pid, user_id, texto, datetime.now().isoformat()))
         return pid
+
     async def follow_tw(self, follower, following):
-        await self.execute("INSERT OR IGNORE INTO seguidores_tw (follower, following, since) VALUES (?,?,?)", (follower, following, datetime.now().isoformat()))
+        await self.execute("INSERT OR IGNORE INTO seguidores_tw (follower, following, since) VALUES (?, ?, ?)",
+                           (follower, following, datetime.now().isoformat()))
+
     async def unfollow_tw(self, follower, following):
         await self.execute("DELETE FROM seguidores_tw WHERE follower = ? AND following = ?", (follower, following))
+
     async def get_followers_tw(self, user_id):
         row = await self.fetchone("SELECT COUNT(*) FROM seguidores_tw WHERE following = ?", (user_id,))
         return row[0] if row else 0
+
     async def is_following_tw(self, follower, following):
         row = await self.fetchone("SELECT 1 FROM seguidores_tw WHERE follower = ? AND following = ?", (follower, following))
         return row is not None
+
     async def add_post_fb(self, user_id, texto):
         pid = ''.join(random.choices('0123456789abcdef', k=8))
-        await self.execute("INSERT INTO posts_fb (id, user_id, texto, tiempo) VALUES (?,?,?,?)", (pid, user_id, texto, datetime.now().isoformat()))
+        await self.execute("INSERT INTO posts_fb (id, user_id, texto, tiempo) VALUES (?, ?, ?, ?)", (pid, user_id, texto, datetime.now().isoformat()))
         return pid
 
-    # ----- WhatsApp -----
+    # WhatsApp
     async def add_wa_contact(self, user_id, numero, nombre):
-        await self.execute("INSERT OR IGNORE INTO wa_contactos (user_id, numero, nombre) VALUES (?,?,?)", (user_id, numero, nombre))
+        await self.execute("INSERT OR IGNORE INTO wa_contactos (user_id, numero, nombre) VALUES (?, ?, ?)", (user_id, numero, nombre))
+
     async def get_wa_contacts(self, user_id):
         rows = await self.fetchall("SELECT numero, nombre FROM wa_contactos WHERE user_id = ?", (user_id,))
-        return {r[0]:r[1] for r in rows}
+        return {r[0]: r[1] for r in rows}
+
     async def add_wa_chat(self, de, para, mensaje):
-        await self.execute("INSERT INTO wa_chats (de, para, mensaje, tiempo) VALUES (?,?,?,?)", (de, para, mensaje, datetime.now().isoformat()))
+        await self.execute("INSERT INTO wa_chats (de, para, mensaje, tiempo) VALUES (?, ?, ?, ?)",
+                           (de, para, mensaje, datetime.now().isoformat()))
+
     async def get_wa_chats(self, user1, user2):
         rows = await self.fetchall("""
             SELECT de, mensaje, tiempo FROM wa_chats
             WHERE (de = ? AND para = ?) OR (de = ? AND para = ?)
             ORDER BY tiempo ASC
         """, (user1, user2, user2, user1))
-        return [{"de":r[0],"mensaje":r[1],"tiempo":r[2]} for r in rows]
+        return [{"de": r[0], "mensaje": r[1], "tiempo": r[2]} for r in rows]
 
-    # ----- Precios drogas -----
+    # Precios drogas
     async def get_precio_droga(self, droga, es_compra=True):
         row = await self.fetchone("SELECT precio_compra, precio_venta FROM precios_drogas WHERE droga = ?", (droga,))
-        if row: return row[0] if es_compra else row[1]
+        if row:
+            return row[0] if es_compra else row[1]
         return PRECIOS_DROGAS_BASE[droga]["compra"] if es_compra else PRECIOS_DROGAS_BASE[droga]["venta"]
+
     async def actualizar_precio_droga(self, droga, cantidad_vendida):
         compra_actual = await self.get_precio_droga(droga, True)
         venta_actual = await self.get_precio_droga(droga, False)
@@ -560,127 +864,183 @@ class Database:
         venta_nuevo = max(venta_base // 2, min(venta_base * 3, venta_nuevo))
         await self.execute("UPDATE precios_drogas SET precio_compra = ?, precio_venta = ? WHERE droga = ?", (compra_nuevo, venta_nuevo, droga))
 
-    # ----- Mercado -----
+    # Mercado
     async def add_mercado(self, pub_id, vendedor, item, descripcion, precio):
-        await self.execute("INSERT INTO mercado (id, vendedor, item, descripcion, precio, fecha) VALUES (?,?,?,?,?,?)", (pub_id, vendedor, item, descripcion, precio, datetime.now().isoformat()))
+        await self.execute("INSERT INTO mercado (id, vendedor, item, descripcion, precio, fecha) VALUES (?, ?, ?, ?, ?, ?)",
+                           (pub_id, vendedor, item, descripcion, precio, datetime.now().isoformat()))
+
     async def get_mercado(self):
         rows = await self.fetchall("SELECT id, vendedor, item, descripcion, precio, fecha FROM mercado ORDER BY fecha DESC")
-        return [{"id":r[0],"vendedor":r[1],"item":r[2],"descripcion":r[3],"precio":r[4],"fecha":r[5]} for r in rows]
+        return [{"id": r[0], "vendedor": r[1], "item": r[2], "descripcion": r[3], "precio": r[4], "fecha": r[5]} for r in rows]
+
     async def remove_mercado(self, pub_id):
         await self.execute("DELETE FROM mercado WHERE id = ?", (pub_id,))
+
     async def get_mercado_by_id(self, pub_id):
         return await self.fetchone("SELECT vendedor, item, precio FROM mercado WHERE id = ?", (pub_id,))
 
-    # ----- Niveles -----
+    # Niveles
     async def add_xp(self, user_id, xp, tipo="message"):
         now = datetime.now().isoformat()
         row = await self.fetchone("SELECT xp, nivel, last_level_up FROM niveles WHERE user_id = ?", (user_id,))
         if not row:
-            await self.execute("INSERT INTO niveles (user_id, xp, nivel, last_level_up) VALUES (?,?,0,?)", (user_id, xp, now))
-            return None
-        xp_actual = row[0] + xp
-        nivel_actual = row[1]
-        last_level_up = row[2]
-        await self.execute("UPDATE niveles SET xp = ? WHERE user_id = ?", (xp_actual, user_id))
+            await self.execute("INSERT INTO niveles (user_id, xp, nivel, last_level_up) VALUES (?, ?, 0, ?)", (user_id, xp, now))
+            xp_actual = xp
+            nivel_actual = 0
+            last_level_up = None
+        else:
+            xp_actual = row[0] + xp
+            nivel_actual = row[1]
+            last_level_up = row[2]
+            await self.execute("UPDATE niveles SET xp = ? WHERE user_id = ?", (xp_actual, user_id))
+            if tipo == "message":
+                await self.execute("UPDATE niveles SET last_message_time = ? WHERE user_id = ?", (now, user_id))
+            elif tipo == "command":
+                await self.execute("UPDATE niveles SET last_command_time = ? WHERE user_id = ?", (now, user_id))
+            elif tipo == "time":
+                await self.execute("UPDATE niveles SET last_time_time = ? WHERE user_id = ?", (now, user_id))
+
         nuevo_nivel = int((xp_actual ** 0.5) / 10)
         if nuevo_nivel > nivel_actual:
-            if last_level_up and (datetime.now() - datetime.fromisoformat(last_level_up)).days < DIAS_PARA_SUBIR_NIVEL: return None
-            await self.execute("UPDATE niveles SET nivel = ?, last_level_up = ? WHERE user_id = ?", (nuevo_nivel, now, user_id))
-            return nuevo_nivel
+            puede_subir = True
+            if last_level_up:
+                ultima_subida = datetime.fromisoformat(last_level_up)
+                if (datetime.now() - ultima_subida).days < DIAS_PARA_SUBIR_NIVEL:
+                    puede_subir = False
+            if puede_subir:
+                await self.execute("UPDATE niveles SET nivel = ?, last_level_up = ? WHERE user_id = ?", (nuevo_nivel, now, user_id))
+                return nuevo_nivel
+            else:
+                return None
         return None
+
     async def get_nivel(self, user_id):
         row = await self.fetchone("SELECT xp, nivel, last_level_up FROM niveles WHERE user_id = ?", (user_id,))
-        return {"xp":row[0],"nivel":row[1],"last_level_up":row[2]} if row else {"xp":0,"nivel":0,"last_level_up":None}
+        if row:
+            return {"xp": row[0], "nivel": row[1], "last_level_up": row[2]}
+        return {"xp": 0, "nivel": 0, "last_level_up": None}
+
     async def get_ranking_niveles(self, limit=10):
         return await self.fetchall("SELECT user_id, xp, nivel FROM niveles ORDER BY xp DESC LIMIT ?", (limit,))
 
-    # ----- Blacklist -----
+    # Blacklist
     async def add_to_blacklist(self, user_id, reason, banned_by):
-        await self.execute("INSERT OR IGNORE INTO blacklist (user_id, reason, banned_by, ban_date) VALUES (?,?,?,?)", (user_id, reason, banned_by, datetime.now().isoformat()))
+        await self.execute("INSERT OR IGNORE INTO blacklist (user_id, reason, banned_by, ban_date) VALUES (?, ?, ?, ?)",
+                           (user_id, reason, banned_by, datetime.now().isoformat()))
+
     async def remove_from_blacklist(self, user_id):
         await self.execute("DELETE FROM blacklist WHERE user_id = ?", (user_id,))
+
     async def is_blacklisted(self, user_id):
         row = await self.fetchone("SELECT 1 FROM blacklist WHERE user_id = ?", (user_id,))
         return row is not None
+
     async def get_blacklist(self):
         rows = await self.fetchall("SELECT user_id, reason, banned_by, ban_date FROM blacklist")
-        return [{"user_id":r[0],"reason":r[1],"banned_by":r[2],"ban_date":r[3]} for r in rows]
+        return [{"user_id": r[0], "reason": r[1], "banned_by": r[2], "ban_date": r[3]} for r in rows]
 
-    # ----- Web users -----
+    # Web users
     async def create_web_user(self, username, password_hash, discord_id=None, is_staff=False):
-        await self.execute("INSERT INTO web_users (username, password_hash, discord_id, is_staff, created_at) VALUES (?,?,?,?,?)", (username, password_hash, discord_id, is_staff, datetime.now().isoformat()))
+        await self.execute("INSERT INTO web_users (username, password_hash, discord_id, is_staff, created_at) VALUES (?, ?, ?, ?, ?)",
+                           (username, password_hash, discord_id, is_staff, datetime.now().isoformat()))
+
     async def get_web_user(self, username):
         row = await self.fetchone("SELECT id, username, password_hash, discord_id, is_staff FROM web_users WHERE username = ?", (username,))
-        if row: return {"id":row[0],"username":row[1],"password_hash":row[2],"discord_id":row[3],"is_staff":bool(row[4])}
-        return None
-    async def get_web_user_by_id(self, user_id):
-        row = await self.fetchone("SELECT id, username, password_hash, discord_id, is_staff FROM web_users WHERE id = ?", (user_id,))
-        if row: return {"id":row[0],"username":row[1],"password_hash":row[2],"discord_id":row[3],"is_staff":bool(row[4])}
-        return None
-    async def get_web_user_by_discord(self, discord_id):
-        row = await self.fetchone("SELECT id, username, password_hash, is_staff FROM web_users WHERE discord_id = ?", (discord_id,))
-        if row: return {"id":row[0],"username":row[1],"password_hash":row[2],"is_staff":bool(row[3])}
+        if row:
+            return {"id": row[0], "username": row[1], "password_hash": row[2], "discord_id": row[3], "is_staff": bool(row[4])}
         return None
 
-    # ----- PDA permissions -----
+    async def get_web_user_by_id(self, user_id):
+        row = await self.fetchone("SELECT id, username, password_hash, discord_id, is_staff FROM web_users WHERE id = ?", (user_id,))
+        if row:
+            return {"id": row[0], "username": row[1], "password_hash": row[2], "discord_id": row[3], "is_staff": bool(row[4])}
+        return None
+
+    async def get_web_user_by_discord(self, discord_id):
+        row = await self.fetchone("SELECT id, username, password_hash, is_staff FROM web_users WHERE discord_id = ?", (discord_id,))
+        if row:
+            return {"id": row[0], "username": row[1], "password_hash": row[2], "is_staff": bool(row[3])}
+        return None
+
+    # PDA permissions
     async def grant_pda_permission(self, user_id, granted_by):
-        await self.execute("INSERT OR REPLACE INTO pda_permissions (user_id, granted_by, granted_at) VALUES (?,?,?)", (user_id, granted_by, datetime.now().isoformat()))
+        await self.execute("INSERT OR REPLACE INTO pda_permissions (user_id, granted_by, granted_at) VALUES (?, ?, ?)",
+                           (user_id, granted_by, datetime.now().isoformat()))
+
     async def revoke_pda_permission(self, user_id):
         await self.execute("DELETE FROM pda_permissions WHERE user_id = ?", (user_id,))
+
     async def has_pda_permission(self, user_id):
         row = await self.fetchone("SELECT 1 FROM pda_permissions WHERE user_id = ?", (user_id,))
         return row is not None
+
     async def get_pda_permissions(self):
         rows = await self.fetchall("SELECT user_id, granted_by, granted_at FROM pda_permissions")
-        return [{"user_id":r[0],"granted_by":r[1],"granted_at":r[2]} for r in rows]
+        return [{"user_id": r[0], "granted_by": r[1], "granted_at": r[2]} for r in rows]
 
-    # ----- Antiraid -----
+    # Antiraid
     async def log_antiraid_action(self, user_id, action_type, guild_id):
-        await self.execute("INSERT INTO antiraid_actions (user_id, action_type, timestamp, guild_id) VALUES (?,?,?,?)", (user_id, action_type, datetime.now().isoformat(), guild_id))
+        await self.execute("INSERT INTO antiraid_actions (user_id, action_type, timestamp, guild_id) VALUES (?, ?, ?, ?)",
+                           (user_id, action_type, datetime.now().isoformat(), guild_id))
+
     async def count_actions_last_minute(self, user_id, action_type, guild_id, minutes=1):
         cutoff = datetime.now() - timedelta(minutes=minutes)
-        row = await self.fetchone("SELECT COUNT(*) FROM antiraid_actions WHERE user_id = ? AND action_type = ? AND guild_id = ? AND timestamp > ?", (user_id, action_type, guild_id, cutoff.isoformat()))
+        row = await self.fetchone("SELECT COUNT(*) FROM antiraid_actions WHERE user_id = ? AND action_type = ? AND guild_id = ? AND timestamp > ?",
+                                   (user_id, action_type, guild_id, cutoff.isoformat()))
         return row[0] if row else 0
 
-    # ----- Emojis personalizables -----
+    # Emojis personalizables
     async def set_emoji(self, key, emoji):
-        await self.execute("INSERT OR REPLACE INTO emoji_settings (key, emoji) VALUES (?,?)", (key, emoji))
+        await self.execute("INSERT OR REPLACE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
+
     async def get_emoji(self, key):
         row = await self.fetchone("SELECT emoji FROM emoji_settings WHERE key = ?", (key,))
         return row[0] if row and row[0] else DEFAULT_EMOJIS.get(key, "⚙️")
+
     async def get_all_emojis(self):
         rows = await self.fetchall("SELECT key, emoji FROM emoji_settings")
-        return {r[0]:r[1] for r in rows}
+        return {row[0]: row[1] for row in rows}
 
-    # ----- Twitter DMs -----
+    # Twitter DMs
     async def add_twitter_dm(self, from_user, to_user, message):
-        await self.execute("INSERT INTO twitter_dms (from_user, to_user, message, sent_at) VALUES (?,?,?,?)", (from_user, to_user, message, datetime.now().isoformat()))
+        await self.execute("INSERT INTO twitter_dms (from_user, to_user, message, sent_at) VALUES (?, ?, ?, ?)",
+                           (from_user, to_user, message, datetime.now().isoformat()))
+
     async def get_twitter_dms(self, user1, user2):
         rows = await self.fetchall("""
             SELECT from_user, message, sent_at FROM twitter_dms
             WHERE (from_user = ? AND to_user = ?) OR (from_user = ? AND to_user = ?)
             ORDER BY sent_at ASC
         """, (user1, user2, user2, user1))
-        return [{"from":r[0],"message":r[1],"sent_at":r[2]} for r in rows]
+        return [{"from": r[0], "message": r[1], "sent_at": r[2]} for r in rows]
 
-    # ----- Preparatorias Pacific Bank -----
+    # Preparatorias Pacific Bank
     async def get_heist_prep(self, user_id):
         row = await self.fetchone("SELECT pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep WHERE user_id = ?", (user_id,))
-        return {"pacific_prep1":bool(row[0]), "pacific_prep2":bool(row[1]), "pacific_prep3":bool(row[2])} if row else {"pacific_prep1":False,"pacific_prep2":False,"pacific_prep3":False}
-    async def set_heist_prep(self, user_id, prep, value):
-        await self.execute(f"INSERT INTO heist_prep (user_id, {prep}) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET {prep}=?", (user_id, value, value))
+        if row:
+            return {"pacific_prep1": bool(row[0]), "pacific_prep2": bool(row[1]), "pacific_prep3": bool(row[2])}
+        return {"pacific_prep1": False, "pacific_prep2": False, "pacific_prep3": False}
 
-    # ----- Emojis animados -----
+    async def set_heist_prep(self, user_id, prep, value):
+        await self.execute(f"INSERT INTO heist_prep (user_id, {prep}) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET {prep} = ?",
+                           (user_id, value, value))
+
+    # Emojis animados
     async def add_animated_emoji(self, name, emoji_id, added_by):
-        await self.execute("INSERT INTO animated_emojis (name, emoji_id, added_by, added_at) VALUES (?,?,?,?)", (name, emoji_id, added_by, datetime.now().isoformat()))
+        await self.execute("INSERT INTO animated_emojis (name, emoji_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                           (name, emoji_id, added_by, datetime.now().isoformat()))
+
     async def get_all_animated_emojis(self):
         rows = await self.fetchall("SELECT name, emoji_id, added_by, added_at FROM animated_emojis")
-        return [{"name":r[0],"emoji_id":r[1],"added_by":r[2],"added_at":r[3]} for r in rows]
+        return [{"name": r[0], "emoji_id": r[1], "added_by": r[2], "added_at": r[3]} for r in rows]
 
-    # ----- Expiración hosting -----
+    # Expiración (hosting)
     async def get_expiry(self):
         row = await self.fetchone("SELECT value FROM bot_config WHERE key = 'expiry'")
-        return datetime.fromisoformat(row[0]) if row else None
+        if row:
+            return datetime.fromisoformat(row[0])
+        return None
+
     async def set_expiry(self, expiry):
         await self.execute("UPDATE bot_config SET value = ? WHERE key = 'expiry'", (expiry.isoformat(),))
 
@@ -720,7 +1080,8 @@ def check_encarcelado():
                     mins = int((hasta - datetime.now()).total_seconds() / 60)
                     await ctx.send(embed=embed_error(f"🔒 Encarcelado. Tiempo restante: {mins} minutos"))
                     return False
-                await db.update_user_state(ctx.author.id, encarcelado_hasta=None)
+                else:
+                    await db.update_user_state(ctx.author.id, encarcelado_hasta=None)
             except:
                 await db.update_user_state(ctx.author.id, encarcelado_hasta=None)
         return True
@@ -738,17 +1099,19 @@ def check_ban():
 def is_owner():
     async def predicate(ctx):
         if ctx.author.id not in OWNER_IDS:
-            await ctx.send(embed=embed_error("No tienes permiso."))
+            await ctx.send(embed=embed_error("No tienes permiso para usar este comando."))
             return False
         return True
     return commands.check(predicate)
 
 def tiene_rol_o_owner(role_id):
     async def predicate(ctx):
-        if ctx.author.id in OWNER_IDS: return True
+        if ctx.author.id in OWNER_IDS:
+            return True
         role = ctx.guild.get_role(role_id)
-        if role and role in ctx.author.roles: return True
-        await ctx.send(embed=embed_error("No tienes el rol necesario."))
+        if role and role in ctx.author.roles:
+            return True
+        await ctx.send(embed=embed_error("No tienes el rol necesario para usar este comando."))
         return False
     return commands.check(predicate)
 
@@ -769,7 +1132,7 @@ def tiene_rol_usuario():
         role = ctx.guild.get_role(ROL_USUARIO_ID)
         if role:
             return role in ctx.author.roles
-        # Si el rol no existe (fallback), permitir a todos
+        # Fallback: si el rol no existe, permitir a todos
         return True
     return commands.check(predicate)
 
@@ -778,18 +1141,20 @@ class ConfirmView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.user_id = user_id
         self.value = None
+
     @discord.ui.button(label="✅ Sí", style=discord.ButtonStyle.green)
-    async def confirm(self, interaction, button):
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("No eres el dueño", ephemeral=True)
+            await interaction.response.send_message("No eres el dueño de esta solicitud", ephemeral=True)
             return
         self.value = True
         self.stop()
         await interaction.response.defer()
+
     @discord.ui.button(label="❌ No", style=discord.ButtonStyle.red)
-    async def cancel(self, interaction, button):
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("No eres el dueño", ephemeral=True)
+            await interaction.response.send_message("No eres el dueño de esta solicitud", ephemeral=True)
             return
         self.value = False
         self.stop()
@@ -801,9 +1166,9 @@ class BaseCog(commands.Cog):
         self.bot = bot
 
     async def log(self, accion, detalles):
-        ch = self.bot.get_channel(CANAL_LOGS)
-        if ch:
-            await ch.send(f"📝 `{accion}`: {detalles}")
+        channel = self.bot.get_channel(CANAL_LOGS)
+        if channel:
+            await channel.send(f"📝 `{accion}`: {detalles}")
         try:
             with open('rtu_logs.json', 'a', encoding='utf-8') as f:
                 json.dump({"time": datetime.now().isoformat(), "accion": accion, "detalles": detalles}, f)
@@ -817,15 +1182,17 @@ class BaseCog(commands.Cog):
             try:
                 await user.send(embed=embed)
                 return True
-            except:
+            except discord.Forbidden:
                 pass
         return False
 
     async def obtener_nombre_dni(self, uid):
-        """Devuelve el nombre completo (nombre + apellidos) del DNI, o None si no tiene DNI."""
-        dni = await db.get_dni(uid)
-        if dni and dni.get('nombre') and dni.get('apellidos'):
-            return f"{dni['nombre']} {dni['apellidos']}".strip()
+        try:
+            dni = await db.get_dni(uid)
+            if dni and dni.get('nombre') and dni.get('apellidos'):
+                return f"{dni['nombre']} {dni['apellidos']}".strip()
+        except Exception:
+            pass
         return None
 
     async def log_economia(self, mensaje):
@@ -1378,8 +1745,11 @@ class TiendaBotonCerrar(discord.ui.Button):
         await interaction.response.edit_message(content="Tienda cerrada.", embed=None, view=None)
         self.view.stop()
 
-# ==================== COG: Drogas ====================
+# ==================== COG: Drogas (REAJUSTADO) ====================
 class Drogas(BaseCog):
+    # Contador por usuario para evitar rachas de 0
+    ventas_sin_fallo = {}
+
     @commands.group(name='droga', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
@@ -1436,17 +1806,64 @@ class Drogas(BaseCog):
         tipo_norm = tipo.capitalize()
         if tipo_norm not in EMOJIS_DROGA:
             return await ctx.send(embed=embed_error(f"Tipos válidos: {', '.join(EMOJIS_DROGA.keys())}"))
+
         inv = await db.get_inventory(uid, "personal")
         if inv.get(tipo_norm, 0) < cantidad:
             return await ctx.send(embed=embed_error(f"No tienes {cantidad}x {tipo_norm}."))
+
+        # Lógica de cantidad aleatoria 0-7 con balanceo
+        contador = self.ventas_sin_fallo.get(uid, 0)
+        # Forzar fallo cada 5-6 ventas
+        forzar_fallo = (contador >= 5 and random.randint(0, 1) == 0) or contador >= 6
+
+        if forzar_fallo:
+            unidades_vendidas = 0
+        else:
+            unidades_vendidas = random.randint(0, 7)
+            # Evitar 0 si el contador es bajo (para no frustrar)
+            if unidades_vendidas == 0 and contador < 3:
+                unidades_vendidas = random.randint(1, 7)
+
+        # No se puede vender más de lo que se tiene
+        if unidades_vendidas > inv[tipo_norm]:
+            unidades_vendidas = inv[tipo_norm]
+
+        # Actualizar contador
+        if unidades_vendidas == 0:
+            self.ventas_sin_fallo[uid] = 0
+        else:
+            self.ventas_sin_fallo[uid] = contador + 1
+
         precio_unitario = await db.get_precio_droga(tipo_norm, False)
-        ganancia = precio_unitario * cantidad
-        await db.remove_item(uid, "personal", tipo_norm, cantidad)
-        await db.add_cash(uid, ganancia)
-        await db.actualizar_precio_droga(tipo_norm, cantidad)
-        embed = discord.Embed(title="✅ Venta realizada", description=f"{cantidad}x {tipo_norm} por **${ganancia:,}**", color=0x00FF00)
-        await ctx.send(embed=embed)
-        await self.log("VENTA_DROGA", f"{ctx.author.name}: {cantidad}x {tipo_norm} -> +${ganancia:,}")
+        ganancia = precio_unitario * unidades_vendidas
+
+        if unidades_vendidas > 0:
+            # Venta exitosa
+            await db.remove_item(uid, "personal", tipo_norm, unidades_vendidas)
+            await db.add_cash(uid, ganancia)
+            await db.actualizar_precio_droga(tipo_norm, unidades_vendidas)
+            embed = discord.Embed(
+                title="✅ Venta realizada",
+                description=f"***Has vendido {unidades_vendidas} unidades de {tipo_norm} por ${ganancia:,}.***",
+                color=0x00FF00
+            )
+            await ctx.send(embed=embed)
+            await self.log("VENTA_DROGA", f"{ctx.author.name}: {unidades_vendidas}x {tipo_norm} -> +${ganancia:,}")
+        else:
+            # Resultado 0: alerta policial
+            rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
+            if rol_lspd:
+                await ctx.send(rol_lspd.mention)  # Solo mención fuera del embed
+            embed = discord.Embed(
+                title="🚨 REPORTE CIUDADANO",
+                description="***🚨 POSIBLE ACTIVIDAD ILEGAL REPORTADA POR VARIOS CIUDADANOS EN LA ZONA.***",
+                color=0xFF0000,
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="📍 Ubicación", value="***Zona de venta de drogas***", inline=False)
+            embed.set_footer(text="NOVA AGORA · Sistema de Vigilancia Ciudadana")
+            await ctx.send(embed=embed)
+            await self.log("VENTA_DROGA_FALLIDA", f"{ctx.author.name} intentó vender {tipo_norm} y activó alerta policial")
         try:
             await ctx.message.delete()
         except:
@@ -2526,8 +2943,218 @@ class PDA(BaseCog):
         except:
             pass
 
-    # Los subcomandos de PDA se omiten por brevedad, pero deben implementarse todos (detener, encarcelar, multar, etc.)
-    # Todos ellos solo accesibles si pasa el cog_check
+    @pda.command(name='detener')
+    async def pda_detener(self, ctx, usuario: discord.Member, *, motivo: str):
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_det = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        embed = discord.Embed(title="🚨 DETENCIÓN", description=f"{nombre_ag} ha detenido a {nombre_det}. Motivo: {motivo}", color=0xFF0000)
+        await ctx.send(embed=embed)
+        await self.log("PDA_DETENER", f"{nombre_ag} detuvo a {nombre_det}: {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='encarcelar')
+    async def pda_encarcelar(self, ctx, usuario: discord.Member, minutos: int, *, motivo: str):
+        if minutos <= 0 or minutos > 10080:
+            return await ctx.send(embed=embed_error("Los minutos deben estar entre 1 y 10080 (7 días)."))
+        if usuario.bot:
+            return await ctx.send(embed=embed_error("No puedes encarcelar a bots."))
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_det = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        hasta = datetime.now() + timedelta(minutes=minutos)
+        await db.update_user_state(usuario.id, encarcelado_hasta=hasta.isoformat())
+        embed = discord.Embed(title="🔒 ENCARCELAMIENTO", description=f"{nombre_ag} ha encarcelado a {nombre_det} por {minutos} minutos.\nMotivo: {motivo}", color=0xFF0000)
+        await ctx.send(embed=embed)
+        await self.log("PDA_ENCARCELAR", f"{nombre_ag} encarceló a {nombre_det} por {minutos}min: {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='multar')
+    async def pda_multar(self, ctx, usuario: discord.Member, cantidad: int, *, motivo: str):
+        if cantidad <= 0 or cantidad > 1000000:
+            return await ctx.send(embed=embed_error("La multa debe estar entre $1 y $1,000,000."))
+        if usuario.bot:
+            return await ctx.send(embed=embed_error("No puedes multar a bots."))
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        placa = (await db.get_user_state(ctx.author.id)).get('placa', '')
+        await db.add_multa(usuario.id, cantidad, motivo, nombre_ag, placa)
+        embed = discord.Embed(title="📄 MULTA", description=f"{nombre_ag} ha multado a {usuario.mention} con **${cantidad:,}**.\nMotivo: {motivo}", color=0xFFA500)
+        await ctx.send(embed=embed)
+        await self.log("PDA_MULTAR", f"{nombre_ag} multó a {usuario.name}: ${cantidad} - {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='requisar')
+    async def pda_requisar(self, ctx, usuario: discord.Member, *, arma: str):
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        armas = await db.get_armas_equipadas(usuario.id)
+        arma_real = next((k for k in armas if k.lower() == arma.lower()), None)
+        if not arma_real:
+            return await ctx.send(embed=embed_error(f"{usuario.display_name} no tiene {arma} equipada."))
+        await db.execute("DELETE FROM armas_equipadas WHERE user_id = ? AND arma = ?", (usuario.id, arma_real))
+        embed = discord.Embed(title="🔫 ARMA REQUISADA", description=f"{nombre_ag} requisó {arma_real} a {usuario.mention}.", color=0xFF0000)
+        await ctx.send(embed=embed)
+        await self.log("PDA_REQUISAR", f"{nombre_ag} requisó {arma_real} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='guardar')
+    async def pda_guardar(self, ctx, usuario: discord.Member, *, item: str):
+        if usuario.bot:
+            return await ctx.send(embed=embed_error("No puedes guardar evidencia de un bot."))
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_target = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        armas = await db.get_armas_equipadas(usuario.id)
+        item_real = next((k for k in armas if k.lower() == item.lower()), None)
+        if item_real:
+            await db.execute("DELETE FROM armas_equipadas WHERE user_id = ? AND arma = ?", (usuario.id, item_real))
+            await db.add_evidence(ctx.author.id, usuario.id, item_real, 1)
+            embed = discord.Embed(title="📦 EVIDENCIA GUARDADA", description=f"{nombre_ag} guardó **{item_real}** de {nombre_target}.", color=0x3498DB)
+            await ctx.send(embed=embed)
+            await self.log("PDA_GUARDAR", f"{nombre_ag} guardó {item_real} de {usuario.name}")
+            return
+        inv = await db.get_inventory(usuario.id, "personal")
+        item_real = next((k for k in inv if k.lower() == item.lower()), None)
+        if not item_real:
+            return await ctx.send(embed=embed_error(f"{nombre_target} no tiene {item}."))
+        await db.remove_item(usuario.id, "personal", item_real, 1)
+        await db.add_evidence(ctx.author.id, usuario.id, item_real, 1)
+        embed = discord.Embed(title="📦 EVIDENCIA GUARDADA", description=f"{nombre_ag} guardó **{item_real}** de {nombre_target}.", color=0x3498DB)
+        await ctx.send(embed=embed)
+        await self.log("PDA_GUARDAR", f"{nombre_ag} guardó {item_real} de {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='evidencia')
+    async def pda_evidencia(self, ctx, usuario: Optional[discord.Member] = None):
+        if usuario is None:
+            usuario = ctx.author
+        evidencias = await db.get_evidence(usuario.id)
+        if not evidencias:
+            return await ctx.send(embed=embed_info("📦 Evidencia", f"No hay evidencia registrada para {usuario.display_name}."))
+        descripcion = ""
+        for evidencia in evidencias[:10]:
+            agente = ctx.guild.get_member(evidencia['agente_id'])
+            nombre_agente = agente.display_name if agente else str(evidencia['agente_id'])
+            descripcion += f"• **{evidencia['item']}** x{evidencia['quantity']} — Guardado por {nombre_agente} el {evidencia['fecha'][:16]}\n"
+        embed = discord.Embed(title=f"📦 Evidencia de {usuario.display_name}", description=descripcion, color=0x3498DB)
+        embed.set_footer(text="Usa -pda guardar @usuario <item> para agregar evidencia")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='licencia')
+    async def pda_licencia(self, ctx, usuario: discord.Member, tipo_licencia: str, accion: str = "dar"):
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        licencia = tipo_licencia.lower()
+        if accion.lower() == "dar":
+            await db.dar_licencia(usuario.id, licencia)
+            embed = discord.Embed(title="📋 LICENCIA OTORGADA", description=f"{nombre_ag} concedió {licencia} a {usuario.mention}.", color=0x00FF00)
+        else:
+            await db.quitar_licencia(usuario.id, licencia)
+            embed = discord.Embed(title="📋 LICENCIA REVOCADA", description=f"{nombre_ag} revocó {licencia} a {usuario.mention}.", color=0xFF0000)
+        await ctx.send(embed=embed)
+        await self.log("PDA_LICENCIA", f"{nombre_ag} {accion} {licencia} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='buscar')
+    async def pda_buscar(self, ctx, *, nombre: str):
+        rows = await db.fetchall("SELECT user_id, dni_nombre, dni_apellidos FROM users WHERE dni_nombre LIKE ? OR dni_apellidos LIKE ?", (f'%{nombre}%', f'%{nombre}%'))
+        if not rows:
+            return await ctx.send(embed=embed_error("No se encontraron resultados."))
+        embed = discord.Embed(title=f"🔍 Resultados para '{nombre}'", color=0x3498DB)
+        for uid, nombre, apellidos in rows[:5]:
+            user = ctx.guild.get_member(uid)
+            nombre_completo = f"{nombre} {apellidos}".strip()
+            embed.add_field(name=nombre_completo, value=f"ID: {uid}\nUsuario: {user.mention if user else uid}", inline=False)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='crear-placa')
+    async def crear_placa(self, ctx, usuario: discord.Member, numero: str):
+        has_lspd_role = any(role.id == ROL_LSPD_ID or "LSPD" in role.name.upper() for role in ctx.author.roles)
+        has_owner = ctx.author.id in OWNER_IDS
+        if not (has_lspd_role or has_owner):
+            return await ctx.send(embed=embed_error("Necesitas rol LSPD o ser owner para crear una placa policial."))
+        numero = numero.strip().upper()
+        if numero.startswith("LSPD-") or numero.startswith("LPSD-"):
+            numero = numero.split('-', 1)[1]
+        if not numero.isdigit() or len(numero) != 4:
+            return await ctx.send(embed=embed_error("El número de placa debe ser exactamente 4 dígitos (ej: 0001 o LSPD-0001)."))
+        placa_completa = f"LSPD-{numero}"
+        user_state = await db.get_user_state(usuario.id)
+        if user_state.get('placa'):
+            return await ctx.send(embed=embed_error(f"{usuario.display_name} ya tiene una placa asignada: {user_state['placa']}. Usa `-pda quitar-placa` si quieres cambiarla."))
+        await db.update_user_state(usuario.id, placa=placa_completa)
+        embed = discord.Embed(title="✅ PLACA ASIGNADA", description=f"Se ha asignado la placa **{placa_completa}** a {usuario.mention}.", color=0x00FF00)
+        await ctx.send(embed=embed)
+        await self.log("CREAR_PLACA", f"{ctx.author.name} asignó placa {placa_completa} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='multas')
+    async def multas(self, ctx):
+        uid = ctx.author.id
+        multas = await db.get_multas_pendientes(uid)
+        if not multas:
+            return await ctx.send(embed=embed_info("📄 Multas", "No tienes multas pendientes."))
+        embed = discord.Embed(title="📄 MIS MULTAS", color=0xFFA500)
+        total = 0
+        for i, m in enumerate(multas, 1):
+            embed.add_field(name=f"#{i} — **${m['cantidad']:,}**", value=f"Motivo: {m['motivo']}\nAgente: {m['agente']}\nFecha: {m['fecha'][:10]}", inline=False)
+            total += m['cantidad']
+        embed.add_field(name="Total pendiente", value=f"**${total:,}**", inline=False)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='des-esposar')
+    async def des_esposar(self, ctx, usuario: discord.Member, *, motivo: str):
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_det = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        embed = discord.Embed(title="🔓 DES-ESPOSADO", description=f"{nombre_ag} ha des-esposado a {nombre_det}. Motivo: {motivo}", color=0x00FF00)
+        await ctx.send(embed=embed)
+        await self.log("PDA_DES-ESPOSAR", f"{nombre_ag} des-esposó a {nombre_det}: {motivo}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @pda.command(name='quitar-placa')
+    async def pda_quitar_placa(self, ctx):
+        user_state = await db.get_user_state(ctx.author.id)
+        if not user_state.get('placa'):
+            return await ctx.send(embed=embed_error("No tienes una placa asignada."))
+        await db.update_user_state(ctx.author.id, placa=None)
+        embed = discord.Embed(title="🗑️ PLACA ELIMINADA", description="Tu placa policial ha sido eliminada.", color=0xFF6600)
+        await ctx.send(embed=embed)
+        await self.log("QUITAR_PLACA", f"{ctx.author.name} eliminó su placa")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
 # ==================== COG: Móvil ====================
 class Movil(BaseCog):
@@ -3060,7 +3687,7 @@ class Periodico(BaseCog):
         except:
             pass
 
-# ==================== COG: Admin ====================
+# ==================== COG: Admin (con nuevo comando -editar-item) ====================
 class Admin(BaseCog):
     @commands.command(name='say')
     @tiene_rol_equipo_especial()
@@ -3519,6 +4146,159 @@ class Admin(BaseCog):
         await ctx.channel.purge(limit=cantidad + 1)
         await ctx.send(embed=embed_success("🗑️ Mensajes eliminados", f"Se han eliminado {cantidad} mensajes."), delete_after=5)
 
+    # NUEVO COMANDO -editar-item
+    @commands.command(name='editar-item')
+    @tiene_rol_equipo_especial()
+    async def editar_item(self, ctx, *, nombre_item: str):
+        """Permite editar un item de la tienda usando un menú interactivo.
+        Formato: -editar-item @item"""
+        nombre_item = nombre_item.strip()
+        item_data = TIENDA_ITEMS_DICT.get(nombre_item.lower())
+        if not item_data:
+            await ctx.send(embed=embed_error("***No se encontró el item especificado.***"))
+            return
+        item_original = item_data
+
+        view = EditarItemView(ctx.author.id, nombre_item, item_original)
+        embed = discord.Embed(
+            title="📝 ***Editar Item***",
+            description=f"***Selecciona qué deseas modificar de `{nombre_item}`.***",
+            color=0x3498DB
+        )
+        await ctx.send(embed=embed, view=view)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+class EditarItemView(discord.ui.View):
+    def __init__(self, user_id, item_name, item_data):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.item_name = item_name
+        self.item_data = item_data
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("***No eres el dueño de esta solicitud.***", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.select(placeholder="***Selecciona una opción***", options=[
+        discord.SelectOption(label="***Editar Nombre***", value="nombre"),
+        discord.SelectOption(label="***Editar Precio***", value="precio"),
+        discord.SelectOption(label="***Editar Descripción***", value="descripcion"),
+    ])
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        opcion = select.values[0]
+        if opcion == "nombre":
+            modal = EditarNombreModal(self.item_name, self.item_data)
+            await interaction.response.send_modal(modal)
+        elif opcion == "precio":
+            modal = EditarPrecioModal(self.item_name, self.item_data)
+            await interaction.response.send_modal(modal)
+        elif opcion == "descripcion":
+            modal = EditarDescripcionModal(self.item_name, self.item_data)
+            await interaction.response.send_modal(modal)
+
+class EditarNombreModal(discord.ui.Modal, title="***Editar Nombre del Item***"):
+    def __init__(self, item_name, item_data):
+        super().__init__()
+        self.item_name = item_name
+        self.item_data = item_data
+    nuevo_nombre = discord.ui.TextInput(label="***Nuevo nombre***", placeholder="Ej: Súper Hacha", max_length=50)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        nuevo = self.nuevo_nombre.value.strip()
+        if not nuevo:
+            await interaction.response.send_message("***El nombre no puede estar vacío.***", ephemeral=True)
+            return
+        if nuevo.lower() in TIENDA_ITEMS_DICT and nuevo.lower() != self.item_name.lower():
+            await interaction.response.send_message("***Ya existe un item con ese nombre.***", ephemeral=True)
+            return
+        custom_items = []
+        if os.path.exists(CUSTOM_ITEMS_FILE):
+            with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+                custom_items = json.load(f)
+        encontrado = False
+        for i, ci in enumerate(custom_items):
+            if ci[0].lower() == self.item_name.lower():
+                custom_items[i][0] = nuevo
+                encontrado = True
+                break
+        if not encontrado:
+            custom_items.append([nuevo, self.item_data[1], self.item_data[2], self.item_data[3]])
+        with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
+            json.dump(custom_items, f, indent=2, ensure_ascii=False)
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        await interaction.response.send_message(f"***Nombre del item actualizado a `{nuevo}`.***", ephemeral=True)
+
+class EditarPrecioModal(discord.ui.Modal, title="***Editar Precio del Item***"):
+    def __init__(self, item_name, item_data):
+        super().__init__()
+        self.item_name = item_name
+        self.item_data = item_data
+    nuevo_precio = discord.ui.TextInput(label="***Nuevo precio***", placeholder="Ej: 1500", max_length=10)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            nuevo = int(self.nuevo_precio.value)
+            if nuevo <= 0:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("***El precio debe ser un número entero positivo.***", ephemeral=True)
+            return
+        custom_items = []
+        if os.path.exists(CUSTOM_ITEMS_FILE):
+            with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+                custom_items = json.load(f)
+        encontrado = False
+        for i, ci in enumerate(custom_items):
+            if ci[0].lower() == self.item_name.lower():
+                custom_items[i][1] = nuevo
+                encontrado = True
+                break
+        if not encontrado:
+            custom_items.append([self.item_name, nuevo, self.item_data[2], self.item_data[3]])
+        with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
+            json.dump(custom_items, f, indent=2, ensure_ascii=False)
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        await interaction.response.send_message(f"***Precio del item actualizado a `${nuevo}`.***", ephemeral=True)
+
+class EditarDescripcionModal(discord.ui.Modal, title="***Editar Descripción del Item***"):
+    def __init__(self, item_name, item_data):
+        super().__init__()
+        self.item_name = item_name
+        self.item_data = item_data
+    nueva_desc = discord.ui.TextInput(label="***Nueva descripción***", placeholder="Describe el item", style=discord.TextStyle.paragraph, max_length=200)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        nueva = self.nueva_desc.value.strip()
+        if not nueva:
+            nueva = "Sin descripción"
+        custom_items = []
+        if os.path.exists(CUSTOM_ITEMS_FILE):
+            with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+                custom_items = json.load(f)
+        encontrado = False
+        for i, ci in enumerate(custom_items):
+            if ci[0].lower() == self.item_name.lower():
+                custom_items[i][3] = nueva
+                encontrado = True
+                break
+        if not encontrado:
+            custom_items.append([self.item_name, self.item_data[1], self.item_data[2], nueva])
+        with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
+            json.dump(custom_items, f, indent=2, ensure_ascii=False)
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        await interaction.response.send_message(f"***Descripción del item actualizada.***", ephemeral=True)
+
 # ==================== COG: Roleplay ====================
 class Roleplay(BaseCog):
     @commands.command(name='me')
@@ -3735,7 +4515,6 @@ class Soporte(BaseCog):
             await ctx.message.delete()
         except:
             pass
-        # Nota: el rol de mención podría ser el antiguo, se mantiene por compatibilidad pero se recomienda usar el nuevo.
         await ctx.send(content="<@&1450592205898252381>", embed=embed)
         await self.log("STATUS", f"{ctx.author.name} — {iniciador} | {ciudadanos}p {policias}pol {soporte}sop")
 
@@ -3772,7 +4551,7 @@ class Soporte(BaseCog):
     @tiene_rol_iniciador()
     async def cierre_rol(self, ctx):
         canal_votacion = ctx.guild.get_channel(1450592843751100622)
-        rol_usuario = ctx.guild.get_role(ROL_USUARIO_ID)  # Usamos la nueva ID
+        rol_usuario = ctx.guild.get_role(ROL_USUARIO_ID)
         mensaje = (
             "@everyone\n\n"
             "# 📢 CIERRE DE ROL\n\n"
@@ -5297,7 +6076,7 @@ async def on_command_error(ctx, error):
 async def main():
     async with bot:
         await db.init()
-        # Cargar todos los cogs (todos los definidos arriba)
+        # Cargar todos los cogs
         await bot.add_cog(Principal(bot))
         await bot.add_cog(Drogas(bot))
         await bot.add_cog(Vehiculos(bot))
