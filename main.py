@@ -639,13 +639,13 @@ class Database:
                 rows = await db.execute("SELECT user_id, pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep")
                 async for uid, p1, p2, p3 in rows:
                     if p1:
-                        await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
+                        await db.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
                                            (uid, "pacific", 1, True))
                     if p2:
-                        await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
+                        await db.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
                                            (uid, "pacific", 2, True))
                     if p3:
-                        await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
+                        await db.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
                                            (uid, "pacific", 3, True))
                 await db.execute("DROP TABLE heist_prep")
                 print("✅ Datos migrados de heist_prep a heist_preparations")
@@ -788,6 +788,7 @@ class Database:
         return None
 
     async def set_dni(self, user_id, data):
+        await self.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
         await self.execute("""
             UPDATE users SET dni_nombre=?, dni_apellidos=?, dni_edad=?, dni_genero=?, dni_nacionalidad=?,
             dni_color_ojos=?, dni_altura=?, dni_profesion=?, dni_numero=?, dni_fecha_creacion=?
@@ -4151,16 +4152,20 @@ class Admin(BaseCog):
         except:
             pass
 
-    @commands.command(name='anuncio')
-    @tiene_rol_equipo_especial()
-    async def anuncio(self, ctx, *, mensaje: str):
-        embed = discord.Embed(title="📢 ANUNCIO OFICIAL", description=mensaje, color=0xFFD700, timestamp=datetime.now())
-        embed.set_footer(text=f"Publicado por {ctx.author.display_name}")
-        await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+    @app_commands.command(name='anuncios', description="Publica un anuncio oficial del servidor (solo Administración/Equipo Especial)")
+    @app_commands.describe(mensaje="Mensaje del anuncio")
+    async def anuncios(self, interaction: discord.Interaction, mensaje: str):
+        # Verificar permisos: admin o equipo especial
+        roles_permitidos = {ROL_ADMIN_ID, ROL_EQUIPO_ESPECIAL_ID}
+        tiene_permiso = any(r.id in roles_permitidos for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
+        if not tiene_permiso:
+            return await interaction.response.send_message(embed=embed_error("No tienes permiso para usar este comando."), ephemeral=True)
+        embed = discord.Embed(color=0x2B2D31, timestamp=datetime.now())
+        embed.set_author(name="NOVA DEVELOPERS", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
+        embed.add_field(name="📢 ANUNCIO ADMINISTRATIVO", value=f"{mensaje}", inline=False)
+        embed.add_field(name="​", value="━━━━━━━━━━━━━━━━━━━━\n📣 Sistema oficial de comunicaciones\n⚡ Mantente atento a próximas novedades", inline=False)
+        embed.set_footer(text=f"Nova Agora RP • Administración Oficial")
+        await interaction.response.send_message("@everyone", embed=embed)
 
     @commands.command(name='kick')
     @tiene_rol_equipo_especial()
