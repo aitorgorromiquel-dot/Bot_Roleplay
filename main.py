@@ -4153,21 +4153,6 @@ class Admin(BaseCog):
         except:
             pass
 
-    @app_commands.command(name='anuncios', description="Publica un anuncio oficial del servidor (solo Administración/Equipo Especial)")
-    @app_commands.describe(mensaje="Mensaje del anuncio")
-    async def anuncios(self, interaction: discord.Interaction, mensaje: str):
-        # Verificar permisos: admin o equipo especial
-        roles_permitidos = {ROL_ADMIN_ID, ROL_EQUIPO_ESPECIAL_ID}
-        tiene_permiso = any(r.id in roles_permitidos for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
-        if not tiene_permiso:
-            return await interaction.response.send_message(embed=embed_error("No tienes permiso para usar este comando."), ephemeral=True)
-        embed = discord.Embed(color=0x2B2D31, timestamp=datetime.now())
-        embed.set_author(name="NOVA DEVELOPERS", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-        embed.add_field(name="📢 ANUNCIO ADMINISTRATIVO", value=f"{mensaje}", inline=False)
-        embed.add_field(name="​", value="━━━━━━━━━━━━━━━━━━━━\n📣 Sistema oficial de comunicaciones\n⚡ Mantente atento a próximas novedades", inline=False)
-        embed.set_footer(text=f"Nova Agora RP • Administración Oficial")
-        await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
-
     @commands.command(name='kick')
     @tiene_rol_equipo_especial()
     async def kick(self, ctx, miembro: discord.Member, *, razon: str = "Sin razón"):
@@ -6482,6 +6467,20 @@ intents.webhooks = True
 bot = commands.Bot(command_prefix=get_pre, intents=intents, help_command=None)
 
 @bot.event
+@bot.tree.command(name="anuncios", description="Publica un anuncio oficial del servidor (solo Administración/Equipo Especial)")
+@app_commands.describe(mensaje="Mensaje del anuncio")
+async def anuncios(interaction: discord.Interaction, mensaje: str):
+    roles_permitidos = {ROL_ADMIN_ID, ROL_EQUIPO_ESPECIAL_ID}
+    tiene_permiso = any(r.id in roles_permitidos for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
+    if not tiene_permiso:
+        return await interaction.response.send_message(embed=embed_error("No tienes permiso para usar este comando."), ephemeral=True)
+    embed = discord.Embed(color=0x2B2D31, timestamp=datetime.now())
+    embed.set_author(name="NOVA DEVELOPERS", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
+    embed.add_field(name="📢 ANUNCIO ADMINISTRATIVO", value=mensaje, inline=False)
+    embed.add_field(name="\u200b", value="━━━━━━━━━━━━━━━━━━━━\n📣 Sistema oficial de comunicaciones\n⚡ Mantente atento a próximas novedades", inline=False)
+    embed.set_footer(text="Nova Agora RP • Administración Oficial")
+    await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
+
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user}")
     if bot.guilds:
