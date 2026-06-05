@@ -6466,7 +6466,6 @@ intents.guild_messages = True
 intents.webhooks = True
 bot = commands.Bot(command_prefix=get_pre, intents=intents, help_command=None)
 
-@bot.event
 @bot.tree.command(name="anuncios", description="Publica un anuncio oficial del servidor (solo Administración/Equipo Especial)")
 @app_commands.describe(mensaje="Mensaje del anuncio")
 async def anuncios(interaction: discord.Interaction, mensaje: str):
@@ -6481,6 +6480,7 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
     embed.set_footer(text="Nova Agora RP • Administración Oficial")
     await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
+@bot.event
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user}")
     if bot.guilds:
