@@ -1,5 +1,5 @@
 # ====================================================
-# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA
+# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA CORREGIDA
 # CON SISTEMA DE DROGAS REAJUSTADO Y EDICIÓN DE ITEMS
 # TODOS LOS COGS, FUNCIONES Y COMANDOS
 # ROL CIUDADANO: 1450592204849418294
@@ -992,10 +992,6 @@ class Database:
     # Emojis personalizables
     async def set_emoji(self, key, emoji):
         await self.execute("INSERT OR REPLACE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
-
-    async def get_emoji(self, key):
-        row = await self.fetchone("SELECT emoji FROM emoji_settings WHERE key = ?", (key,))
-        return row[0] if row and row[0] else DEFAULT_EMOJIS.get(key, "⚙️")
 
     async def get_all_emojis(self):
         rows = await self.fetchall("SELECT key, emoji FROM emoji_settings")
@@ -4515,7 +4511,8 @@ class Soporte(BaseCog):
             await ctx.message.delete()
         except:
             pass
-        await ctx.send(content="<@&1450592205898252381>", embed=embed)
+        # Usar el nuevo rol ciudadano (ID actualizada)
+        await ctx.send(content=f"<@&{ROL_USUARIO_ID}>", embed=embed)
         await self.log("STATUS", f"{ctx.author.name} — {iniciador} | {ciudadanos}p {policias}pol {soporte}sop")
 
     @commands.command(name='votacion')
