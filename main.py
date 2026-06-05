@@ -39,7 +39,7 @@ CANAL_VOICE_CATEGORY = 0
 
 # IDs de roles (actualizadas)
 ROL_LSPD_ID = 1450592202165321759
-OWNER_IDS = [1059183337832468510, 729054497233436775]  # Cámbialos
+OWNER_IDS = [1059183337832468510, 729054497233436775, 1259792008248037442]
 
 ROL_INICIADOR_ID = 1450592126491558131
 ROL_EQUIPO_ESPECIAL_ID = 1450592064365658134
@@ -6070,6 +6070,19 @@ class Kits(BaseCog):
 
 # ==================== COG: OwnerMenu ====================
 class OwnerMenu(BaseCog):
+    @app_commands.command(name='actualizar-comandos', description="Fuerza la sincronización de todos los slash commands (solo Owners)")
+    async def actualizar_comandos(self, interaction: discord.Interaction):
+        if interaction.user.id not in OWNER_IDS:
+            return await interaction.response.send_message(embed=embed_error("Solo los Owners pueden usar este comando."), ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            synced = await self.bot.tree.sync()
+            for guild in self.bot.guilds:
+                await self.bot.tree.sync(guild=discord.Object(id=guild.id))
+            await interaction.followup.send(embed=embed_success("✅ Slash commands sincronizados", f"Se sincronizaron **{len(synced)}** comandos globales correctamente.", 0x00FF00), ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(embed=embed_error(f"Error al sincronizar: {str(e)[:200]}"), ephemeral=True)
+
     @commands.group(name='owner', invoke_without_command=True)
     @is_owner()
     async def owner(self, ctx):
@@ -6290,7 +6303,7 @@ class Disponibilidad(BaseCog):
         if servicio == 'lspd':
             rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
             if rol_lspd:
-                await ctx.send(f"🚨 **CORRAN EN VENIR, SE ESTÁ PRODUCIENDO UN INCIDENTE Y SE REQUIERE PRESENCIA POLICIAL DE INMEDIATO.** 🚨\n{rol_lspd.mention}")
+                await ctx.send(rol_lspd.mention)
             if cantidad == 0:
                 estado = "🔴 SATURADO"
                 desc = "⚠️ Actualmente no hay unidades disponibles.\n🚨 Todas las patrullas se encuentran atendiendo incidencias."
