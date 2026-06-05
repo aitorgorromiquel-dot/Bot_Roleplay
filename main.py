@@ -1,6 +1,6 @@
 # ====================================================
-# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA CORREGIDA
-# CON SISTEMA DE DROGAS REAJUSTADO Y EDICIÓN DE ITEMS
+# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA
+# CON SISTEMA DE PREPARATORIAS PARA ATRACOS (GTA ONLINE STYLE)
 # TODOS LOS COGS, FUNCIONES Y COMANDOS
 # ROL CIUDADANO: 1450592204849418294
 # ====================================================
@@ -159,17 +159,121 @@ TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in _custom_items]
 TIENDA_ITEMS_DICT = {name.lower(): (name, precio, emoji, desc) for name, precio, emoji, desc in TIENDA_ITEMS_FULL}
 ILLEGAL_TIENDA_ITEMS = {"dispositivo de hackeo", "termita", "tarjeta de crédito", "gas lacrimógeno", "pasamontañas", "bolsas atraco", "ganzúa", "mascaras"}
 
+# Definición completa de atracos con preparatorias
 HEIST_DEFINITIONS = {
-    "badu": {"nombre": "Badu", "cooldown": 600, "items": ["Bolsas Atraco", "Pasamontañas"], "police": "2 policías", "reward": (1200,2800), "min_level":1, "description":"Atraco básico", "image":"https://i.imgur.com/6q1z4wP.png"},
-    "yellowjack": {"nombre": "Yellow Jack", "cooldown": 1800, "items": ["Mascaras", "Ganzúa"], "police": "3 policías", "reward": (3000,5500), "min_level":5, "description":"Tienda nocturna", "image":"https://i.imgur.com/9BkYy3M.png"},
-    "ammu": {"nombre": "Ammu-Nation", "cooldown": 3600, "items": ["Dispositivo de hackeo", "Gas lacrimógeno"], "police": "4 policías", "reward": (6000,12000), "min_level":10, "description":"Tienda de armas", "image":"https://i.imgur.com/5XkZq5p.png"},
-    "vanilla": {"nombre": "Vanilla Unicorn", "cooldown": 7200, "items": ["Termita", "Pasamontañas"], "police": "5 policías", "reward": (12000,18000), "min_level":15, "description":"Club nocturno", "image":"https://i.imgur.com/3pG7F2d.png"},
-    "yate": {"nombre": "Yate", "cooldown": 9000, "items": ["Tarjeta de crédito", "Mascaras"], "police": "5 policías", "reward": (18000,26000), "min_level":20, "description":"Emboscada en alta mar", "image":"https://i.imgur.com/h8G7Y2V.png"},
-    "centro": {"nombre": "Centro Comercial", "cooldown": 10800, "items": ["Termita", "Gas lacrimógeno", "Pasamontañas"], "police": "6 policías", "reward": (22000,32000), "min_level":25, "description":"Centro comercial", "image":"https://i.imgur.com/JY4N7Qc.png"},
-    "joyeria": {"nombre": "Joyería", "cooldown": 259200, "items": ["Ganzúa", "Termita", "Mascaras"], "police": "7 policías", "reward": (45000,65000), "min_level":30, "description":"Joyería", "image":"https://i.imgur.com/2aUxZcN.png"},
-    "pacific": {"nombre": "Pacific Bank", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías", "reward": (250000,350000), "min_level":60, "description":"Golpe maestro", "image":"https://i.imgur.com/1rQn0pL.png"},
-    "paleto": {"nombre": "Banco Paleto", "cooldown": 1036800, "items": ["Dispositivo de hackeo", "Pasamontañas", "Bolsas Atraco"], "police": "8 policías", "reward": (120000,160000), "min_level":50, "description":"Atraco rural", "image":"https://i.imgur.com/4XKlj8K.png"},
-    "central": {"nombre": "Banco Central", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"], "police": "10 policías", "reward": (180000,240000), "min_level":60, "description":"Operación final", "image":"https://i.imgur.com/7W6c3qB.png"},
+    "badu": {
+        "nombre": "Badu", "cooldown": 600, "items": ["Bolsas Atraco", "Pasamontañas"],
+        "police": "2 policías", "reward": (1200,2800), "min_level":1, "description":"Atraco básico",
+        "image":"https://i.imgur.com/6q1z4wP.png",
+        "preparations": [
+            "🚗 Roba un vehículo de huida."
+        ]
+    },
+    "yellowjack": {
+        "nombre": "Yellow Jack", "cooldown": 1800, "items": ["Mascaras", "Ganzúa"],
+        "police": "3 policías", "reward": (3000,5500), "min_level":5, "description":"Tienda nocturna",
+        "image":"https://i.imgur.com/9BkYy3M.png",
+        "preparations": [
+            "🚗 Roba un vehículo de huida.",
+            "🔧 Consigue herramientas para forzar acceso."
+        ]
+    },
+    "ammu": {
+        "nombre": "Ammu-Nation", "cooldown": 3600, "items": ["Dispositivo de hackeo", "Gas lacrimógeno"],
+        "police": "4 policías", "reward": (6000,12000), "min_level":10, "description":"Tienda de armas",
+        "image":"https://i.imgur.com/5XkZq5p.png",
+        "preparations": [
+            "🚐 Roba una furgoneta.",
+            "🪪 Roba credenciales de acceso.",
+            "📦 Consigue equipamiento para transportar mercancía."
+        ]
+    },
+    "vanilla": {
+        "nombre": "Vanilla Unicorn", "cooldown": 7200, "items": ["Termita", "Pasamontañas"],
+        "police": "5 policías", "reward": (12000,18000), "min_level":15, "description":"Club nocturno",
+        "image":"https://i.imgur.com/3pG7F2d.png",
+        "preparations": [
+            "🚗 Roba vehículo discreto.",
+            "📹 Consigue información interna.",
+            "🔑 Obtén acceso al almacén."
+        ]
+    },
+    "yate": {
+        "nombre": "Yate", "cooldown": 9000, "items": ["Tarjeta de crédito", "Mascaras"],
+        "police": "5 policías", "reward": (18000,26000), "min_level":20, "description":"Emboscada en alta mar",
+        "image":"https://i.imgur.com/h8G7Y2V.png",
+        "preparations": [
+            "🚁 Roba un helicóptero.",
+            "🔫 Consigue armamento.",
+            "📡 Intercepta comunicaciones.",
+            "🗺️ Obtén coordenadas del objetivo."
+        ]
+    },
+    "centro": {
+        "nombre": "Centro Comercial", "cooldown": 10800, "items": ["Termita", "Gas lacrimógeno", "Pasamontañas"],
+        "police": "6 policías", "reward": (22000,32000), "min_level":25, "description":"Centro comercial",
+        "image":"https://i.imgur.com/JY4N7Qc.png",
+        "preparations": [
+            "🚐 Vehículo de carga.",
+            "📹 Desactivar cámaras.",
+            "🔑 Conseguir acceso.",
+            "📦 Equipamiento de transporte."
+        ]
+    },
+    "joyeria": {
+        "nombre": "Joyería", "cooldown": 259200, "items": ["Ganzúa", "Termita", "Mascaras"],
+        "police": "7 policías", "reward": (45000,65000), "min_level":30, "description":"Joyería",
+        "image":"https://i.imgur.com/2aUxZcN.png",
+        "preparations": [
+            "🚗 Vehículo de huida.",
+            "📹 Información de seguridad.",
+            "🔧 Herramientas de corte.",
+            "💻 Equipo electrónico.",
+            "🎭 Material para ocultar identidad."
+        ]
+    },
+    "paleto": {
+        "nombre": "Banco Paleto", "cooldown": 1036800, "items": ["Dispositivo de hackeo", "Pasamontañas", "Bolsas Atraco"],
+        "police": "8 policías", "reward": (120000,160000), "min_level":50, "description":"Atraco rural",
+        "image":"https://i.imgur.com/4XKlj8K.png",
+        "preparations": [
+            "🚐 Furgón de transporte.",
+            "📡 Interceptar comunicaciones.",
+            "💳 Conseguir tarjetas de acceso.",
+            "🔧 Herramientas de perforación.",
+            "📹 Neutralizar vigilancia.",
+            "🗺️ Reconocimiento de la zona."
+        ]
+    },
+    "central": {
+        "nombre": "Banco Central", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"],
+        "police": "10 policías", "reward": (180000,240000), "min_level":60, "description":"Operación final",
+        "image":"https://i.imgur.com/7W6c3qB.png",
+        "preparations": [
+            "🚛 Vehículo blindado.",
+            "📹 Información interna.",
+            "💳 Credenciales.",
+            "🔧 Equipamiento especializado.",
+            "📡 Sabotaje de comunicaciones.",
+            "🗺️ Reconocimiento.",
+            "📦 Material para extracción del dinero."
+        ]
+    },
+    "pacific": {
+        "nombre": "Pacific Bank", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"],
+        "police": "10 policías", "reward": (250000,350000), "min_level":60, "description":"Golpe maestro",
+        "image":"https://i.imgur.com/1rQn0pL.png",
+        "preparations": [
+            "🚛 Roba una furgoneta de asalto.",
+            "🚁 Roba un helicóptero.",
+            "📹 Consigue acceso a las cámaras.",
+            "🔧 Consigue herramientas avanzadas.",
+            "💳 Roba credenciales bancarias.",
+            "📡 Intercepta comunicaciones.",
+            "🗺️ Obtén planos internos.",
+            "📦 Consigue equipo para transportar el dinero."
+        ]
+    }
 }
 
 APUESTA_MIN, APUESTA_MAX, MAX_DROGA_POR_COMPRA = 100, 50000, 27
@@ -478,13 +582,14 @@ class Database:
             """)
             for key, emoji in DEFAULT_EMOJIS.items():
                 await db.execute("INSERT OR IGNORE INTO emoji_settings (key, emoji) VALUES (?, ?)", (key, emoji))
-            # Preparatorias de atracos (Pacific Bank)
+            # Preparatorias de atracos (nueva tabla genérica)
             await db.execute("""
-                CREATE TABLE IF NOT EXISTS heist_prep (
-                    user_id INTEGER PRIMARY KEY,
-                    pacific_prep1 BOOLEAN DEFAULT 0,
-                    pacific_prep2 BOOLEAN DEFAULT 0,
-                    pacific_prep3 BOOLEAN DEFAULT 0
+                CREATE TABLE IF NOT EXISTS heist_preparations (
+                    user_id INTEGER,
+                    heist_id TEXT,
+                    prep_num INTEGER,
+                    completed BOOLEAN DEFAULT 0,
+                    PRIMARY KEY (user_id, heist_id, prep_num)
                 )
             """)
             # Emojis animados
@@ -505,6 +610,25 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_niveles_nivel ON niveles(nivel)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_user ON antiraid_actions(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_timestamp ON antiraid_actions(timestamp)")
+
+            # Migración de datos antiguos de heist_prep a la nueva tabla (si existe)
+            await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='heist_prep'")
+            if await db.fetchone():
+                # Migrar datos de Pacific Bank
+                rows = await db.fetchall("SELECT user_id, pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep")
+                for uid, p1, p2, p3 in rows:
+                    if p1:
+                        await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
+                                           (uid, "pacific", 1, True))
+                    if p2:
+                        await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
+                                           (uid, "pacific", 2, True))
+                    if p3:
+                        await self.execute("INSERT OR IGNORE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, ?)",
+                                           (uid, "pacific", 3, True))
+                # Eliminar tabla antigua
+                await db.execute("DROP TABLE heist_prep")
+                print("✅ Datos migrados de heist_prep a heist_preparations")
 
             await db.commit()
             print("✅ Base de datos inicializada con todas las tablas e índices.")
@@ -1010,16 +1134,44 @@ class Database:
         """, (user1, user2, user2, user1))
         return [{"from": r[0], "message": r[1], "sent_at": r[2]} for r in rows]
 
-    # Preparatorias Pacific Bank
-    async def get_heist_prep(self, user_id):
-        row = await self.fetchone("SELECT pacific_prep1, pacific_prep2, pacific_prep3 FROM heist_prep WHERE user_id = ?", (user_id,))
-        if row:
-            return {"pacific_prep1": bool(row[0]), "pacific_prep2": bool(row[1]), "pacific_prep3": bool(row[2])}
-        return {"pacific_prep1": False, "pacific_prep2": False, "pacific_prep3": False}
+    # Preparatorias de atracos (nuevos métodos)
+    async def get_heist_preparations(self, user_id, heist_id):
+        """Devuelve un diccionario {prep_num: completed} para un atraco específico"""
+        rows = await self.fetchall("SELECT prep_num, completed FROM heist_preparations WHERE user_id = ? AND heist_id = ?",
+                                   (user_id, heist_id))
+        return {row[0]: bool(row[1]) for row in rows}
 
-    async def set_heist_prep(self, user_id, prep, value):
-        await self.execute(f"INSERT INTO heist_prep (user_id, {prep}) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET {prep} = ?",
-                           (user_id, value, value))
+    async def get_all_heist_preparations(self, user_id):
+        """Devuelve un diccionario {heist_id: {prep_num: completed}}"""
+        rows = await self.fetchall("SELECT heist_id, prep_num, completed FROM heist_preparations WHERE user_id = ?", (user_id,))
+        result = {}
+        for heist_id, prep_num, completed in rows:
+            if heist_id not in result:
+                result[heist_id] = {}
+            result[heist_id][prep_num] = bool(completed)
+        return result
+
+    async def complete_preparation(self, user_id, heist_id, prep_num):
+        """Marca una preparatoria como completada"""
+        await self.execute("INSERT OR REPLACE INTO heist_preparations (user_id, heist_id, prep_num, completed) VALUES (?, ?, ?, 1)",
+                           (user_id, heist_id, prep_num))
+
+    async def is_preparation_completed(self, user_id, heist_id, prep_num):
+        row = await self.fetchone("SELECT completed FROM heist_preparations WHERE user_id = ? AND heist_id = ? AND prep_num = ?",
+                                  (user_id, heist_id, prep_num))
+        return row is not None and bool(row[0])
+
+    async def are_all_preparations_completed(self, user_id, heist_id, total_preps):
+        """Verifica si todas las preparatorias del atraco están completadas"""
+        if total_preps == 0:
+            return True
+        completed_count = await self.fetchone("SELECT COUNT(*) FROM heist_preparations WHERE user_id = ? AND heist_id = ? AND completed = 1",
+                                               (user_id, heist_id))
+        return completed_count[0] >= total_preps if completed_count else False
+
+    async def reset_heist_preparations(self, user_id, heist_id):
+        """Resetea todas las preparatorias de un atraco (útil después de completar el robo)"""
+        await self.execute("DELETE FROM heist_preparations WHERE user_id = ? AND heist_id = ?", (user_id, heist_id))
 
     # Emojis animados
     async def add_animated_emoji(self, name, emoji_id, added_by):
@@ -1130,6 +1282,17 @@ def tiene_rol_usuario():
             return role in ctx.author.roles
         # Fallback: si el rol no existe, permitir a todos
         return True
+    return commands.check(predicate)
+
+def es_owner_o_mafia():
+    """Permite owners y miembros de la mafia (para saltar preparatorias)"""
+    async def predicate(ctx):
+        if ctx.author.id in OWNER_IDS:
+            return True
+        role = ctx.guild.get_role(ROL_MAFIA_ID)
+        if role and role in ctx.author.roles:
+            return True
+        return False
     return commands.check(predicate)
 
 class ConfirmView(discord.ui.View):
@@ -2550,7 +2713,7 @@ class Casino(BaseCog):
         except:
             pass
 
-# ==================== COG: Atracos ====================
+# ==================== COG: Atracos (modificado para usar preparatorias) ====================
 class Atracos(BaseCog):
     @commands.group(name='rob', aliases=['atraco'], invoke_without_command=True)
     @check_ban()
@@ -2569,10 +2732,10 @@ class Atracos(BaseCog):
                 cd = f"{segundos // 60}m"
             embed.add_field(
                 name=f"`-rob {heist_name}` — {info['nombre']}",
-                value=f"{info['description']}\n💰 ${info['reward'][0]:,}–${info['reward'][1]:,} | ⏱️ {cd} | {nivel}",
+                value=f"{info['description']}\n💰 ${info['reward'][0]:,}–${info['reward'][1]:,} | ⏱️ {cd} | {nivel} | 📋 {len(info['preparations'])} preparatorias",
                 inline=False
             )
-        embed.set_footer(text="Usa -rob <nombre> para iniciar | Requiere items en inventario")
+        embed.set_footer(text="Usa -rob <nombre> para iniciar | Requiere items en inventario y preparatorias completadas")
         await ctx.send(embed=embed)
         try:
             await ctx.message.delete()
@@ -2591,6 +2754,15 @@ class Atracos(BaseCog):
         embed.add_field(name="Dinero Total", value=f"${eco['cash'] + eco['bank']:,}", inline=True)
         atracos = await db.fetchone("SELECT COUNT(*) FROM atracos_logs WHERE user_id = ?", (uid,))
         embed.add_field(name="Atracos Realizados", value=f"{atracos[0] if atracos else 0}", inline=True)
+        # Mostrar progreso de preparatorias
+        prep_data = await db.get_all_heist_preparations(uid)
+        if prep_data:
+            prep_text = ""
+            for heist_id, preps in prep_data.items():
+                total = len(HEIST_DEFINITIONS[heist_id]["preparations"])
+                completadas = len([p for p in preps.values() if p])
+                prep_text += f"**{HEIST_DEFINITIONS[heist_id]['nombre']}:** {completadas}/{total}\n"
+            embed.add_field(name="📋 Progreso de Preparatorias", value=prep_text or "Ninguna", inline=False)
         await ctx.send(embed=embed)
         try:
             await ctx.message.delete()
@@ -2611,6 +2783,9 @@ class Atracos(BaseCog):
                 if item not in inv or inv[item] <= 0:
                     await ctx.send(embed=embed_error(f"Necesitas: **{item}**\nCompra en `-tienda` o `-tienda-ilegal`"))
                     return False
+            # Verificar preparatorias completadas (excepto para owners/mafia)
+            if not await self._verificar_preparatorias(ctx, heist_name):
+                return False
 
         embed = discord.Embed(
             title=f"🏴‍☠️ {heist['nombre']} — Información del Atraco",
@@ -2625,11 +2800,29 @@ class Atracos(BaseCog):
         embed.add_field(name="📝 Descripción", value=heist['description'], inline=False)
         if heist.get('items'):
             embed.add_field(name="🔧 Items Necesarios", value=", ".join(heist['items']), inline=False)
+        embed.add_field(name="📋 Preparatorias requeridas", value=f"{len(heist['preparations'])}/{len(heist['preparations'])} completadas" if await self._verificar_preparatorias(ctx, heist_name) else f"{await self._contar_preparatorias_completadas(ctx.author.id, heist_name)}/{len(heist['preparations'])} completadas", inline=False)
         embed.set_footer(text="Responde con ✅ para comenzar el atraco o ❌ para cancelar.")
         view = ConfirmView(ctx.author.id, timeout=30)
         await ctx.send(embed=embed, view=view)
         await view.wait()
         return view.value is True
+
+    async def _verificar_preparatorias(self, ctx, heist_name: str) -> bool:
+        """Verifica si el usuario tiene todas las preparatorias completadas. Owners y Mafia están exentos."""
+        if ctx.author.id in OWNER_IDS or (ctx.guild.get_role(ROL_MAFIA_ID) in ctx.author.roles):
+            return True
+        total_preps = len(HEIST_DEFINITIONS[heist_name]["preparations"])
+        if total_preps == 0:
+            return True
+        completadas = await db.are_all_preparations_completed(ctx.author.id, heist_name, total_preps)
+        if not completadas:
+            await ctx.send(embed=embed_error(f"❌ Debes completar todas las preparatorias de **{HEIST_DEFINITIONS[heist_name]['nombre']}** antes de realizar el atraco.\nUsa `-preparacion {heist_name} <número>` para avanzar."))
+            return False
+        return True
+
+    async def _contar_preparatorias_completadas(self, user_id: int, heist_name: str) -> int:
+        preps = await db.get_heist_preparations(user_id, heist_name)
+        return len([p for p in preps.values() if p])
 
     async def validate_heist(self, ctx, heist_name: str) -> tuple:
         if ctx.author.id in OWNER_IDS:
@@ -2642,10 +2835,10 @@ class Atracos(BaseCog):
         heist = HEIST_DEFINITIONS[heist_name]
         uid = ctx.author.id
 
-        if heist_name == "pacific":
-            preps = await db.get_heist_prep(uid)
-            if not (preps['pacific_prep1'] and preps['pacific_prep2'] and preps['pacific_prep3']):
-                await ctx.send(embed=embed_error("❌ Necesitas completar las 3 preparatorias para el Pacific Bank.\nUsa `-prep pacific1`, `-prep pacific2` y `-prep pacific3` en orden."))
+        # Verificar preparatorias (excepto para mafia/owners)
+        if not (ctx.author.id in OWNER_IDS or (ctx.guild.get_role(ROL_MAFIA_ID) in ctx.author.roles)):
+            if not await db.are_all_preparations_completed(uid, heist_name, len(heist["preparations"])):
+                await ctx.send(embed=embed_error(f"❌ Debes completar todas las preparatorias de **{heist['nombre']}** antes de realizar el atraco."))
                 return None, None
 
         ok, rest = await db.check_cooldown(uid, f"rob_{heist_name}", heist['cooldown'])
@@ -2685,6 +2878,8 @@ class Atracos(BaseCog):
             await db.add_xp(uid, xp_ganado, "heist")
             await db.inc_estadistica('robos_totales')
             await db.add_heist_log(uid, heist_name, "success", dinero, dinero, json.dumps(items_bonus))
+            # Reiniciar preparatorias del atraco (para que tenga que volver a hacerlas si quiere repetir)
+            await db.reset_heist_preparations(uid, heist_name)
             descripcion = f"✅ **¡ATRACO EXITOSO!**\n\n💶 **+${dinero:,}** en dinero negro"
             if items_bonus:
                 descripcion += f"\n📦 **Botín adicional:** {', '.join(items_bonus)}"
@@ -2724,6 +2919,127 @@ class Atracos(BaseCog):
     async def rob_paleto(self, ctx): await self.execute_heist(ctx, 'paleto')
     @rob.command(name='central')
     async def rob_central(self, ctx): await self.execute_heist(ctx, 'central')
+
+# ==================== COG: Preparatorias (nuevo) ====================
+class Preparatorias(BaseCog):
+    @commands.group(name='preparacion', aliases=['prep'], invoke_without_command=True)
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def preparacion(self, ctx):
+        """Muestra el estado de las preparatorias de todos los atracos"""
+        uid = ctx.author.id
+        preps = await db.get_all_heist_preparations(uid)
+        embed = discord.Embed(title="📋 TUS PREPARATORIAS", color=0x00A8FF)
+        for heist_id, info in HEIST_DEFINITIONS.items():
+            total = len(info["preparations"])
+            completadas = len([p for p in preps.get(heist_id, {}).values() if p])
+            embed.add_field(
+                name=f"{info['nombre']} ({completadas}/{total})",
+                value=f"`-preparacion {heist_id} <1-{total}>` para realizar una preparatoria",
+                inline=False
+            )
+        embed.set_footer(text="Usa -preparacion <atraco> <número> para comenzar una preparatoria")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @preparacion.command(name='badu')
+    async def prep_badu(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "badu", numero)
+    @preparacion.command(name='yellowjack')
+    async def prep_yellowjack(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "yellowjack", numero)
+    @preparacion.command(name='ammu')
+    async def prep_ammu(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "ammu", numero)
+    @preparacion.command(name='vanilla')
+    async def prep_vanilla(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "vanilla", numero)
+    @preparacion.command(name='yate')
+    async def prep_yate(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "yate", numero)
+    @preparacion.command(name='centro')
+    async def prep_centro(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "centro", numero)
+    @preparacion.command(name='joyeria')
+    async def prep_joyeria(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "joyeria", numero)
+    @preparacion.command(name='paleto')
+    async def prep_paleto(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "paleto", numero)
+    @preparacion.command(name='central')
+    async def prep_central(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "central", numero)
+    @preparacion.command(name='pacific')
+    async def prep_pacific(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "pacific", numero)
+
+    async def _realizar_preparacion(self, ctx, heist_id: str, numero: int):
+        uid = ctx.author.id
+        heist = HEIST_DEFINITIONS.get(heist_id)
+        if not heist:
+            return await ctx.send(embed=embed_error("Atraco no encontrado."))
+        total_preps = len(heist["preparations"])
+        if numero < 1 or numero > total_preps:
+            return await ctx.send(embed=embed_error(f"Número de preparatoria inválido. Debe ser entre 1 y {total_preps}."))
+
+        # Verificar orden obligatorio (excepto owners y mafia)
+        if not (ctx.author.id in OWNER_IDS or (ctx.guild.get_role(ROL_MAFIA_ID) in ctx.author.roles)):
+            # Verificar que la anterior está completada
+            if numero > 1:
+                prev_completed = await db.is_preparation_completed(uid, heist_id, numero - 1)
+                if not prev_completed:
+                    return await ctx.send(embed=embed_error(f"❌ Debes completar primero la preparatoria {numero-1} de **{heist['nombre']}** para continuar."))
+
+        # Verificar si ya está completada
+        if await db.is_preparation_completed(uid, heist_id, numero):
+            return await ctx.send(embed=embed_error(f"Ya has completado la preparatoria {numero} de **{heist['nombre']}**."))
+
+        # Notificar a LSPD
+        rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
+        if rol_lspd:
+            await ctx.send(f"🚨 **ALERTA: Actividad sospechosa en {heist['nombre']}** 🚨\n{rol_lspd.mention}")
+
+        # Mostrar embed de la preparatoria
+        descripcion = heist["preparations"][numero-1]
+        embed_progress = discord.Embed(
+            title=f"🏴 PREPARATORIA {numero} — {heist['nombre']}",
+            description=f"**Objetivo:** {descripcion}\n\n⏳ **En progreso...**",
+            color=0xFFA500,
+            timestamp=datetime.now()
+        )
+        embed_progress.set_thumbnail(url=heist.get('image', 'https://i.imgur.com/8Km9tLL.png'))
+        msg = await ctx.send(embed=embed_progress)
+
+        # Simular tiempo de preparación
+        await asyncio.sleep(random.randint(5, 10))
+
+        # Completar
+        await db.complete_preparation(uid, heist_id, numero)
+        xp_reward = 50 + (numero * 10)
+        await db.add_xp(uid, xp_reward, "heist")
+
+        embed_complete = discord.Embed(
+            title=f"✅ PREPARATORIA {numero} COMPLETADA — {heist['nombre']}",
+            description=f"**Objetivo completado:** {descripcion}\n\n⭐ +{xp_reward} XP\n📋 Progreso: {numero}/{total_preps}",
+            color=0x00FF00,
+            timestamp=datetime.now()
+        )
+        embed_complete.set_thumbnail(url=heist.get('image', 'https://i.imgur.com/8Km9tLL.png'))
+        await msg.edit(embed=embed_complete)
+        await self.log("PREPARATORIA", f"{ctx.author.name} completó preparatoria {numero} de {heist_id}")
+
+        # Si se completaron todas, anunciar
+        if numero == total_preps and await db.are_all_preparations_completed(uid, heist_id, total_preps):
+            await ctx.send(embed=embed_success(f"🏆 {heist['nombre']} LISTO", f"Has completado todas las preparatorias. Ya puedes realizar el atraco con `-rob {heist_id}`."))
+
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
 # ==================== COG: Banco ====================
 class Banco(BaseCog):
@@ -3683,7 +3999,7 @@ class Periodico(BaseCog):
         except:
             pass
 
-# ==================== COG: Admin (con nuevo comando -editar-item) ====================
+# ==================== COG: Admin ====================
 class Admin(BaseCog):
     @commands.command(name='say')
     @tiene_rol_equipo_especial()
@@ -4142,12 +4458,10 @@ class Admin(BaseCog):
         await ctx.channel.purge(limit=cantidad + 1)
         await ctx.send(embed=embed_success("🗑️ Mensajes eliminados", f"Se han eliminado {cantidad} mensajes."), delete_after=5)
 
-    # NUEVO COMANDO -editar-item
+    # Comando -editar-item (existente)
     @commands.command(name='editar-item')
     @tiene_rol_equipo_especial()
     async def editar_item(self, ctx, *, nombre_item: str):
-        """Permite editar un item de la tienda usando un menú interactivo.
-        Formato: -editar-item @item"""
         global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         nombre_item = nombre_item.strip()
         item_data = TIENDA_ITEMS_DICT.get(nombre_item.lower())
@@ -4568,13 +4882,14 @@ class Soporte(BaseCog):
             pass
         await self.log("CIERRE_ROL", f"{ctx.author.name} cerró el rol")
 
-# ==================== COG: Ayuda ====================
+# ==================== COG: Ayuda (con nueva categoría Preparatorias) ====================
 class Ayuda(BaseCog):
     CATEGORIAS = {
         "roleplay": {"emoji": "🚔", "nombre": "Roleplay", "comandos": [("-me <acción>", "Acción en primera persona"), ("-do <pensamiento>", "Pensamiento en voz alta"), ("-entorno <descripción> [| lugar]", "Describe el entorno y alerta a LSPD"), ("-reparar @user [desc]", "Repara un vehículo (mecánico)"), ("-curar @user [desc]", "Cura a un paciente (médico)")]},
         "economia": {"emoji": "🏦", "nombre": "Economía", "comandos": [("-banco", "Gestiona tu dinero"), ("-balance-top", "Top de dinero"), ("-blanquear", "Convierte dinero negro (solo Mafia)"), ("-inv [tipo]", "Muestra inventario"), ("-tienda", "Compra items"), ("-comprar <item> [cantidad]", "Compra artículo"), ("-comprar-licencia <tipo>", "Compra licencias"), ("-licencia [@usuario]", "Ver licencias"), ("-use <item>", "Usa un item"), ("-intercambio @user <cantidad> <item>", "Da items"), ("-mover <item> <cant> <origen> <destino>", "Mueve items")]},
         "trabajos": {"emoji": "💼", "nombre": "Trabajos", "comandos": [("-trabajo", "Simula jornada laboral"), ("-bus", "Conduce autobús [AUTOBUSERO]"), ("-chatarrero", "Recolecta chatarra [CHATARRERO]"), ("-minar", "Extrae minerales [MINERO]"), ("-terminar-trabajo", "Finaliza trabajo")]},
-        "atracos": {"emoji": "🏴", "nombre": "Atracos", "comandos": [("-rob", "Ver atracos"), ("-rob badu", "Badu"), ("-rob yellowjack", "Yellow Jack"), ("-rob ammu", "Ammu-Nation"), ("-rob vanilla", "Vanilla Unicorn"), ("-rob yate", "Yate"), ("-rob centro", "Centro Comercial"), ("-rob joyeria", "Joyería"), ("-rob paleto", "Banco Paleto"), ("-rob central", "Banco Central"), ("-rob pacific", "Pacific Bank (requiere 3 prep)"), ("-rob status", "Estado de atracos"), ("-prep pacific1", "Preparatoria I"), ("-prep pacific2", "Preparatoria II"), ("-prep pacific3", "Preparatoria III")]},
+        "atracos": {"emoji": "🏴", "nombre": "Atracos", "comandos": [("-rob", "Ver atracos"), ("-rob badu", "Badu"), ("-rob yellowjack", "Yellow Jack"), ("-rob ammu", "Ammu-Nation"), ("-rob vanilla", "Vanilla Unicorn"), ("-rob yate", "Yate"), ("-rob centro", "Centro Comercial"), ("-rob joyeria", "Joyería"), ("-rob paleto", "Banco Paleto"), ("-rob central", "Banco Central"), ("-rob pacific", "Pacific Bank (requiere 8 prep)"), ("-rob status", "Estado de atracos")]},
+        "preparatorias": {"emoji": "🏴", "nombre": "Preparatorias", "comandos": [("-preparacion", "Ver estado general"), ("-preparacion badu <1>", "Prepara Badu"), ("-preparacion yellowjack <1-2>", "Prepara Yellow Jack"), ("-preparacion ammu <1-3>", "Prepara Ammu-Nation"), ("-preparacion vanilla <1-3>", "Prepara Vanilla Unicorn"), ("-preparacion yate <1-4>", "Prepara Yate"), ("-preparacion centro <1-4>", "Prepara Centro Comercial"), ("-preparacion joyeria <1-5>", "Prepara Joyería"), ("-preparacion paleto <1-6>", "Prepara Banco Paleto"), ("-preparacion central <1-7>", "Prepara Banco Central"), ("-preparacion pacific <1-8>", "Prepara Pacific Bank")]},
         "drogas": {"emoji": "💊", "nombre": "Drogas e Ilegal", "comandos": [("-droga", "Ver precios"), ("-droga comprar <tipo> [cantidad]", "Compra droga"), ("-droga vender <tipo> [cantidad]", "Vende droga"), ("-tienda-ilegal", "Mercado negro")]},
         "redes": {"emoji": "📱", "nombre": "Redes Sociales", "comandos": [("/movil", "Abre móvil"), ("/avion on/off", "Modo avión"), ("/wifi conectar/desconectar", "WiFi"), ("/comprar-sim", "Compra SIM"), ("/ig", "Instagram"), ("/tw", "Twitter"), ("/fb", "Facebook"), ("/deepweb", "DeepWeb anónimo"), ("/wa", "WhatsApp"), ("-x @user <msg>", "Twitter DM")]},
         "admin": {"emoji": "⚙️", "nombre": "Administración", "comandos": [("-say <msg> 🔒", "Repite"), ("-kick @user 🔒", "Expulsa"), ("-warn @user <razón> 🔒", "Advierte"), ("-ban @user 🔒", "Banea"), ("-unban <id> 🔒", "Desbanea"), ("-money add/remove 🔒", "Modifica dinero"), ("-anuncio <msg> 🔒", "Anuncio"), ("-setprefix <p> 🔒", "Cambia prefijo"), ("-add-inv 🔒", "Añade item"), ("-rem-inv 🔒", "Quita item"), ("-add-coche 🔒", "Registra coche"), ("-remove-coche 🔒", "Elimina coche"), ("-add-droga 🔒", "Añade droga"), ("-add-licencia 🔒", "Da licencia"), ("-rem-licencia 🔒", "Quita licencia"), ("-quitar-warn 🔒", "Quita advertencia"), ("-economy-reset 🔒", "Resetea economía"), ("-reset-user 🔒", "Resetea usuario"), ("-create-item 🔒", "Crea item"), ("-delete-item 🔒", "Elimina item"), ("-give-item 🔒", "Regala item"), ("-take-item 🔒", "Quita item"), ("-mass-economy 🔒", "Dinero masivo"), ("-purge <cantidad> 🔒", "Borra mensajes"), ("/dashboard", "Panel de control")]},
@@ -4598,7 +4913,7 @@ class Ayuda(BaseCog):
         prefijo = get_pre(self.bot, ctx.message)
         eco = await db.get_economy(ctx.author.id)
         saldo = eco['cash'] + eco['bank']
-        embed = discord.Embed(title="📚 NOVA AGORA — Panel de Ayuda", description=f"**Prefijo:** `{prefijo}` — Selecciona una categoría en el menú de abajo.\n\n🚔 · **Roleplay**\n🏦 · **Economía**\n💼 · **Trabajos**\n🏴 · **Atracos**\n💊 · **Drogas e Ilegal**\n📱 · **Redes Sociales**\n⚙️ · **Administración**\n🛡️ · **Moderación**\n🌐 · **Panel Web**\n\n🔒 = Solo administradores/moderadores", color=discord.Color.blue(), timestamp=datetime.now())
+        embed = discord.Embed(title="📚 NOVA AGORA — Panel de Ayuda", description=f"**Prefijo:** `{prefijo}` — Selecciona una categoría en el menú de abajo.\n\n🚔 · **Roleplay**\n🏦 · **Economía**\n💼 · **Trabajos**\n🏴 · **Atracos**\n🏴 · **Preparatorias**\n💊 · **Drogas e Ilegal**\n📱 · **Redes Sociales**\n⚙️ · **Administración**\n🛡️ · **Moderación**\n🌐 · **Panel Web**\n\n🔒 = Solo administradores/moderadores", color=discord.Color.blue(), timestamp=datetime.now())
         embed.set_footer(text=f"Saldo: **${saldo:,}**  ·  NOVA AGORA")
         view = AyudaView(prefijo, self.CATEGORIAS, ctx.author.id)
         await ctx.send(embed=embed, view=view)
@@ -5852,75 +6167,8 @@ class Disponibilidad(BaseCog):
             pass
         await self.log("DISPO", f"{ctx.author.name} consultó disponibilidad {servicio.upper()}: {cantidad}")
 
-# ==================== COG: Preparatorias ====================
-class Preparatorias(BaseCog):
-    @commands.group(name='prep', invoke_without_command=True)
-    @check_ban()
-    @check_encarcelado()
-    @tiene_rol_usuario()
-    async def prep(self, ctx):
-        embed = discord.Embed(title="📋 Preparatorias para atracos", description="Comandos disponibles:\n`-prep pacific1` - Inicia preparatoria I de Pacific Bank\n`-prep pacific2` - Inicia preparatoria II de Pacific Bank\n`-prep pacific3` - Inicia preparatoria III de Pacific Bank", color=0xFFA500)
-        await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-    async def _notify_lspd(self, ctx, prep_num: int):
-        rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
-        if rol_lspd:
-            alerta_texto = "🚨 **CORRAN EN VENIR, ESTÁN ROBANDO CERCA DEL PACIFIC BANK. TODAS LAS UNIDADES DISPONIBLES DEBEN ACUDIR DE INMEDIATO.** 🚨"
-            await ctx.send(f"{alerta_texto}\n{rol_lspd.mention}")
-
-    async def _run_preparation(self, ctx, prep_num: int, title: str, objectives: list, reward_xp: int, next_prep: str):
-        uid = ctx.author.id
-        await self._notify_lspd(ctx, prep_num)
-        embed_progress = discord.Embed(
-            title=f"🏦 PACIFIC BANK — PREPARATORIA {prep_num}",
-            description="\n".join([f"• {obj}" for obj in objectives]) + f"\n\n**Estado:** ⏳ En progreso\n**Recompensa:** 🔓 {next_prep}",
-            color=0xFFA500
-        )
-        msg = await ctx.send(embed=embed_progress)
-        await asyncio.sleep(random.randint(10, 15))
-        embed_complete = discord.Embed(
-            title=f"🏦 PACIFIC BANK — PREPARATORIA {prep_num}",
-            description="\n".join([f"• {obj}" for obj in objectives]) + f"\n\n**Estado:** ✅ Completada\n**Recompensa:** +{reward_xp} XP\n🔓 {next_prep}",
-            color=0x00FF00
-        )
-        await msg.edit(embed=embed_complete)
-        await db.add_xp(uid, reward_xp, "heist")
-        await self.log(f"PREP_PACIFIC{prep_num}", f"{ctx.author.name} completó preparatoria {prep_num}")
-
-    @prep.command(name='pacific1')
-    async def prep_pacific1(self, ctx):
-        uid = ctx.author.id
-        prep = await db.get_heist_prep(uid)
-        if prep['pacific_prep1']:
-            return await ctx.send(embed=embed_error("Ya has completado la Preparatoria I de Pacific Bank."))
-        await self._run_preparation(ctx, 1, "PREPARATORIA I", ["Roba una furgoneta blindada.", "Consigue documentación bancaria.", "Obtén acceso preliminar a la red de seguridad."], 200, "Acceso a Preparación II")
-        await db.set_heist_prep(uid, 'pacific_prep1', True)
-
-    @prep.command(name='pacific2')
-    async def prep_pacific2(self, ctx):
-        uid = ctx.author.id
-        prep = await db.get_heist_prep(uid)
-        if not prep['pacific_prep1']:
-            return await ctx.send(embed=embed_error("Debes completar primero la Preparatoria I con `-prep pacific1`."))
-        if prep['pacific_prep2']:
-            return await ctx.send(embed=embed_error("Ya has completado la Preparatoria II de Pacific Bank."))
-        await self._run_preparation(ctx, 2, "PREPARATORIA II", ["Obtén acceso a cámaras.", "Infiltra ubicación secundaria.", "Consigue credenciales internas."], 250, "Acceso a Preparación III")
-        await db.set_heist_prep(uid, 'pacific_prep2', True)
-
-    @prep.command(name='pacific3')
-    async def prep_pacific3(self, ctx):
-        uid = ctx.author.id
-        prep = await db.get_heist_prep(uid)
-        if not prep['pacific_prep2']:
-            return await ctx.send(embed=embed_error("Debes completar primero la Preparatoria II con `-prep pacific2`."))
-        if prep['pacific_prep3']:
-            return await ctx.send(embed=embed_error("Ya has completado la Preparatoria III de Pacific Bank."))
-        await self._run_preparation(ctx, 3, "PREPARATORIA III", ["Neutraliza seguridad.", "Recupera códigos de acceso.", "Prepara el golpe principal."], 300, "Golpe desbloqueado: -rob pacific")
-        await db.set_heist_prep(uid, 'pacific_prep3', True)
+# ==================== COG: Preparatorias (ya implementado arriba, no duplicar) ====================
+# Nota: El sistema completo de preparatorias está en el cog "Preparatorias" arriba.
 
 # ==================== SERVIDOR WEB ====================
 class WebPanel:
@@ -6082,6 +6330,7 @@ async def main():
         await bot.add_cog(Mercado(bot))
         await bot.add_cog(Casino(bot))
         await bot.add_cog(Atracos(bot))
+        await bot.add_cog(Preparatorias(bot))   # Nuevo cog
         await bot.add_cog(Banco(bot))
         await bot.add_cog(Multas(bot))
         await bot.add_cog(PDA(bot))
@@ -6107,7 +6356,6 @@ async def main():
         await bot.add_cog(Dashboard(bot))
         await bot.add_cog(Alertas(bot))
         await bot.add_cog(Disponibilidad(bot))
-        await bot.add_cog(Preparatorias(bot))
 
         hosting_cog = bot.get_cog("Hosting")
         if hosting_cog:
