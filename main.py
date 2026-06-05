@@ -4148,6 +4148,7 @@ class Admin(BaseCog):
     async def editar_item(self, ctx, *, nombre_item: str):
         """Permite editar un item de la tienda usando un menú interactivo.
         Formato: -editar-item @item"""
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         nombre_item = nombre_item.strip()
         item_data = TIENDA_ITEMS_DICT.get(nombre_item.lower())
         if not item_data:
@@ -4205,6 +4206,7 @@ class EditarNombreModal(discord.ui.Modal, title="***Editar Nombre del Item***"):
     nuevo_nombre = discord.ui.TextInput(label="***Nuevo nombre***", placeholder="Ej: Súper Hacha", max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         nuevo = self.nuevo_nombre.value.strip()
         if not nuevo:
             await interaction.response.send_message("***El nombre no puede estar vacío.***", ephemeral=True)
@@ -4226,7 +4228,6 @@ class EditarNombreModal(discord.ui.Modal, title="***Editar Nombre del Item***"):
             custom_items.append([nuevo, self.item_data[1], self.item_data[2], self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
         TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         await interaction.response.send_message(f"***Nombre del item actualizado a `{nuevo}`.***", ephemeral=True)
@@ -4239,6 +4240,7 @@ class EditarPrecioModal(discord.ui.Modal, title="***Editar Precio del Item***"):
     nuevo_precio = discord.ui.TextInput(label="***Nuevo precio***", placeholder="Ej: 1500", max_length=10)
 
     async def on_submit(self, interaction: discord.Interaction):
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         try:
             nuevo = int(self.nuevo_precio.value)
             if nuevo <= 0:
@@ -4260,7 +4262,6 @@ class EditarPrecioModal(discord.ui.Modal, title="***Editar Precio del Item***"):
             custom_items.append([self.item_name, nuevo, self.item_data[2], self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
         TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         await interaction.response.send_message(f"***Precio del item actualizado a `${nuevo}`.***", ephemeral=True)
@@ -4273,6 +4274,7 @@ class EditarDescripcionModal(discord.ui.Modal, title="***Editar Descripción del
     nueva_desc = discord.ui.TextInput(label="***Nueva descripción***", placeholder="Describe el item", style=discord.TextStyle.paragraph, max_length=200)
 
     async def on_submit(self, interaction: discord.Interaction):
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         nueva = self.nueva_desc.value.strip()
         if not nueva:
             nueva = "Sin descripción"
@@ -4290,7 +4292,6 @@ class EditarDescripcionModal(discord.ui.Modal, title="***Editar Descripción del
             custom_items.append([self.item_name, self.item_data[1], self.item_data[2], nueva])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
         TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         await interaction.response.send_message(f"***Descripción del item actualizada.***", ephemeral=True)
