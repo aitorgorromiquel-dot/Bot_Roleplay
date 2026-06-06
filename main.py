@@ -1,9 +1,12 @@
 # ====================================================
-# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA CORREGIDA
+# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA CORREGIDA v2
 # CON SISTEMA DE DROGAS, GRAMOS, BLANQUEO, INFINITY
 # TODOS LOS COGS, FUNCIONES Y COMANDOS
 # ROL CIUDADANO: 1450592204849418294
-# CORREGIDO ERROR DE fetchone EN LA CLASE Database
+# FIXES: editar-item, editar-droga, delete-item base+custom
+#        emojis HUD animados (tick verde ✅, cruz roja ❌)
+#        droga() muestra TODAS las drogas (base + custom)
+#        _rebuild_tienda() sin duplicados
 # ====================================================
 
 import os
@@ -157,12 +160,45 @@ TIENDA_ITEMS_BASE = [
 ]
 
 CUSTOM_ITEMS_FILE = "custom_items.json"
-_custom_items = []
-if os.path.exists(CUSTOM_ITEMS_FILE):
-    with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
-        _custom_items = json.load(f)
-TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in _custom_items]
-TIENDA_ITEMS_DICT = {name.lower(): (name, precio, emoji, desc) for name, precio, emoji, desc in TIENDA_ITEMS_FULL}
+DELETED_BASE_ITEMS_FILE = "deleted_base_items.json"
+
+def _load_deleted_base_items():
+    """Carga el set de nombres (lowercase) de items base eliminados."""
+    if os.path.exists(DELETED_BASE_ITEMS_FILE):
+        with open(DELETED_BASE_ITEMS_FILE, "r", encoding="utf-8") as f:
+            return {n.lower() for n in json.load(f)}
+    return set()
+
+def _save_deleted_base_items(deleted_set: set):
+    """Guarda el set de items base eliminados."""
+    with open(DELETED_BASE_ITEMS_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(deleted_set), f, indent=2, ensure_ascii=False)
+
+def _rebuild_tienda():
+    """
+    Reconstruye TIENDA_ITEMS_FULL y TIENDA_ITEMS_DICT.
+    - Items personalizados (custom_items.json) SIEMPRE tienen prioridad sobre los base.
+    - Items base marcados como eliminados NO aparecen.
+    - No hay duplicados.
+    """
+    global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
+    deleted = _load_deleted_base_items()
+    custom = []
+    if os.path.exists(CUSTOM_ITEMS_FILE):
+        with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+            custom = json.load(f)
+    custom_names_lower = {c[0].lower() for c in custom}
+    # Items base que no han sido sobreescritos por custom ni eliminados
+    base_filtered = [
+        item for item in TIENDA_ITEMS_BASE
+        if item[0].lower() not in custom_names_lower
+        and item[0].lower() not in deleted
+    ]
+    TIENDA_ITEMS_FULL = base_filtered + [tuple(c) for c in custom]
+    TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+
+# Inicialización
+_rebuild_tienda()
 ILLEGAL_TIENDA_ITEMS = {"dispositivo de hackeo", "termita", "tarjeta de crédito", "gas lacrimógeno", "pasamontañas", "bolsas atraco", "ganzúa", "mascaras"}
 
 # ─── Drogas personalizadas ──────────────────────────────────────────────────
@@ -1446,7 +1482,7 @@ class ConfirmView(discord.ui.View):
         self.user_id = user_id
         self.value = None
 
-    @discord.ui.button(label="✅ Sí", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="✅ Sí", style=discord.ButtonStyle.green, emoji="✅")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("No eres el dueño de esta solicitud", ephemeral=True)
@@ -1455,7 +1491,7 @@ class ConfirmView(discord.ui.View):
         self.stop()
         await interaction.response.defer()
 
-    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.red, emoji="❌")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("No eres el dueño de esta solicitud", ephemeral=True)
@@ -2214,7 +2250,7 @@ class Drogas(BaseCog):
     @tiene_rol_usuario()
     async def droga(self, ctx):
         embed = discord.Embed(title=f"{await get_emoji('drugs')} Mercado de Drogas (Precios Dinámicos)", color=discord.Color.dark_green())
-        for droga, emoji in EMOJIS_DROGA.items():
+        for droga, emoji in EMOJIS_DROGA_FULL.items():
             precio_compra = await db.get_precio_droga(droga, True)
             precio_venta = await db.get_precio_droga(droga, False)
             embed.add_field(
@@ -4675,8 +4711,7 @@ class Admin(BaseCog):
         custom_items.append([nombre, precio, emoji, descripcion])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        TIENDA_ITEMS_FULL = TIENDA_ITEMS_BASE + custom_items
-        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        _rebuild_tienda()
         embed = discord.Embed(title=f"{await get_emoji('shop')} Item creado", description=f"**{nombre}** agregado a la tienda con precio {formatear_precio(precio)} {emoji}\nDescripción: {descripcion if descripcion else 'Sin descripción'}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("CREATE_ITEM", f"{ctx.author.name} creó item '{nombre}' ({formatear_precio(precio)})")
@@ -4688,28 +4723,34 @@ class Admin(BaseCog):
     @commands.command(name='delete-item')
     @tiene_rol_equipo_especial()
     async def delete_item(self, ctx, *, nombre: str):
-        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         nombre = nombre.strip()
         if not nombre:
             return await ctx.send(embed=embed_error("Debes especificar el nombre del item a eliminar."))
-        for item in TIENDA_ITEMS_BASE:
-            if item[0].lower() == nombre.lower():
-                return await ctx.send(embed=embed_error("No puedes eliminar un item estándar. Solo items personalizados."))
-        if not os.path.exists(CUSTOM_ITEMS_FILE):
-            return await ctx.send(embed=embed_error("No hay items personalizados."))
-        with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
-            custom_items = json.load(f)
-        original_len = len(custom_items)
-        new_custom = [item for item in custom_items if item[0].lower() != nombre.lower()]
-        if len(new_custom) == original_len:
-            return await ctx.send(embed=embed_error(f"No se encontró el item personalizado '{nombre}'."))
+        nombre_lower = nombre.lower()
+        # Verificar que el item existe en la tienda actual
+        if nombre_lower not in TIENDA_ITEMS_DICT:
+            return await ctx.send(embed=embed_error(f"No se encontró el item '{nombre}' en la tienda."))
+        nombre_real = TIENDA_ITEMS_DICT[nombre_lower][0]
+        is_base = any(item[0].lower() == nombre_lower for item in TIENDA_ITEMS_BASE)
+        # 1) Eliminar de custom_items.json si existe ahí
+        custom_items = []
+        if os.path.exists(CUSTOM_ITEMS_FILE):
+            with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+                custom_items = json.load(f)
+        new_custom = [item for item in custom_items if item[0].lower() != nombre_lower]
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(new_custom, f, indent=2, ensure_ascii=False)
-        TIENDA_ITEMS_FULL = TIENDA_ITEMS_BASE + new_custom
-        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
-        embed = discord.Embed(title="✅ Item eliminado", description=f"**{nombre}** ha sido eliminado de la tienda.", color=0xFF6600)
+        # 2) Si es un item base, marcarlo como eliminado
+        if is_base:
+            deleted = _load_deleted_base_items()
+            deleted.add(nombre_lower)
+            _save_deleted_base_items(deleted)
+        # 3) Reconstruir tienda sin duplicados
+        _rebuild_tienda()
+        tipo = "base" if is_base else "personalizado"
+        embed = discord.Embed(title="✅ Item eliminado", description=f"**{nombre_real}** ({tipo}) ha sido eliminado de la tienda.", color=0xFF6600)
         await ctx.send(embed=embed)
-        await self.log("DELETE_ITEM", f"{ctx.author.name} eliminó item '{nombre}'")
+        await self.log("DELETE_ITEM", f"{ctx.author.name} eliminó item '{nombre_real}' ({tipo})")
         try:
             await ctx.message.delete()
         except:
@@ -4948,12 +4989,16 @@ class Admin(BaseCog):
         nombre_cap = nombre.strip().capitalize()
         droga_data = DROGAS_FULL.get(nombre_cap)
         if not droga_data:
-            return await ctx.send(embed=embed_error(f"No existe ninguna droga llamada **{nombre_cap}**."))
+            # Buscar también en base (PRECIOS_DROGAS_BASE para precios)
+            base_d = PRECIOS_DROGAS_BASE.get(nombre_cap)
+            if not base_d:
+                return await ctx.send(embed=embed_error(f"No existe ninguna droga llamada **{nombre_cap}**."))
+            droga_data = base_d
         # Construir datos completos incluyendo emoji
         data = {
-            "compra": droga_data.get("compra", 0),
-            "venta":  droga_data.get("venta", 0),
-            "emoji":  EMOJIS_DROGA_FULL.get(nombre_cap, droga_data.get("emoji", "💊"))
+            "compra": droga_data.get("compra", 0) if isinstance(droga_data, dict) else droga_data["compra"],
+            "venta":  droga_data.get("venta", 0) if isinstance(droga_data, dict) else droga_data["venta"],
+            "emoji":  EMOJIS_DROGA_FULL.get(nombre_cap, droga_data.get("emoji", "💊") if isinstance(droga_data, dict) else "💊")
         }
         view = EditarDrogaView(ctx.author.id, nombre_cap, data)
         msg = await ctx.send(embed=view.build_embed(), view=view)
@@ -5022,6 +5067,57 @@ class Admin(BaseCog):
         embed.set_footer(text=f"Por {ctx.author.display_name}")
         await ctx.send(embed=embed)
         await self.log("ELIMINAR_ROL", f"{ctx.author.name} quitó rol '{rol.name}' a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='emoji-animado')
+    @tiene_rol_equipo_especial()
+    async def set_animated_emoji(self, ctx, nombre: str = None, emoji_id: str = None):
+        """Registra un emoji custom del servidor para usarlo como tick/cross/escudo/etc.
+        Uso: -emoji-animado tick 123456789
+        Primero sube los SVGs al servidor como emojis (puede hacerlo cualquier admin).
+        Luego obtén el ID del emoji y regístralo aquí.
+        """
+        if not nombre or not emoji_id:
+            embed = discord.Embed(title="🎨 Emojis Animados HUD", color=0x9B59B6)
+            registrados = await db.get_all_animated_emojis()
+            if registrados:
+                txt = "\n".join([f"• `{e['name']}` → ID `{e['emoji_id']}`" for e in registrados])
+                embed.add_field(name="Registrados", value=txt, inline=False)
+            else:
+                embed.add_field(name="Registrados", value="Ninguno todavía.", inline=False)
+            embed.add_field(
+                name="📖 Cómo usar",
+                value=(
+                    "1. Sube tus SVGs como emojis al servidor (Configuración → Emojis)\n"
+                    "2. Obtén el ID del emoji con `\\:nombre_emoji:`\n"
+                    "3. Registra con: `-emoji-animado <nombre> <ID>`\n\n"
+                    "Nombres disponibles: `tick`, `cross`, `escudo`, `reloj`, `carita`"
+                ),
+                inline=False
+            )
+            return await ctx.send(embed=embed)
+        try:
+            emoji_id_int = int(emoji_id)
+        except ValueError:
+            return await ctx.send(embed=embed_error("El ID debe ser un número."))
+        nombre = nombre.lower().strip()
+        nombres_validos = {"tick", "cross", "escudo", "reloj", "carita"}
+        if nombre not in nombres_validos:
+            return await ctx.send(embed=embed_error(f"Nombres válidos: {', '.join(nombres_validos)}"))
+        await db.add_animated_emoji(nombre, emoji_id_int, ctx.author.id)
+        # Intentar mostrar el emoji
+        emoji_obj = discord.utils.get(ctx.guild.emojis, id=emoji_id_int)
+        emoji_str = str(emoji_obj) if emoji_obj else f"ID:{emoji_id_int}"
+        embed = discord.Embed(
+            title="✅ Emoji registrado",
+            description=f"El emoji `{nombre}` ha sido registrado: {emoji_str}\nAhora se usará automáticamente en el HUD.",
+            color=0x00FF00
+        )
+        await ctx.send(embed=embed)
+        await self.log("EMOJI_ANIMADO", f"{ctx.author.name} registró emoji '{nombre}' ID:{emoji_id_int}")
         try:
             await ctx.message.delete()
         except:
@@ -5123,11 +5219,18 @@ class EditarNombreModal(discord.ui.Modal, title="Editar Nombre del Item"):
                 encontrado = True
                 break
         if not encontrado:
-            custom_items.append([nuevo, self.item_data[1], self.item_data[2], self.item_data[3]])
+            # Item base: añadir override con nuevo nombre y quitar el base del deleted si existía
+            deleted = _load_deleted_base_items()
+            deleted.discard(self.item_name.lower())
+            deleted.add(self.item_name.lower())  # marcar el nombre viejo como eliminado
+            _save_deleted_base_items(deleted)
+            # Copiar datos del item base y guardar con nuevo nombre
+            base_item = next((item for item in TIENDA_ITEMS_BASE if item[0].lower() == self.item_name.lower()), None)
+            src = base_item if base_item else (self.item_name, self.item_data[1], self.item_data[2], self.item_data[3])
+            custom_items.append([nuevo, src[1] if base_item else self.item_data[1], src[2] if base_item else self.item_data[2], src[3] if base_item else self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
-        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        _rebuild_tienda()
         self.parent_view.item_name = nuevo
         self.parent_view.item_data[0] = nuevo
         await interaction.response.send_message(f"✅ Nombre actualizado → `{nuevo}`", ephemeral=True)
@@ -5168,8 +5271,7 @@ class EditarPrecioModal(discord.ui.Modal, title="Editar Precio del Item"):
             custom_items.append([self.item_name, nuevo, self.item_data[2], self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
-        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        _rebuild_tienda()
         self.parent_view.item_data[1] = nuevo
         await interaction.response.send_message(f"✅ Precio actualizado → {formatear_precio(nuevo)}", ephemeral=True)
         await self.parent_view.refresh()
@@ -5199,11 +5301,15 @@ class EditarEmojiModal(discord.ui.Modal, title="Editar Emoji del Item"):
                 encontrado = True
                 break
         if not encontrado:
-            custom_items.append([self.item_name, self.item_data[1], nuevo, self.item_data[3]])
+            # Item base: copiar todos sus datos y sobreescribir emoji
+            base_item = next((item for item in TIENDA_ITEMS_BASE if item[0].lower() == self.item_name.lower()), None)
+            if base_item:
+                custom_items.append([base_item[0], base_item[1], nuevo, base_item[3]])
+            else:
+                custom_items.append([self.item_name, self.item_data[1], nuevo, self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
-        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        _rebuild_tienda()
         self.parent_view.item_data[2] = nuevo
         await interaction.response.send_message(f"✅ Emoji actualizado → {nuevo}", ephemeral=True)
         await self.parent_view.refresh()
@@ -5230,11 +5336,15 @@ class EditarDescripcionModal(discord.ui.Modal, title="Editar Descripción del It
                 encontrado = True
                 break
         if not encontrado:
-            custom_items.append([self.item_name, self.item_data[1], self.item_data[2], nueva])
+            # Item base: copiar todos sus datos y sobreescribir descripción
+            base_item = next((item for item in TIENDA_ITEMS_BASE if item[0].lower() == self.item_name.lower()), None)
+            if base_item:
+                custom_items.append([base_item[0], base_item[1], base_item[2], nueva])
+            else:
+                custom_items.append([self.item_name, self.item_data[1], self.item_data[2], nueva])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
-        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        _rebuild_tienda()
         self.parent_view.item_data[3] = nueva
         await interaction.response.send_message(f"✅ Descripción actualizada.", ephemeral=True)
         await self.parent_view.refresh()
@@ -5600,7 +5710,15 @@ class Soporte(BaseCog):
             await ctx.message.delete()
         except:
             pass
-        await ctx.send(content=f"<@&{ROL_USUARIO_ID}>", embed=embed)
+        msg_status = await ctx.send(content=f"<@&{ROL_USUARIO_ID}>", embed=embed)
+        # Reacciones HUD para que la comunidad interactúe
+        tick_emoji = await get_animated_bot_emoji("tick", ctx.guild)
+        cross_emoji = await get_animated_bot_emoji("cross", ctx.guild)
+        for r in [tick_emoji, "🚔", cross_emoji, "😅"]:
+            try:
+                await msg_status.add_reaction(r)
+            except Exception:
+                pass
         await self.log("STATUS", f"{ctx.author.name} — {iniciador} | {ciudadanos}p {policias}pol {soporte}sop")
 
     @commands.command(name='votacion')
@@ -5632,8 +5750,16 @@ class Soporte(BaseCog):
             embed=embed,
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
-        for emoji in ["✅", "🚔", "❌", "😅"]:
-            await msg.add_reaction(emoji)
+        # Emojis HUD: tick verde (✅), escudo/policía (🚔), cruz roja (❌), reloj (😅)
+        # Si tienes emojis animados custom, sube los SVGs como emojis al servidor
+        # y usa -emoji-animado para registrarlos. El código usará los custom automáticamente.
+        tick_emoji = await get_animated_bot_emoji("tick", interaction.guild if hasattr(interaction, "guild") else None)
+        cross_emoji = await get_animated_bot_emoji("cross", msg.guild if hasattr(msg, "guild") else None)
+        for reaction_emoji in [tick_emoji, "🚔", cross_emoji, "😅"]:
+            try:
+                await msg.add_reaction(reaction_emoji)
+            except Exception:
+                pass  # Si el emoji custom no está disponible, lo ignora
         await self.log("VOTACION", f"{autor.name} → {datos['hora']}")
 
     @commands.command(name='cierre-rol')
