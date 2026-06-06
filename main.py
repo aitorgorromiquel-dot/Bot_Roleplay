@@ -10,6 +10,7 @@
 # ====================================================
 
 import os
+import io
 import random
 import asyncio
 import json
