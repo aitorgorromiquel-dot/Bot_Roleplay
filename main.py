@@ -1,12 +1,9 @@
 # ====================================================
-# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA CORREGIDA v2
+# NOVA AGORA BOT — VERSIÓN FINAL COMPLETA CORREGIDA
 # CON SISTEMA DE DROGAS, GRAMOS, BLANQUEO, INFINITY
 # TODOS LOS COGS, FUNCIONES Y COMANDOS
 # ROL CIUDADANO: 1450592204849418294
-# FIXES: editar-item, editar-droga, delete-item base+custom
-#        emojis HUD animados (tick verde ✅, cruz roja ❌)
-#        droga() muestra TODAS las drogas (base + custom)
-#        _rebuild_tienda() sin duplicados
+# CORREGIDO ERROR DE fetchone EN LA CLASE Database
 # ====================================================
 
 import os
@@ -15,6 +12,9 @@ import asyncio
 import json
 import threading
 import secrets
+import io
+import math
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple, Dict, Any
 import discord
@@ -24,6 +24,11 @@ import aiosqlite
 from flask import Flask, render_template_string, request, redirect, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 load_dotenv()
 
@@ -160,45 +165,12 @@ TIENDA_ITEMS_BASE = [
 ]
 
 CUSTOM_ITEMS_FILE = "custom_items.json"
-DELETED_BASE_ITEMS_FILE = "deleted_base_items.json"
-
-def _load_deleted_base_items():
-    """Carga el set de nombres (lowercase) de items base eliminados."""
-    if os.path.exists(DELETED_BASE_ITEMS_FILE):
-        with open(DELETED_BASE_ITEMS_FILE, "r", encoding="utf-8") as f:
-            return {n.lower() for n in json.load(f)}
-    return set()
-
-def _save_deleted_base_items(deleted_set: set):
-    """Guarda el set de items base eliminados."""
-    with open(DELETED_BASE_ITEMS_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(deleted_set), f, indent=2, ensure_ascii=False)
-
-def _rebuild_tienda():
-    """
-    Reconstruye TIENDA_ITEMS_FULL y TIENDA_ITEMS_DICT.
-    - Items personalizados (custom_items.json) SIEMPRE tienen prioridad sobre los base.
-    - Items base marcados como eliminados NO aparecen.
-    - No hay duplicados.
-    """
-    global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
-    deleted = _load_deleted_base_items()
-    custom = []
-    if os.path.exists(CUSTOM_ITEMS_FILE):
-        with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
-            custom = json.load(f)
-    custom_names_lower = {c[0].lower() for c in custom}
-    # Items base que no han sido sobreescritos por custom ni eliminados
-    base_filtered = [
-        item for item in TIENDA_ITEMS_BASE
-        if item[0].lower() not in custom_names_lower
-        and item[0].lower() not in deleted
-    ]
-    TIENDA_ITEMS_FULL = base_filtered + [tuple(c) for c in custom]
-    TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
-
-# Inicialización
-_rebuild_tienda()
+_custom_items = []
+if os.path.exists(CUSTOM_ITEMS_FILE):
+    with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+        _custom_items = json.load(f)
+TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in _custom_items]
+TIENDA_ITEMS_DICT = {name.lower(): (name, precio, emoji, desc) for name, precio, emoji, desc in TIENDA_ITEMS_FULL}
 ILLEGAL_TIENDA_ITEMS = {"dispositivo de hackeo", "termita", "tarjeta de crédito", "gas lacrimógeno", "pasamontañas", "bolsas atraco", "ganzúa", "mascaras"}
 
 # ─── Drogas personalizadas ──────────────────────────────────────────────────
@@ -410,6 +382,195 @@ def formatear_precio(precio):
     if es_precio_infinito(precio):
         return "INFINITY"
     return f"${precio:,}"
+
+# ==================== GENERACIÓN IMAGEN DNI ====================
+def _make_qr_dni(size: int, data: str) -> "Image.Image":
+    """Genera un patrón QR usando solo PIL (sin librería externa qrcode)."""
+    img = Image.new('RGB', (size, size), 'white')
+    draw = ImageDraw.Draw(img)
+    h = int(hashlib.sha256(data.encode()).hexdigest(), 16)
+    cell = max(2, size // 14)
+    cols = size // cell
+    for row in range(cols):
+        for col in range(cols):
+            bit = (h >> ((row * cols + col) % 256)) & 1
+            if bit:
+                x0, y0 = col * cell, row * cell
+                draw.rectangle([x0, y0, x0+cell-2, y0+cell-2], fill='black')
+    fc = cell * 3
+    for fx, fy in [(0, 0), (size - fc, 0), (0, size - fc)]:
+        draw.rectangle([fx, fy, fx+fc, fy+fc], fill='black')
+        draw.rectangle([fx+cell, fy+cell, fx+fc-cell, fy+fc-cell], fill='white')
+        cx = fx + cell + (fc - 2*cell) // 2
+        cy = fy + cell + (fc - 2*cell) // 2
+        draw.rectangle([cx, cy, cx+cell, cy+cell], fill='black')
+    return img
+
+def generar_imagen_dni(nombre: str, apellidos: str, fecha_nac: str, sexo: str,
+                       nacionalidad: str, lugar_nac: str, numero: str,
+                       fecha_exp: str, fecha_vence: str) -> io.BytesIO:
+    """
+    Genera una imagen fotorrealista del DNI de Nova Agora.
+    Devuelve un BytesIO con la imagen PNG lista para enviar.
+    """
+    W, H = 856, 540
+
+    # ── Fondo: escritorio de madera oscura ─────────────────────────────────
+    bg = Image.new('RGB', (W, H), '#0e0a04')
+    draw = ImageDraw.Draw(bg)
+    for y in range(H):
+        for x in range(W):
+            grain = int(6 * math.sin(x / 28.0 + y / 45.0) + 3 * math.cos(x / 12.0))
+            r = min(255, max(0, 22 + grain + y * 8 // H))
+            g = min(255, max(0, 14 + grain // 2 + y * 5 // H))
+            b = min(255, max(0, 6 + grain // 3 + y * 2 // H))
+            bg.putpixel((x, y), (r, g, b))
+
+    # ── Sombra suave bajo la tarjeta ────────────────────────────────────────
+    shadow = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    for spread in range(18, 0, -1):
+        alpha = int(12 * (18 - spread) / 18)
+        sd.rounded_rectangle([72 - spread//2, 75 - spread//2,
+                               784 + spread//2, 465 + spread//2],
+                              radius=14 + spread, fill=(0, 0, 0, alpha))
+    bg = bg.convert('RGBA')
+    bg.paste(shadow, (0, 0), shadow)
+    bg = bg.convert('RGB')
+
+    # ── Tarjeta base (crema envejecida) ─────────────────────────────────────
+    cx0, cy0, cx1, cy1 = 76, 74, 780, 466
+    card_layer = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    cl = ImageDraw.Draw(card_layer)
+    cl.rounded_rectangle([cx0, cy0, cx1, cy1], radius=12, fill='#f4efe5')
+    bg = bg.convert('RGBA')
+    bg.paste(card_layer, (0, 0), card_layer)
+    bg = bg.convert('RGB')
+    draw = ImageDraw.Draw(bg)
+    draw.rounded_rectangle([cx0, cy0, cx1, cy1], radius=12, outline='#c0a870', width=2)
+
+    # ── Encabezado rojo oscuro ───────────────────────────────────────────────
+    draw.rounded_rectangle([cx0, cy0, cx1, cy0 + 46], radius=12, fill='#8B0000')
+    draw.rectangle([cx0, cy0 + 24, cx1, cy0 + 46], fill='#8B0000')
+    draw.rectangle([cx0 + 2, cy0 + 46, cx1 - 2, cy0 + 54], fill='#D4AF37')
+    draw.rectangle([cx0 + 2, cy0 + 54, cx1 - 2, cy0 + 62], fill='#8B0000')
+
+    # ── Fuentes ─────────────────────────────────────────────────────────────
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    ]
+    def load_font(path, size):
+        try: return ImageFont.truetype(path, size)
+        except: return ImageFont.load_default()
+
+    f_header = load_font(font_paths[0], 13)
+    f_sub    = load_font(font_paths[1], 10)
+    f_big    = load_font(font_paths[0], 18)
+    f_med    = load_font(font_paths[0], 13)
+    f_small  = load_font(font_paths[1], 10)
+    f_num    = load_font(font_paths[0], 15)
+    f_mrz    = load_font(font_paths[2], 9)
+
+    # ── Textos del encabezado ───────────────────────────────────────────────
+    draw.text((cx0 + 12, cy0 + 7),  "REPÚBLICA DE SAN ANDREAS",      fill='#D4AF37', font=f_header)
+    draw.text((cx0 + 12, cy0 + 24), "DOCUMENTO NACIONAL DE IDENTIDAD", fill='#ffffff', font=f_sub)
+
+    # Badge ESP
+    bx = cx1 - 58
+    draw.rectangle([bx, cy0 + 7, cx1 - 10, cy0 + 41], fill='#c8b058')
+    draw.rectangle([bx + 2, cy0 + 9, cx1 - 12, cy0 + 39], fill='#8B0000')
+    draw.text((bx + 9, cy0 + 16), "ESP", fill='#D4AF37', font=f_med)
+
+    # ── Zona foto ───────────────────────────────────────────────────────────
+    px0, py0 = cx0 + 14, cy0 + 70
+    px1, py1 = px0 + 92, py0 + 112
+    draw.rectangle([px0, py0, px1, py1], fill='#ddd8cc', outline='#a09080', width=2)
+    draw.text((px0 + 18, py0 + 46), "FOTO", fill='#909088', font=f_med)
+    # Firma
+    draw.line([px0, py1 + 26, px1, py1 + 26], fill='#909088', width=1)
+    draw.text((px0 + 4, py1 + 10), "Firma / Signature", fill='#909088', font=f_small)
+
+    # ── Campos de datos ─────────────────────────────────────────────────────
+    fx   = cx0 + 122
+    fy   = cy0 + 70
+    lh   = 27
+    lc   = '#5a4535'
+    vc   = '#120500'
+
+    fields = [
+        ("Apellidos / Surnames",                apellidos.upper()),
+        ("Nombre / Name",                       nombre.upper()),
+        ("Fecha de nacimiento / Date of birth", fecha_nac),
+        ("Sexo / Sex",                          sexo),
+        ("Nacionalidad / Nationality",          nacionalidad),
+        ("Lugar de nacimiento / Place of birth", lugar_nac),
+    ]
+    for i, (label, value) in enumerate(fields):
+        y = fy + i * lh
+        draw.text((fx, y),      label, fill=lc, font=f_small)
+        draw.text((fx, y + 11), value, fill=vc, font=f_med)
+        draw.line([fx, y + lh - 2, fx + 330, y + lh - 2], fill='#c8a878', width=1)
+
+    # Columna derecha
+    rx = fx + 350
+    draw.text((rx, fy),       "Fecha de expedición",     fill=lc, font=f_small)
+    draw.text((rx, fy + 11),  fecha_exp,                 fill=vc, font=f_med)
+    draw.line([rx, fy + lh - 2, rx + 148, fy + lh - 2], fill='#c8a878', width=1)
+
+    draw.text((rx, fy + lh),       "Válido hasta / Expiry", fill=lc, font=f_small)
+    draw.text((rx, fy + lh + 11),  fecha_vence,            fill=vc, font=f_med)
+    draw.line([rx, fy + 2*lh - 2, rx + 148, fy + 2*lh - 2], fill='#c8a878', width=1)
+
+    # Número de documento (barra roja)
+    ny = fy + 6 * lh + 6
+    draw.rounded_rectangle([fx, ny, fx + 300, ny + 30], radius=4, fill='#8B0000')
+    draw.text((fx + 10, ny + 7), f"Nº {numero}", fill='#D4AF37', font=f_num)
+
+    # Sello VÁLIDO
+    sx, sy = cx1 - 106, cy0 + 260
+    for r_off, col in [(0, '#005500'), (6, '#007000')]:
+        draw.ellipse([sx + r_off, sy + r_off, sx + 82 - r_off, sy + 82 - r_off], outline=col, width=2)
+    draw.text((sx + 12, sy + 30), "VÁLIDO",   fill='#006400', font=f_med)
+    draw.text((sx + 18, sy + 48), "VALID",    fill='#006400', font=f_small)
+
+    # ── QR ─────────────────────────────────────────────────────────────────
+    qr_data = f"NOVA-SA|{numero}|{nombre.upper()}|{apellidos.upper()}"
+    qr_img  = _make_qr_dni(72, qr_data)
+    bg.paste(qr_img, (cx1 - 90, cy0 + 70))
+    draw.rectangle([cx1 - 92, cy0 + 68, cx1 - 10, cy0 + 144], outline='#c0a870', width=1)
+    draw.text((cx1 - 84, cy0 + 146), "Código seguridad", fill='#909088', font=f_small)
+
+    # ── Zona MRZ inferior ──────────────────────────────────────────────────
+    mz = cy1 - 56
+    draw.rectangle([cx0 + 2, mz, cx1 - 2, cy1 - 2], fill='#ece6d4')
+    draw.line([cx0 + 2, mz, cx1 - 2, mz], fill='#c0a870', width=1)
+
+    num_c   = numero.replace('-', '').replace(' ', '')[:9].upper()
+    sur_c   = apellidos.replace(' ', '<')[:20].upper()
+    nom_c   = nombre.replace(' ', '<')[:10].upper()
+    mrz1    = f"IDSA{num_c:<9}<<<<<{sur_c:<20}"[:44]
+    mrz2    = f"{nom_c}<<{sur_c[:8]}<<<<<<<<<<<<<<<<<<<<"[:44]
+    draw.text((cx0 + 10, mz + 4),  mrz1, fill='#2a1a0a', font=f_mrz)
+    draw.text((cx0 + 10, mz + 18), mrz2, fill='#2a1a0a', font=f_mrz)
+    draw.text((cx0 + 10, mz + 32), "ESTADO LOS ANGELES  •  NOVA AGORA  •  DOCUMENTO OFICIAL", fill='#7a6050', font=f_mrz)
+    draw.text((cx0 + 10, mz + 44), "IDENTIFICACIÓN ESTADO LOS ANGELES, NOVA AGORA", fill='#5a4535', font=f_small)
+
+    # ── Brillo sutil en esquina superior izquierda ─────────────────────────
+    shine = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    sh    = ImageDraw.Draw(shine)
+    for k in range(60):
+        alpha = max(0, 18 - k // 3)
+        sh.line([(cx0 + k, cy0), (cx0, cy0 + k)], fill=(255, 255, 240, alpha), width=1)
+    bg = bg.convert('RGBA')
+    bg.paste(shine, (0, 0), shine)
+    bg = bg.convert('RGB')
+
+    buf = io.BytesIO()
+    bg.save(buf, 'PNG', optimize=True)
+    buf.seek(0)
+    return buf
 
 # ==================== BASE DE DATOS ====================
 class Database:
@@ -714,27 +875,6 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_timestamp ON antiraid_actions(timestamp)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_drug_grams_user ON drug_grams(user_id)")
 
-            # 🔁 Migración de columnas DNI en tabla users (por si la BD es antigua y no tiene esas columnas)
-            dni_columns = {
-                "dni_nombre": "TEXT",
-                "dni_apellidos": "TEXT",
-                "dni_edad": "INTEGER",
-                "dni_genero": "TEXT",
-                "dni_nacionalidad": "TEXT",
-                "dni_color_ojos": "TEXT",
-                "dni_altura": "TEXT",
-                "dni_profesion": "TEXT",
-                "dni_numero": "TEXT",
-                "dni_fecha_creacion": "TEXT",
-            }
-            existing_cols_cursor = await db.execute("PRAGMA table_info(users)")
-            existing_cols = {row[1] async for row in existing_cols_cursor}
-            for col_name, col_type in dni_columns.items():
-                if col_name not in existing_cols:
-                    await db.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
-                    print(f"✅ Columna '{col_name}' añadida a 'users' (migración DNI)")
-            await db.commit()
-
             # 🔁 Migración de datos antiguos de heist_prep a la nueva tabla (CORREGIDO)
             cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='heist_prep'")
             if await cursor.fetchone():
@@ -913,29 +1053,13 @@ class Database:
         return None
 
     async def set_dni(self, user_id, data):
-        # Asegurar que la fila exista en users
         await self.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-        # Guardar datos DNI con upsert robusto (ON CONFLICT) para que funcione en BDs antiguas
         await self.execute("""
-            INSERT INTO users (user_id, dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad,
-                dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                dni_nombre=excluded.dni_nombre,
-                dni_apellidos=excluded.dni_apellidos,
-                dni_edad=excluded.dni_edad,
-                dni_genero=excluded.dni_genero,
-                dni_nacionalidad=excluded.dni_nacionalidad,
-                dni_color_ojos=excluded.dni_color_ojos,
-                dni_altura=excluded.dni_altura,
-                dni_profesion=excluded.dni_profesion,
-                dni_numero=excluded.dni_numero,
-                dni_fecha_creacion=excluded.dni_fecha_creacion
-        """, (
-            user_id, data["nombre"], data["apellidos"], data["edad"], data["genero"],
-            data["nacionalidad"], data["color_ojos"], data["altura"], data["profesion"],
-            data["numero"], data["fecha_creacion"]
-        ))
+            UPDATE users SET dni_nombre=?, dni_apellidos=?, dni_edad=?, dni_genero=?, dni_nacionalidad=?,
+            dni_color_ojos=?, dni_altura=?, dni_profesion=?, dni_numero=?, dni_fecha_creacion=?
+            WHERE user_id=?
+        """, (data["nombre"], data["apellidos"], data["edad"], data["genero"], data["nacionalidad"],
+              data["color_ojos"], data["altura"], data["profesion"], data["numero"], data["fecha_creacion"], user_id))
 
     async def delete_dni(self, user_id):
         await self.execute("""
@@ -1482,7 +1606,7 @@ class ConfirmView(discord.ui.View):
         self.user_id = user_id
         self.value = None
 
-    @discord.ui.button(label="✅ Sí", style=discord.ButtonStyle.green, emoji="✅")
+    @discord.ui.button(label="✅ Sí", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("No eres el dueño de esta solicitud", ephemeral=True)
@@ -1491,7 +1615,7 @@ class ConfirmView(discord.ui.View):
         self.stop()
         await interaction.response.defer()
 
-    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.red, emoji="❌")
+    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("No eres el dueño de esta solicitud", ephemeral=True)
@@ -2250,7 +2374,7 @@ class Drogas(BaseCog):
     @tiene_rol_usuario()
     async def droga(self, ctx):
         embed = discord.Embed(title=f"{await get_emoji('drugs')} Mercado de Drogas (Precios Dinámicos)", color=discord.Color.dark_green())
-        for droga, emoji in EMOJIS_DROGA_FULL.items():
+        for droga, emoji in EMOJIS_DROGA.items():
             precio_compra = await db.get_precio_droga(droga, True)
             precio_venta = await db.get_precio_droga(droga, False)
             embed.add_field(
@@ -4021,240 +4145,299 @@ class MovilView(discord.ui.View):
 
 # ==================== COG: Redes Sociales ====================
 class Redes(BaseCog):
+    # ─── Instagram ────────────────────────────────────────────────────────────
     @commands.group(name='ig', invoke_without_command=True)
     @tiene_rol_usuario()
     async def ig(self, ctx):
         emoji = await get_emoji('ig')
-        await ctx.send(f"{emoji} **** INSTAGRAM EN NOVA AGORA V2 ****\nUsa los subcomandos: `/ig perfil`, `/ig post`, `/ig like`, `/ig seguir`, `/ig priv`, `/ig trending`")
+        embed = discord.Embed(title=f"{emoji} Instagram — Nova Agora V2", color=0xE4405F)
+        embed.add_field(name="Comandos disponibles", value=(
+            "`-ig perfil [@user]` — Ver perfil\n"
+            "`-ig post <texto>` — Publicar\n"
+            "`-ig like <id>` — Dar like\n"
+            "`-ig seguir @user` — Seguir/dejar de seguir\n"
+            "`-ig priv @user <msg>` — Mensaje privado\n"
+            "`-ig trending` — Ver trending"
+        ), inline=False)
+        await ctx.send(embed=embed)
+        try: await ctx.message.delete()
+        except: pass
 
     @ig.command(name='perfil')
-    async def ig_perfil(self, interaction: discord.Interaction, usuario: discord.Member = None):
-        objetivo = usuario or interaction.user
+    @tiene_rol_usuario()
+    async def ig_perfil(self, ctx, usuario: discord.Member = None):
+        objetivo = usuario or ctx.author
         uid = objetivo.id
         user_state = await db.get_user_state(uid)
         seguidores = await db.get_followers_ig(uid)
-        siguiendo = await db.get_following_ig(uid)
+        siguiendo  = await db.get_following_ig(uid)
         posts = await db.get_posts_ig(uid)
-        likes_totales = sum(len(p['likes']) for p in posts)
+        likes_totales = sum(len(p["likes"]) for p in posts)
         embed = discord.Embed(title=f"{await get_emoji('ig')} @{objetivo.name}", color=0xE4405F)
-        embed.add_field(name="Seguidores", value=f"{seguidores}", inline=True)
-        embed.add_field(name="Siguiendo", value=f"{siguiendo}", inline=True)
-        embed.add_field(name="Posts", value=f"{len(posts)}", inline=True)
-        embed.add_field(name="Likes recibidos", value=f"{likes_totales}", inline=True)
-        embed.add_field(name="Privacidad", value="Pública" if user_state['ig_public'] else "Privada", inline=True)
-        embed.add_field(name="Bio", value=user_state['ig_bio'] or "Sin bio", inline=False)
         embed.set_thumbnail(url=objetivo.display_avatar.url)
-        await interaction.response.send_message(embed=embed)
+        embed.add_field(name="\U0001f465 Seguidores",      value=str(seguidores),    inline=True)
+        embed.add_field(name="\u27a1\ufe0f Siguiendo",    value=str(siguiendo),     inline=True)
+        embed.add_field(name="\U0001f4f8 Posts",           value=str(len(posts)),    inline=True)
+        embed.add_field(name="\u2764\ufe0f Likes",        value=str(likes_totales), inline=True)
+        embed.add_field(name="\U0001f512 Privacidad",      value="Pública" if user_state["ig_public"] else "Privada", inline=True)
+        embed.add_field(name="\U0001f4dd Bio",             value=user_state["ig_bio"] or "Sin bio", inline=False)
+        await ctx.send(embed=embed)
 
     @ig.command(name='post')
-    async def ig_post(self, interaction: discord.Interaction, texto: str):
-        uid = interaction.user.id
+    @tiene_rol_usuario()
+    async def ig_post(self, ctx, *, texto: str = None):
+        if not texto:
+            return await ctx.send(embed=embed_error("Uso: `-ig post <texto>`"))
+        uid = ctx.author.id
         pid = await db.add_post_ig(uid, texto)
-        await interaction.response.send_message(f"{await get_emoji('ig')} **** PUBLICA EN INSTAGRAM EN NOVA AGORA V2 ****")
-        await interaction.followup.send(embed=embed_success(f"{await get_emoji('ig')} Publicado", f"ID: `{pid}`\n{texto[:200]}"))
+        emoji = await get_emoji('ig')
+        embed = embed_success(f"{emoji} Publicado en Instagram", f"ID: `{pid}`\n{texto[:200]}", 0xE4405F)
+        await ctx.send(embed=embed)
+        try: await ctx.message.delete()
+        except: pass
 
     @ig.command(name='like')
-    async def ig_like(self, interaction: discord.Interaction, post_id: str):
-        uid = interaction.user.id
+    @tiene_rol_usuario()
+    async def ig_like(self, ctx, post_id: str = None):
+        if not post_id:
+            return await ctx.send(embed=embed_error("Uso: `-ig like <id>`"))
+        uid = ctx.author.id
         if await db.add_like_ig(post_id, uid):
-            await interaction.response.send_message(f"{await get_emoji('ig')} **** LIKE EN INSTAGRAM EN NOVA AGORA V2 ****")
-            await interaction.followup.send(embed=embed_success("❤️ Like", f"Has dado like al post `{post_id}`.", 0xE4405F))
-            await self.log("IG_LIKE", f"{interaction.user.name} dio like al post {post_id}")
+            await ctx.send(embed=embed_success("\u2764\ufe0f Like dado", f"Like al post `{post_id}`.", 0xE4405F))
+            await self.log("IG_LIKE", f"{ctx.author.name} dio like al post {post_id}")
         else:
-            await interaction.response.send_message(embed=embed_error("Post no encontrado o ya le diste like."))
+            await ctx.send(embed=embed_error("Post no encontrado o ya le diste like."))
 
     @ig.command(name='seguir')
-    async def ig_seguir(self, interaction: discord.Interaction, usuario: discord.Member):
-        uid, tid = interaction.user.id, usuario.id
+    @tiene_rol_usuario()
+    async def ig_seguir(self, ctx, usuario: discord.Member = None):
+        if not usuario:
+            return await ctx.send(embed=embed_error("Uso: `-ig seguir @usuario`"))
+        uid, tid = ctx.author.id, usuario.id
         if uid == tid:
-            return await interaction.response.send_message(embed=embed_error("No puedes seguirte a ti mismo."))
+            return await ctx.send(embed=embed_error("No puedes seguirte a ti mismo."))
+        emoji = await get_emoji('ig')
         if await db.is_following_ig(uid, tid):
             await db.unfollow_ig(uid, tid)
-            await interaction.response.send_message(f"{await get_emoji('ig')} **** DEJÓ DE SEGUIR EN INSTAGRAM EN NOVA AGORA V2 ****")
-            await interaction.followup.send(embed=embed_success(f"{await get_emoji('ig')} Dejado de seguir", f"Dejaste de seguir a {usuario.display_name}.", 0xFFA500))
+            await ctx.send(embed=embed_success(f"{emoji} Dejado de seguir", f"Dejaste de seguir a {usuario.display_name}.", 0xFFA500))
         else:
             await db.follow_ig(uid, tid)
-            await interaction.response.send_message(f"{await get_emoji('ig')} **** SIGUE EN INSTAGRAM EN NOVA AGORA V2 ****")
-            await interaction.followup.send(embed=embed_success(f"{await get_emoji('ig')} Siguiendo", f"Ahora sigues a {usuario.display_name}.", 0x00FF00))
-            await self.dm_user(tid, discord.Embed(title=f"{await get_emoji('ig')} Nuevo seguidor", description=f"{interaction.user.display_name} te sigue ahora en Instagram.", color=0xE4405F))
+            await ctx.send(embed=embed_success(f"{emoji} Siguiendo", f"Ahora sigues a {usuario.display_name}.", 0x00FF00))
+            await self.dm_user(tid, discord.Embed(
+                title=f"{emoji} Nuevo seguidor",
+                description=f"{ctx.author.display_name} te sigue en Instagram.",
+                color=0xE4405F
+            ))
+        try: await ctx.message.delete()
+        except: pass
 
     @ig.command(name='trending')
-    async def ig_trending(self, interaction: discord.Interaction):
+    @tiene_rol_usuario()
+    async def ig_trending(self, ctx):
         rows = await db.fetchall("SELECT id, user_id, texto, tiempo, likes FROM posts_ig")
         posts = []
         for row in rows:
             likes = json.loads(row[4]) if row[4] else []
-            if len(likes) > 0:
+            if likes:
                 posts.append({"user_id": row[1], "texto": row[2], "likes": len(likes), "id": row[0]})
-        posts.sort(key=lambda x: x['likes'], reverse=True)
-        embed = discord.Embed(title=f"{await get_emoji('ig')} TRENDING SEMANAL", color=0xE4405F)
+        posts.sort(key=lambda x: x["likes"], reverse=True)
+        emoji = await get_emoji('ig')
+        embed = discord.Embed(title=f"{emoji} TRENDING SEMANAL", color=0xE4405F)
+        if not posts:
+            embed.description = "Aún no hay posts con likes."
         for i, p in enumerate(posts[:5], 1):
-            user = interaction.guild.get_member(p['user_id'])
+            user = ctx.guild.get_member(p["user_id"])
             nombre = user.display_name if user else f"Usuario {p['user_id']}"
-            embed.add_field(name=f"{'🥇' if i==1 else '🥈' if i==2 else '🥉' if i==3 else f'#{i}'} {nombre} — ❤️ {p['likes']}", value=f"{p['texto'][:50]}...\n🆔 `{p['id']}`", inline=False)
-        await interaction.response.send_message(embed=embed)
+            medalla = ["\U0001f947","\U0001f948","\U0001f949","#4","#5"][i-1]
+            embed.add_field(name=f"{medalla} {nombre} — \u2764\ufe0f {p['likes']}", value=f"{p['texto'][:50]}...\n\U0001f194 `{p['id']}`", inline=False)
+        await ctx.send(embed=embed)
 
     @ig.command(name='priv')
-    async def ig_priv(self, interaction: discord.Interaction, user: discord.Member, msg: str):
-        if interaction.user.id == user.id:
-            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        await interaction.response.send_message(f"{await get_emoji('ig')} **** ENVÍA DM EN INSTAGRAM EN NOVA AGORA V2 ****")
-        dm = discord.Embed(title=f"{await get_emoji('ig')} Instagram — Mensaje privado", description=msg, color=0xE4405F, timestamp=datetime.now())
-        dm.set_author(name=f"@{interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-        await self.dm_user(user.id, dm)
-        await interaction.followup.send(embed=embed_success("📨 Mensaje enviado", f"Enviado a @{user.display_name}"))
+    @tiene_rol_usuario()
+    async def ig_priv(self, ctx, usuario: discord.Member = None, *, msg: str = None):
+        if not usuario or not msg:
+            return await ctx.send(embed=embed_error("Uso: `-ig priv @usuario <mensaje>`"))
+        if ctx.author.id == usuario.id:
+            return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
+        emoji = await get_emoji('ig')
+        dm = discord.Embed(title=f"{emoji} Instagram — DM", description=msg, color=0xE4405F, timestamp=datetime.now())
+        dm.set_author(name=f"@{ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+        await self.dm_user(usuario.id, dm)
+        await ctx.send(embed=embed_success("\U0001f4e8 DM enviado", f"Enviado a @{usuario.display_name}"), delete_after=8)
+        try: await ctx.message.delete()
+        except: pass
 
+    # ─── Twitter ──────────────────────────────────────────────────────────────
     @commands.group(name='tw', invoke_without_command=True)
     @tiene_rol_usuario()
     async def tw(self, ctx):
         emoji = await get_emoji('twitter')
-        await ctx.send(f"{emoji} **** TWITTER EN NOVA AGORA V2 ****\nUsa los subcomandos: `/tw perfil`, `/tw tweet`, `/tw seguir`, `/tw priv`")
+        embed = discord.Embed(title=f"{emoji} Twitter — Nova Agora V2", color=0x1DA1F2)
+        embed.add_field(name="Comandos disponibles", value=(
+            "`-tw perfil [@user]` — Ver perfil\n"
+            "`-tw tweet <texto>` — Publicar\n"
+            "`-tw seguir @user` — Seguir/dejar de seguir\n"
+            "`-tw priv @user <msg>` — DM"
+        ), inline=False)
+        await ctx.send(embed=embed)
+        try: await ctx.message.delete()
+        except: pass
 
     @tw.command(name='perfil')
-    async def tw_perfil(self, interaction: discord.Interaction, usuario: discord.Member = None):
-        objetivo = usuario or interaction.user
+    @tiene_rol_usuario()
+    async def tw_perfil(self, ctx, usuario: discord.Member = None):
+        objetivo = usuario or ctx.author
         uid = objetivo.id
         seguidores = await db.get_followers_tw(uid)
-        siguiendo = await db.get_following_tw(uid)
+        siguiendo  = await db.get_following_tw(uid)
         posts = await db.fetchall("SELECT id FROM posts_tw WHERE user_id = ?", (uid,))
-        embed = discord.Embed(title=f"{await get_emoji('twitter')} @{objetivo.name}", color=0x1DA1F2)
-        embed.add_field(name="Seguidores", value=f"{seguidores}", inline=True)
-        embed.add_field(name="Siguiendo", value=f"{siguiendo}", inline=True)
-        embed.add_field(name="Tweets", value=f"{len(posts)}", inline=True)
+        emoji = await get_emoji('twitter')
+        embed = discord.Embed(title=f"{emoji} @{objetivo.name}", color=0x1DA1F2)
         embed.set_thumbnail(url=objetivo.display_avatar.url)
-        await interaction.response.send_message(embed=embed)
+        embed.add_field(name="\U0001f465 Seguidores", value=str(seguidores), inline=True)
+        embed.add_field(name="\u27a1\ufe0f Siguiendo", value=str(siguiendo), inline=True)
+        embed.add_field(name="\U0001f426 Tweets",     value=str(len(posts)), inline=True)
+        await ctx.send(embed=embed)
 
     @tw.command(name='tweet')
-    async def tw_tweet(self, interaction: discord.Interaction, texto: str):
-        uid = interaction.user.id
+    @tiene_rol_usuario()
+    async def tw_tweet(self, ctx, *, texto: str = None):
+        if not texto:
+            return await ctx.send(embed=embed_error("Uso: `-tw tweet <texto>`"))
+        uid = ctx.author.id
         pid = await db.add_post_tw(uid, texto)
-        await interaction.response.send_message(f"{await get_emoji('twitter')} **** PUBLICA EN TWITTER EN NOVA AGORA V2 ****")
-        await interaction.followup.send(embed=embed_success(f"{await get_emoji('twitter')} Tweet", f"{texto[:200]}\nID: `{pid}`", 0x1DA1F2))
+        emoji = await get_emoji('twitter')
+        await ctx.send(embed=embed_success(f"{emoji} Tweet publicado", f"{texto[:200]}\nID: `{pid}`", 0x1DA1F2))
+        try: await ctx.message.delete()
+        except: pass
 
     @tw.command(name='seguir')
-    async def tw_seguir(self, interaction: discord.Interaction, usuario: discord.Member):
-        uid, tid = interaction.user.id, usuario.id
+    @tiene_rol_usuario()
+    async def tw_seguir(self, ctx, usuario: discord.Member = None):
+        if not usuario:
+            return await ctx.send(embed=embed_error("Uso: `-tw seguir @usuario`"))
+        uid, tid = ctx.author.id, usuario.id
         if uid == tid:
-            return await interaction.response.send_message(embed=embed_error("No puedes seguirte a ti mismo."))
+            return await ctx.send(embed=embed_error("No puedes seguirte a ti mismo."))
+        emoji = await get_emoji('twitter')
         if await db.is_following_tw(uid, tid):
             await db.unfollow_tw(uid, tid)
-            await interaction.response.send_message(f"{await get_emoji('twitter')} **** DEJÓ DE SEGUIR EN TWITTER EN NOVA AGORA V2 ****")
-            await interaction.followup.send(embed=embed_success(f"{await get_emoji('twitter')} Dejado de seguir", f"Dejaste de seguir a {usuario.display_name} en Twitter.", 0xFFA500))
+            await ctx.send(embed=embed_success(f"{emoji} Dejado de seguir", f"Ya no sigues a {usuario.display_name}.", 0xFFA500))
         else:
             await db.follow_tw(uid, tid)
-            await interaction.response.send_message(f"{await get_emoji('twitter')} **** SIGUE EN TWITTER EN NOVA AGORA V2 ****")
-            await interaction.followup.send(embed=embed_success(f"{await get_emoji('twitter')} Siguiendo", f"Ahora sigues a {usuario.display_name} en Twitter.", 0x00FF00))
-            await self.dm_user(tid, discord.Embed(title=f"{await get_emoji('twitter')} Nuevo seguidor", description=f"{interaction.user.display_name} te sigue ahora en Twitter.", color=0x1DA1F2))
+            await ctx.send(embed=embed_success(f"{emoji} Siguiendo", f"Ahora sigues a {usuario.display_name}.", 0x1DA1F2))
+        try: await ctx.message.delete()
+        except: pass
 
     @tw.command(name='priv')
-    async def tw_priv(self, interaction: discord.Interaction, user: discord.Member, msg: str):
-        if interaction.user.id == user.id:
-            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        await interaction.response.send_message(f"{await get_emoji('twitter')} **** ENVÍA DM EN TWITTER EN NOVA AGORA V2 ****")
-        dm = discord.Embed(title=f"{await get_emoji('twitter')} Twitter — DM", description=msg, color=0x1DA1F2, timestamp=datetime.now())
-        dm.set_author(name=f"@{interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-        await self.dm_user(user.id, dm)
-        await interaction.followup.send(embed=embed_success("📨 DM enviado", f"A @{user.display_name}"))
-
-    @commands.command(name='x')
-    @check_ban()
-    @check_encarcelado()
     @tiene_rol_usuario()
-    async def twitter_dm(self, ctx, usuario: discord.Member, *, mensaje: str):
-        if usuario.id == ctx.author.id:
+    async def tw_priv(self, ctx, usuario: discord.Member = None, *, msg: str = None):
+        if not usuario or not msg:
+            return await ctx.send(embed=embed_error("Uso: `-tw priv @usuario <mensaje>`"))
+        if ctx.author.id == usuario.id:
             return await ctx.send(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        await db.add_twitter_dm(ctx.author.id, usuario.id, mensaje)
-        embed_notif = discord.Embed(
-            title=f"✉️ Nuevo mensaje directo de Twitter",
-            description=f"**{ctx.author.display_name}** te ha enviado un mensaje:\n\n> {mensaje}",
-            color=0x1DA1F2,
-            timestamp=datetime.now()
-        )
-        embed_notif.set_footer(text=f"Usa -x @{ctx.author.name} para responder.")
-        await self.dm_user(usuario.id, embed_notif)
-        await ctx.send(embed=embed_success("✅ Mensaje enviado", f"Tu mensaje ha sido enviado a {usuario.display_name} por Twitter DM."))
-        await self.log("TWITTER_DM", f"{ctx.author.name} -> {usuario.name}: {mensaje}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        emoji = await get_emoji('twitter')
+        dm = discord.Embed(title=f"{emoji} Twitter — DM", description=msg, color=0x1DA1F2, timestamp=datetime.now())
+        dm.set_author(name=f"@{ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+        await self.dm_user(usuario.id, dm)
+        await ctx.send(embed=embed_success("\U0001f4e8 DM enviado", f"Enviado a @{usuario.display_name}"), delete_after=8)
+        try: await ctx.message.delete()
+        except: pass
 
-    fb = app_commands.Group(name='fb', description='Facebook - NOVA AGORA V2')
+    # ─── Facebook ─────────────────────────────────────────────────────────────
+    @commands.group(name='fb', invoke_without_command=True)
+    @tiene_rol_usuario()
+    async def fb(self, ctx):
+        emoji = await get_emoji('facebook')
+        embed = discord.Embed(title=f"{emoji} Facebook — Nova Agora V2", color=0x1877F2)
+        embed.add_field(name="Comandos disponibles", value=(
+            "`-fb perfil [@user]` — Ver perfil\n"
+            "`-fb post <texto>` — Publicar\n"
+            "`-fb priv @user <msg>` — Mensaje privado"
+        ), inline=False)
+        await ctx.send(embed=embed)
+        try: await ctx.message.delete()
+        except: pass
 
-    @fb.command(name='post', description='Publicar en Facebook')
-    async def fb_post(self, interaction: discord.Interaction, texto: str):
-        uid = interaction.user.id
-        pid = await db.add_post_fb(uid, texto)
-        await interaction.response.send_message(f"{await get_emoji('facebook')} **** PUBLICA EN FACEBOOK EN NOVA AGORA V2 ****")
-        await interaction.followup.send(embed=embed_success(f"{await get_emoji('facebook')} Publicado", f"ID: `{pid}`\n{texto[:200]}", 0x1877F2))
+    @fb.command(name='perfil')
+    @tiene_rol_usuario()
+    async def fb_perfil(self, ctx, usuario: discord.Member = None):
+        objetivo = usuario or ctx.author
+        emoji = await get_emoji('facebook')
+        embed = discord.Embed(title=f"{emoji} {objetivo.display_name}", color=0x1877F2)
+        embed.set_thumbnail(url=objetivo.display_avatar.url)
+        await ctx.send(embed=embed)
 
-    @fb.command(name='perfil', description='Ver perfil de Facebook')
-    async def fb_perfil(self, interaction: discord.Interaction):
-        uid = interaction.user.id
-        posts = await db.fetchall("SELECT id FROM posts_fb WHERE user_id = ?", (uid,))
-        await interaction.response.send_message(embed=embed_info(f"{await get_emoji('facebook')} {interaction.user.name}", f"Tienes {len(posts)} publicaciones.", 0x1877F2))
+    @fb.command(name='post')
+    @tiene_rol_usuario()
+    async def fb_post(self, ctx, *, texto: str = None):
+        if not texto:
+            return await ctx.send(embed=embed_error("Uso: `-fb post <texto>`"))
+        emoji = await get_emoji('facebook')
+        await ctx.send(embed=embed_success(f"{emoji} Publicado en Facebook", texto[:200], 0x1877F2))
+        try: await ctx.message.delete()
+        except: pass
 
-    @fb.command(name='priv', description='Enviar mensaje privado en Facebook')
-    async def fb_priv(self, interaction: discord.Interaction, user: discord.Member, msg: str):
-        if interaction.user.id == user.id:
-            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        await interaction.response.send_message(f"{await get_emoji('facebook')} **** ENVÍA MENSAJE EN FACEBOOK EN NOVA AGORA V2 ****")
-        dm = discord.Embed(title=f"{await get_emoji('facebook')} Facebook — Mensaje privado", description=msg, color=0x1877F2, timestamp=datetime.now())
-        dm.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        await self.dm_user(user.id, dm)
-        await interaction.followup.send(embed=embed_success("📨 Mensaje enviado", f"A {user.display_name}"))
+    @fb.command(name='priv')
+    @tiene_rol_usuario()
+    async def fb_priv(self, ctx, usuario: discord.Member = None, *, msg: str = None):
+        if not usuario or not msg:
+            return await ctx.send(embed=embed_error("Uso: `-fb priv @usuario <mensaje>`"))
+        emoji = await get_emoji('facebook')
+        dm = discord.Embed(title=f"{emoji} Facebook — Mensaje", description=msg, color=0x1877F2, timestamp=datetime.now())
+        dm.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        await self.dm_user(usuario.id, dm)
+        await ctx.send(embed=embed_success("\U0001f4e8 Mensaje enviado", f"A {usuario.display_name}"), delete_after=8)
+        try: await ctx.message.delete()
+        except: pass
 
-    @app_commands.command(name='deepweb', description="Sistema DeepWeb - NOVA AGORA V2")
+    # ─── DeepWeb & Descifrar (slash) ──────────────────────────────────────────
+    @app_commands.command(name='deepweb', description="Envía un mensaje anónimo encriptado - NOVA AGORA V2")
     async def deepweb(self, interaction: discord.Interaction, target: discord.Member = None, msg: str = None):
-        if target is None or msg is None:
-            embed = discord.Embed(title=f"{await get_emoji('deepweb')} DEEPWEB — Sistema Anónimo", description="Envía un mensaje anónimo seguro usando el formato correcto.", color=0x2C2F33)
-            embed.add_field(name="📨 **/deepweb @usuario <mensaje>**", value="Envía un mensaje anónimo encriptado directamente a un usuario.", inline=False)
-            embed.add_field(name="🔓 **/descifrar <id>** 🔒 **(FBI)**", value="Intenta descifrar un mensaje (1/10 éxito).", inline=False)
-            embed.add_field(name="ℹ️ Características", value="✅ Identidad anónima\n✅ ID de seguimiento\n✅ Encriptación asimétrica\n✅ FBI puede descifrar (1/10)", inline=False)
-            embed.set_footer(text="Uso responsable requerido • NOVA AGORA")
-            return await interaction.response.send_message(embed=embed)
+        uid = interaction.user.id
+        user_state = await db.get_user_state(uid)
+        if not user_state["phone_number"]:
+            embed = discord.Embed(title=f"{await get_emoji('deepweb')} DEEPWEB — Nova Agora V2", color=0x2C2F33)
+            embed.add_field(name="\u2753 Qué es", value="Red anónima para comunicaciones encriptadas.", inline=False)
+            embed.add_field(name="\U0001f4cb Uso", value="`/deepweb @usuario <mensaje>`", inline=False)
+            embed.add_field(name="\u26a0\ufe0f Requisito", value="Necesitas una SIM (`/comprar-sim`)", inline=False)
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+        if not target:
+            return await interaction.response.send_message(embed=embed_error("Menciona al usuario destino."), ephemeral=True)
         if target.id == interaction.user.id:
-            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        text = msg.strip()
-        if not text:
-            return await interaction.response.send_message(embed=embed_error("Debes escribir un mensaje después de mencionar al usuario."))
-        msg_id = await db.add_deepweb_message(interaction.user.id, target.id, text)
-        await interaction.response.send_message(f"{await get_emoji('deepweb')} **** ENVÍA MENSAJE DEEPWEB EN NOVA AGORA V2 ****")
-        dm = discord.Embed(title=f"{await get_emoji('deepweb')} Mensaje Anónimo — DeepWeb", description=text, color=0x2C2F33, timestamp=datetime.now())
+            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."), ephemeral=True)
+        if not msg or not msg.strip():
+            return await interaction.response.send_message(embed=embed_error("Escribe el mensaje."), ephemeral=True)
+        msg_id = await db.add_deepweb_message(interaction.user.id, target.id, msg.strip())
+        emoji = await get_emoji('deepweb')
+        await interaction.response.send_message(embed=embed_success(f"{emoji} Mensaje anónimo enviado", f"ID: `{msg_id}`"), ephemeral=True)
+        dm = discord.Embed(title=f"{emoji} Mensaje Anónimo — DeepWeb", description=msg.strip(), color=0x2C2F33, timestamp=datetime.now())
         dm.set_footer(text=f"ID: {msg_id} — Identidad oculta")
         await self.dm_user(target.id, dm)
-        await interaction.followup.send(embed=embed_success(f"{await get_emoji('deepweb')} Mensaje enviado", f"Anónimo | ID: `{msg_id}`"))
-        await self.log("DEEPWEB", f"{interaction.user.name} → {target.name}: {text[:50]}...")
+        await self.log("DEEPWEB", f"{interaction.user.name} → {target.name}: {msg[:50]}...")
 
     @app_commands.command(name='descifrar', description="Descifra mensajes DeepWeb - FBI NOVA AGORA V2")
     async def descifrar(self, interaction: discord.Interaction, mensaje_id: int = None):
         fbi_role = discord.utils.get(interaction.guild.roles, name="FBI")
         if not fbi_role or fbi_role not in interaction.user.roles:
-            return await interaction.response.send_message(embed=embed_error("Solo agentes del FBI pueden usar este comando."))
+            return await interaction.response.send_message(embed=embed_error("Solo agentes del FBI pueden usar este comando."), ephemeral=True)
         if mensaje_id is None:
-            embed = discord.Embed(title="🔐 DESCIFRADOR DeepWeb — FBI Confidencial", description="Sistema de inteligencia para descifrar mensajes DeepWeb anónimos.", color=0x3498DB)
-            embed.add_field(name="📋 Uso", value="`/descifrar <id_del_mensaje>`", inline=False)
-            embed.add_field(name="📊 Probabilidad de Éxito", value="**1/10** (10%) de descifrar la identidad del remitente", inline=False)
-            embed.add_field(name="🔍 Cómo obtener IDs", value="Los IDs se proporcionan cuando se envían mensajes DeepWeb:\n`ID: 12345` (en el mensaje anónimo)", inline=False)
-            embed.add_field(name="✅ Éxito", value="Se revela el nombre del remitente\n📝 Se registra en logs del FBI", inline=False)
-            embed.add_field(name="❌ Fallo", value="La identidad permanece oculta\n🔄 Puedes intentar nuevamente más tarde", inline=False)
-            embed.set_footer(text="Información Clasificada • FBI NOVA AGORA")
-            return await interaction.response.send_message(embed=embed)
+            embed = discord.Embed(title="\U0001f510 DESCIFRADOR DeepWeb — FBI", description="Sistema para descifrar mensajes DeepWeb.", color=0x3498DB)
+            embed.add_field(name="\U0001f4cb Uso", value="`/descifrar <id>`", inline=False)
+            embed.add_field(name="\U0001f4ca Éxito", value="10% de probabilidad.", inline=False)
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
         decode_result = await db.decode_deepweb_message(mensaje_id, interaction.user.id)
         if not decode_result:
-            return await interaction.response.send_message(embed=embed_error("Mensaje DeepWeb no encontrado."))
-        if decode_result['decoded']:
-            autor = interaction.guild.get_member(decode_result['sender'])
+            return await interaction.response.send_message(embed=embed_error("Mensaje no encontrado."), ephemeral=True)
+        if decode_result["decoded"]:
+            autor = interaction.guild.get_member(decode_result["sender"])
             nombre = autor.display_name if autor else f"Usuario {decode_result['sender']}"
-            await interaction.response.send_message(f"{await get_emoji('deepweb')} **** DESCIFRA MENSAJE DEEPWEB EN NOVA AGORA V2 ****")
-            embed = discord.Embed(title="🔓 MENSAJE DESCIFRADO", description=f"**Remitente Identificado:** {nombre}\n\n{decode_result['message']}", color=0x3498DB, timestamp=datetime.now())
-            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-            embed.set_footer(text=f"Descifrado exitoso • ID: {mensaje_id}")
-            await interaction.followup.send(embed=embed)
-            await self.log("DESCIFRAR_EXIT", f"{interaction.user.name} descifró mensaje {mensaje_id} de {nombre}")
+            embed = discord.Embed(title="\U0001f513 MENSAJE DESCIFRADO", description=f"**Remitente:** {nombre}\n\n{decode_result['message']}", color=0x3498DB, timestamp=datetime.now())
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self.log("DESCIFRAR_EXIT", f"{interaction.user.name} descifró {mensaje_id} de {nombre}")
         else:
-            await interaction.response.send_message(embed=discord.Embed(title="❌ DESCIFRADO FALLIDO", description="La identidad del remitente sigue protegida por encriptación.\nIntenta nuevamente más tarde con otro mensaje.", color=0xFF0000, timestamp=datetime.now()))
-            await self.log("DESCIFRAR_FAIL", f"{interaction.user.name} falló en descifrar mensaje {mensaje_id}")
+            await interaction.response.send_message(embed=discord.Embed(title="\u274c DESCIFRADO FALLIDO", description="Identidad protegida. Intenta con otro mensaje.", color=0xFF0000), ephemeral=True)
+            await self.log("DESCIFRAR_FAIL", f"{interaction.user.name} falló descifrar {mensaje_id}")
 
 class WhatsApp(BaseCog):
     wa = app_commands.Group(name='wa', description='WhatsApp - NOVA AGORA V2')
@@ -4711,7 +4894,8 @@ class Admin(BaseCog):
         custom_items.append([nombre, precio, emoji, descripcion])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        _rebuild_tienda()
+        TIENDA_ITEMS_FULL = TIENDA_ITEMS_BASE + custom_items
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         embed = discord.Embed(title=f"{await get_emoji('shop')} Item creado", description=f"**{nombre}** agregado a la tienda con precio {formatear_precio(precio)} {emoji}\nDescripción: {descripcion if descripcion else 'Sin descripción'}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("CREATE_ITEM", f"{ctx.author.name} creó item '{nombre}' ({formatear_precio(precio)})")
@@ -4723,34 +4907,28 @@ class Admin(BaseCog):
     @commands.command(name='delete-item')
     @tiene_rol_equipo_especial()
     async def delete_item(self, ctx, *, nombre: str):
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         nombre = nombre.strip()
         if not nombre:
             return await ctx.send(embed=embed_error("Debes especificar el nombre del item a eliminar."))
-        nombre_lower = nombre.lower()
-        # Verificar que el item existe en la tienda actual
-        if nombre_lower not in TIENDA_ITEMS_DICT:
-            return await ctx.send(embed=embed_error(f"No se encontró el item '{nombre}' en la tienda."))
-        nombre_real = TIENDA_ITEMS_DICT[nombre_lower][0]
-        is_base = any(item[0].lower() == nombre_lower for item in TIENDA_ITEMS_BASE)
-        # 1) Eliminar de custom_items.json si existe ahí
-        custom_items = []
-        if os.path.exists(CUSTOM_ITEMS_FILE):
-            with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
-                custom_items = json.load(f)
-        new_custom = [item for item in custom_items if item[0].lower() != nombre_lower]
+        for item in TIENDA_ITEMS_BASE:
+            if item[0].lower() == nombre.lower():
+                return await ctx.send(embed=embed_error("No puedes eliminar un item estándar. Solo items personalizados."))
+        if not os.path.exists(CUSTOM_ITEMS_FILE):
+            return await ctx.send(embed=embed_error("No hay items personalizados."))
+        with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+            custom_items = json.load(f)
+        original_len = len(custom_items)
+        new_custom = [item for item in custom_items if item[0].lower() != nombre.lower()]
+        if len(new_custom) == original_len:
+            return await ctx.send(embed=embed_error(f"No se encontró el item personalizado '{nombre}'."))
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(new_custom, f, indent=2, ensure_ascii=False)
-        # 2) Si es un item base, marcarlo como eliminado
-        if is_base:
-            deleted = _load_deleted_base_items()
-            deleted.add(nombre_lower)
-            _save_deleted_base_items(deleted)
-        # 3) Reconstruir tienda sin duplicados
-        _rebuild_tienda()
-        tipo = "base" if is_base else "personalizado"
-        embed = discord.Embed(title="✅ Item eliminado", description=f"**{nombre_real}** ({tipo}) ha sido eliminado de la tienda.", color=0xFF6600)
+        TIENDA_ITEMS_FULL = TIENDA_ITEMS_BASE + new_custom
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        embed = discord.Embed(title="✅ Item eliminado", description=f"**{nombre}** ha sido eliminado de la tienda.", color=0xFF6600)
         await ctx.send(embed=embed)
-        await self.log("DELETE_ITEM", f"{ctx.author.name} eliminó item '{nombre_real}' ({tipo})")
+        await self.log("DELETE_ITEM", f"{ctx.author.name} eliminó item '{nombre}'")
         try:
             await ctx.message.delete()
         except:
@@ -4989,16 +5167,12 @@ class Admin(BaseCog):
         nombre_cap = nombre.strip().capitalize()
         droga_data = DROGAS_FULL.get(nombre_cap)
         if not droga_data:
-            # Buscar también en base (PRECIOS_DROGAS_BASE para precios)
-            base_d = PRECIOS_DROGAS_BASE.get(nombre_cap)
-            if not base_d:
-                return await ctx.send(embed=embed_error(f"No existe ninguna droga llamada **{nombre_cap}**."))
-            droga_data = base_d
+            return await ctx.send(embed=embed_error(f"No existe ninguna droga llamada **{nombre_cap}**."))
         # Construir datos completos incluyendo emoji
         data = {
-            "compra": droga_data.get("compra", 0) if isinstance(droga_data, dict) else droga_data["compra"],
-            "venta":  droga_data.get("venta", 0) if isinstance(droga_data, dict) else droga_data["venta"],
-            "emoji":  EMOJIS_DROGA_FULL.get(nombre_cap, droga_data.get("emoji", "💊") if isinstance(droga_data, dict) else "💊")
+            "compra": droga_data.get("compra", 0),
+            "venta":  droga_data.get("venta", 0),
+            "emoji":  EMOJIS_DROGA_FULL.get(nombre_cap, droga_data.get("emoji", "💊"))
         }
         view = EditarDrogaView(ctx.author.id, nombre_cap, data)
         msg = await ctx.send(embed=view.build_embed(), view=view)
@@ -5011,7 +5185,7 @@ class Admin(BaseCog):
     # ─── Gestión de Roles ───────────────────────────────────────────────────
 
     @commands.command(name='agregar-rol')
-    @tiene_rol_give_take()
+    @tiene_rol_equipo_especial()
     async def agregar_rol(self, ctx, miembro: discord.Member = None, rol: discord.Role = None):
         if not miembro or not rol:
             return await ctx.send(embed=embed_help(
@@ -5019,7 +5193,7 @@ class Admin(BaseCog):
                 "Agrega un rol a un usuario.",
                 "-agregar-rol @usuario @rol",
                 "-agregar-rol @Juan @Ciudadano",
-                "Encargado Items/Permisos"
+                "Equipo Especial"
             ))
         if rol >= ctx.guild.me.top_role:
             return await ctx.send(embed=embed_error("No puedo asignar un rol igual o superior al mío."))
@@ -5042,7 +5216,7 @@ class Admin(BaseCog):
             pass
 
     @commands.command(name='eliminar-rol')
-    @tiene_rol_give_take()
+    @tiene_rol_equipo_especial()
     async def eliminar_rol(self, ctx, miembro: discord.Member = None, rol: discord.Role = None):
         if not miembro or not rol:
             return await ctx.send(embed=embed_help(
@@ -5050,7 +5224,7 @@ class Admin(BaseCog):
                 "Quita un rol de un usuario.",
                 "-eliminar-rol @usuario @rol",
                 "-eliminar-rol @Juan @Ciudadano",
-                "Encargado Items/Permisos"
+                "Equipo Especial"
             ))
         if rol >= ctx.guild.me.top_role:
             return await ctx.send(embed=embed_error("No puedo quitar un rol igual o superior al mío."))
@@ -5067,57 +5241,6 @@ class Admin(BaseCog):
         embed.set_footer(text=f"Por {ctx.author.display_name}")
         await ctx.send(embed=embed)
         await self.log("ELIMINAR_ROL", f"{ctx.author.name} quitó rol '{rol.name}' a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-    @commands.command(name='emoji-animado')
-    @tiene_rol_equipo_especial()
-    async def set_animated_emoji(self, ctx, nombre: str = None, emoji_id: str = None):
-        """Registra un emoji custom del servidor para usarlo como tick/cross/escudo/etc.
-        Uso: -emoji-animado tick 123456789
-        Primero sube los SVGs al servidor como emojis (puede hacerlo cualquier admin).
-        Luego obtén el ID del emoji y regístralo aquí.
-        """
-        if not nombre or not emoji_id:
-            embed = discord.Embed(title="🎨 Emojis Animados HUD", color=0x9B59B6)
-            registrados = await db.get_all_animated_emojis()
-            if registrados:
-                txt = "\n".join([f"• `{e['name']}` → ID `{e['emoji_id']}`" for e in registrados])
-                embed.add_field(name="Registrados", value=txt, inline=False)
-            else:
-                embed.add_field(name="Registrados", value="Ninguno todavía.", inline=False)
-            embed.add_field(
-                name="📖 Cómo usar",
-                value=(
-                    "1. Sube tus SVGs como emojis al servidor (Configuración → Emojis)\n"
-                    "2. Obtén el ID del emoji con `\\:nombre_emoji:`\n"
-                    "3. Registra con: `-emoji-animado <nombre> <ID>`\n\n"
-                    "Nombres disponibles: `tick`, `cross`, `escudo`, `reloj`, `carita`"
-                ),
-                inline=False
-            )
-            return await ctx.send(embed=embed)
-        try:
-            emoji_id_int = int(emoji_id)
-        except ValueError:
-            return await ctx.send(embed=embed_error("El ID debe ser un número."))
-        nombre = nombre.lower().strip()
-        nombres_validos = {"tick", "cross", "escudo", "reloj", "carita"}
-        if nombre not in nombres_validos:
-            return await ctx.send(embed=embed_error(f"Nombres válidos: {', '.join(nombres_validos)}"))
-        await db.add_animated_emoji(nombre, emoji_id_int, ctx.author.id)
-        # Intentar mostrar el emoji
-        emoji_obj = discord.utils.get(ctx.guild.emojis, id=emoji_id_int)
-        emoji_str = str(emoji_obj) if emoji_obj else f"ID:{emoji_id_int}"
-        embed = discord.Embed(
-            title="✅ Emoji registrado",
-            description=f"El emoji `{nombre}` ha sido registrado: {emoji_str}\nAhora se usará automáticamente en el HUD.",
-            color=0x00FF00
-        )
-        await ctx.send(embed=embed)
-        await self.log("EMOJI_ANIMADO", f"{ctx.author.name} registró emoji '{nombre}' ID:{emoji_id_int}")
         try:
             await ctx.message.delete()
         except:
@@ -5219,18 +5342,11 @@ class EditarNombreModal(discord.ui.Modal, title="Editar Nombre del Item"):
                 encontrado = True
                 break
         if not encontrado:
-            # Item base: añadir override con nuevo nombre y quitar el base del deleted si existía
-            deleted = _load_deleted_base_items()
-            deleted.discard(self.item_name.lower())
-            deleted.add(self.item_name.lower())  # marcar el nombre viejo como eliminado
-            _save_deleted_base_items(deleted)
-            # Copiar datos del item base y guardar con nuevo nombre
-            base_item = next((item for item in TIENDA_ITEMS_BASE if item[0].lower() == self.item_name.lower()), None)
-            src = base_item if base_item else (self.item_name, self.item_data[1], self.item_data[2], self.item_data[3])
-            custom_items.append([nuevo, src[1] if base_item else self.item_data[1], src[2] if base_item else self.item_data[2], src[3] if base_item else self.item_data[3]])
+            custom_items.append([nuevo, self.item_data[1], self.item_data[2], self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        _rebuild_tienda()
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         self.parent_view.item_name = nuevo
         self.parent_view.item_data[0] = nuevo
         await interaction.response.send_message(f"✅ Nombre actualizado → `{nuevo}`", ephemeral=True)
@@ -5271,7 +5387,8 @@ class EditarPrecioModal(discord.ui.Modal, title="Editar Precio del Item"):
             custom_items.append([self.item_name, nuevo, self.item_data[2], self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        _rebuild_tienda()
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         self.parent_view.item_data[1] = nuevo
         await interaction.response.send_message(f"✅ Precio actualizado → {formatear_precio(nuevo)}", ephemeral=True)
         await self.parent_view.refresh()
@@ -5301,15 +5418,11 @@ class EditarEmojiModal(discord.ui.Modal, title="Editar Emoji del Item"):
                 encontrado = True
                 break
         if not encontrado:
-            # Item base: copiar todos sus datos y sobreescribir emoji
-            base_item = next((item for item in TIENDA_ITEMS_BASE if item[0].lower() == self.item_name.lower()), None)
-            if base_item:
-                custom_items.append([base_item[0], base_item[1], nuevo, base_item[3]])
-            else:
-                custom_items.append([self.item_name, self.item_data[1], nuevo, self.item_data[3]])
+            custom_items.append([self.item_name, self.item_data[1], nuevo, self.item_data[3]])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        _rebuild_tienda()
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         self.parent_view.item_data[2] = nuevo
         await interaction.response.send_message(f"✅ Emoji actualizado → {nuevo}", ephemeral=True)
         await self.parent_view.refresh()
@@ -5336,15 +5449,11 @@ class EditarDescripcionModal(discord.ui.Modal, title="Editar Descripción del It
                 encontrado = True
                 break
         if not encontrado:
-            # Item base: copiar todos sus datos y sobreescribir descripción
-            base_item = next((item for item in TIENDA_ITEMS_BASE if item[0].lower() == self.item_name.lower()), None)
-            if base_item:
-                custom_items.append([base_item[0], base_item[1], base_item[2], nueva])
-            else:
-                custom_items.append([self.item_name, self.item_data[1], self.item_data[2], nueva])
+            custom_items.append([self.item_name, self.item_data[1], self.item_data[2], nueva])
         with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
-        _rebuild_tienda()
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
         self.parent_view.item_data[3] = nueva
         await interaction.response.send_message(f"✅ Descripción actualizada.", ephemeral=True)
         await self.parent_view.refresh()
@@ -5710,15 +5819,7 @@ class Soporte(BaseCog):
             await ctx.message.delete()
         except:
             pass
-        msg_status = await ctx.send(content=f"<@&{ROL_USUARIO_ID}>", embed=embed)
-        # Reacciones HUD para que la comunidad interactúe
-        tick_emoji = await get_animated_bot_emoji("tick", ctx.guild)
-        cross_emoji = await get_animated_bot_emoji("cross", ctx.guild)
-        for r in [tick_emoji, "🚔", cross_emoji, "😅"]:
-            try:
-                await msg_status.add_reaction(r)
-            except Exception:
-                pass
+        await ctx.send(content=f"<@&{ROL_USUARIO_ID}>", embed=embed)
         await self.log("STATUS", f"{ctx.author.name} — {iniciador} | {ciudadanos}p {policias}pol {soporte}sop")
 
     @commands.command(name='votacion')
@@ -5750,16 +5851,8 @@ class Soporte(BaseCog):
             embed=embed,
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
-        # Emojis HUD: tick verde (✅), escudo/policía (🚔), cruz roja (❌), reloj (😅)
-        # Si tienes emojis animados custom, sube los SVGs como emojis al servidor
-        # y usa -emoji-animado para registrarlos. El código usará los custom automáticamente.
-        tick_emoji = await get_animated_bot_emoji("tick", interaction.guild if hasattr(interaction, "guild") else None)
-        cross_emoji = await get_animated_bot_emoji("cross", msg.guild if hasattr(msg, "guild") else None)
-        for reaction_emoji in [tick_emoji, "🚔", cross_emoji, "😅"]:
-            try:
-                await msg.add_reaction(reaction_emoji)
-            except Exception:
-                pass  # Si el emoji custom no está disponible, lo ignora
+        for emoji in ["✅", "🚔", "❌", "😅"]:
+            await msg.add_reaction(emoji)
         await self.log("VOTACION", f"{autor.name} → {datos['hora']}")
 
     @commands.command(name='cierre-rol')
@@ -6585,27 +6678,7 @@ class DNI(BaseCog):
         uid = interaction.user.id
         existing = await db.get_dni(uid)
         if existing:
-            # Mostrar su DNI existente con la fecha en que fue creado
-            fecha_creacion = ""
-            try:
-                fecha_creacion = datetime.fromisoformat(existing['fecha_creacion']).strftime('%d/%m/%Y a las %H:%M')
-            except Exception:
-                fecha_creacion = existing.get('fecha_creacion', 'desconocida')
-            embed = discord.Embed(
-                title="🪪 Ya tienes un DNI registrado",
-                description=(
-                    f"No puedes crear un nuevo DNI porque ya tienes uno registrado desde el **{fecha_creacion}**.\n\n"
-                    f"Si necesitas modificarlo, contacta con un administrador (`/borrardni`).\n\n"
-                    f"**📋 Tu DNI actual:**\n"
-                    f"> 🌟 **Nombre:** {existing['nombre']} {existing['apellidos']}\n"
-                    f"> 📅 **Edad:** {existing['edad']}\n"
-                    f"> 🎖️ **Profesión:** {existing['profesion']}\n"
-                    f"> 🔐 **Nº DNI:** `{existing['numero']}`"
-                ),
-                color=0xFF6600
-            )
-            embed.set_footer(text=f"NOVA AGORA V2 • DNI ya registrado • {datetime.now():%d/%m/%Y}")
-            return await interaction.response.send_message(embed=embed, ephemeral=True)
+            return await interaction.response.send_message(embed=embed_error("Ya tienes un DNI registrado."))
         numero = f"{random.randint(10000000, 99999999)}{random.choice('ABCDEFGHJKLMNPQRSTVWXYZ')}"
         data = {"nombre": nombre, "apellidos": apellidos, "edad": edad, "genero": genero, "nacionalidad": nacionalidad, "color_ojos": color_ojos, "altura": altura, "profesion": profesion, "numero": numero, "fecha_creacion": datetime.now().isoformat()}
         await db.set_dni(uid, data)
@@ -6615,62 +6688,55 @@ class DNI(BaseCog):
 
     @commands.command(name='ver')
     @tiene_rol_usuario()
-    async def ver(self, ctx, subcomando: str = None, *, resto: str = None):
+    async def ver(self, ctx, subcomando: str = None, usuario: Optional[discord.Member] = None):
         if subcomando is None or subcomando.lower() != 'dni':
-            return await ctx.send(embed=embed_info("📋 Comando ver", "Usa `-ver dni [@usuario]` para ver el DNI de alguien."))
-
-        # Resolver el usuario destino: mención, ID numérica o el propio autor
-        target = None
-        uid = ctx.author.id
-        if ctx.message.mentions:
-            target = ctx.message.mentions[0]
-            uid = target.id
-        elif resto:
-            # Intentar por ID numérica
-            try:
-                posible_id = int(resto.strip().strip("<@!>"))
-                target = ctx.guild.get_member(posible_id)
-                if not target:
-                    try:
-                        target = await ctx.guild.fetch_member(posible_id)
-                    except Exception:
-                        pass
-                uid = posible_id
-            except ValueError:
-                pass
-
+            return await ctx.send(embed=embed_info("📋 Comando ver", "Usa `-ver dni [usuario]` para ver el DNI de alguien."))
+        uid = usuario.id if usuario else ctx.author.id
         dni = await db.get_dni(uid)
         if not dni:
-            nombre_target = target.display_name if target else ctx.author.display_name
-            return await ctx.send(embed=embed_error(f"**{nombre_target}** no tiene DNI registrado en el sistema."))
+            return await ctx.send(embed=embed_error("Ese usuario no tiene DNI registrado."))
+        target = usuario or ctx.author
 
-        display_target = target or ctx.author
-        embed = discord.Embed(
-            title="DOCUMENTO NACIONAL DE IDENTIDAD • NOVA AGORA V2",
-            description="ESTADOS UNIDOS · LOS ANGELES",
-            color=0x00D1FF,
-            timestamp=datetime.now()
-        )
-        embed.set_author(name=display_target.display_name, icon_url=display_target.display_avatar.url)
-        embed.set_thumbnail(url=display_target.display_avatar.url)
-        embed.add_field(name="✨ ESTADO", value="LOS ANGELES", inline=False)
-        embed.add_field(name="🌟 NOMBRE", value=f"**{dni['nombre']}**", inline=False)
-        embed.add_field(name="💫 APELLIDOS", value=f"**{dni['apellidos']}**", inline=False)
-        embed.add_field(name="🔥 SEXO", value=dni['genero'], inline=False)
-        embed.add_field(name="📅 FECHA NACIMIENTO", value=str(dni['edad']), inline=False)
-        embed.add_field(name="👁️ COLOR OJOS", value=dni['color_ojos'], inline=False)
-        embed.add_field(name="📏 ALTURA", value=dni['altura'], inline=False)
-        embed.add_field(name="🎖️ PROFESIÓN", value=f"**{dni['profesion']}**", inline=False)
-        embed.add_field(name="🌍 NACIONALIDAD", value=dni['nacionalidad'], inline=False)
-        embed.add_field(name="🔐 Nº DNI", value=f"**{dni['numero']}**", inline=False)
-        embed.add_field(name="✅ ESTADO DEL DOCUMENTO", value="**VÁLIDO**", inline=False)
+        # ── Calcular campos ──────────────────────────────────────────────────
+        fecha_nac  = str(dni.get('edad', '—'))        # guardado como edad/fecha en el campo
+        fecha_exp  = datetime.fromisoformat(dni['fecha_creacion']).strftime('%d/%m/%Y') if dni.get('fecha_creacion') else '—'
         try:
-            fecha_emitido = datetime.fromisoformat(dni['fecha_creacion']).strftime('%d/%m/%Y %H:%M')
+            dt_exp   = datetime.fromisoformat(dni['fecha_creacion'])
+            fecha_vence = (dt_exp.replace(year=dt_exp.year + 10)).strftime('%d/%m/%Y')
         except Exception:
-            fecha_emitido = str(dni.get('fecha_creacion', 'desconocida'))
-        embed.add_field(name="🗓️ EMITIDO", value=fecha_emitido, inline=False)
-        embed.set_footer(text=f"NOVA AGORA V2 • CARNET OFICIAL • {datetime.now():%d/%m/%Y}")
-        await ctx.send(embed=embed)
+            fecha_vence = '—'
+
+        # ── Generar imagen DNI ───────────────────────────────────────────────
+        processing = await ctx.send(embed=discord.Embed(
+            description="🪪 Generando DNI...", color=0x3498DB
+        ))
+        try:
+            loop = asyncio.get_event_loop()
+            img_buf = await loop.run_in_executor(None, generar_imagen_dni,
+                dni.get('nombre', '—'),
+                dni.get('apellidos', '—'),
+                fecha_nac,
+                dni.get('genero', '—'),
+                dni.get('nacionalidad', '—'),
+                'San Andreas',
+                dni.get('numero', '—'),
+                fecha_exp,
+                fecha_vence,
+            )
+            embed = discord.Embed(
+                description="IDENTIFICACIÓN ESTADO LOS ANGELES, NOVA AGORA",
+                color=0x8B0000,
+                timestamp=datetime.now()
+            )
+            embed.set_image(url="attachment://dni.png")
+            embed.set_footer(text=f"NOVA AGORA V2 • Nº {dni.get('numero', '—')}")
+            await processing.delete()
+            await ctx.send(
+                file=discord.File(img_buf, filename='dni.png'),
+                embed=embed
+            )
+        except Exception as e:
+            await processing.edit(embed=embed_error(f"Error al generar DNI: {str(e)[:100]}"))
         try:
             await ctx.message.delete()
         except:
