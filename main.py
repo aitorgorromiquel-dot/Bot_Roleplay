@@ -691,6 +691,29 @@ class Database:
         await self.execute("INSERT INTO economy (user_id) VALUES (?)", (user_id,))
         return {"cash": 0, "bank": 0, "black_money": 0}
 
+    async def ensure_user(self, user_id):
+        """Asegura que el usuario existe en economy y users. Crea registros si no existen."""
+        await self.execute(
+            "INSERT OR IGNORE INTO economy (user_id, cash, bank, black_money) VALUES (?, 0, 0, 0)",
+            (user_id,)
+        )
+        await self.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (user_id,)
+        )
+
+    async def get_start_money(self):
+        """Devuelve el dinero inicial para nuevos miembros (0 = desactivado)."""
+        row = await self.fetchone("SELECT value FROM bot_config WHERE key = 'start_money'")
+        return int(row[0]) if row and row[0] else 0
+
+    async def set_start_money(self, amount: int):
+        """Establece el dinero inicial para nuevos miembros."""
+        await self.execute(
+            "INSERT OR REPLACE INTO bot_config (key, value) VALUES ('start_money', ?)",
+            (str(amount),)
+        )
+
     async def add_cash(self, user_id, amount):
         await self.execute("UPDATE economy SET cash = cash + ? WHERE user_id = ?", (amount, user_id))
         await self.invalidate_cache("economy")
@@ -1823,29 +1846,39 @@ class Principal(BaseCog):
         except:
             pass
 
-    @commands.command(name='intercambio')
+    @commands.command(name='dar')
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
-    async def intercambio(self, ctx, usuario: discord.Member, cantidad: int, *, item: str):
+    async def dar(self, ctx, usuario: discord.Member = None, item: str = None, cantidad: int = None):
+        if not usuario or not item or not cantidad:
+            return await ctx.send(embed=embed_help(
+                "dar",
+                "Da un item de tu inventario a otro jugador.",
+                "-dar @usuario <item> <cantidad>",
+                "-dar @Juan Pistola 1",
+                ""
+            ))
         uid, tid = ctx.author.id, usuario.id
         if uid == tid:
-            return await ctx.send(embed=embed_error("No puedes intercambiar contigo mismo."))
+            return await ctx.send(embed=embed_error("No puedes darte items a ti mismo."))
+        if cantidad <= 0:
+            return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
         inv = await db.get_inventory(uid, "personal")
         item_real = next((k for k in inv if k.lower() == item.lower()), None)
         if not item_real:
-            return await ctx.send(embed=embed_error(f"No tienes {item}."))
+            return await ctx.send(embed=embed_error(f"No tienes **{item}** en tu inventario."))
         if inv[item_real] < cantidad:
-            return await ctx.send(embed=embed_error(f"Solo tienes {inv[item_real]}."))
+            return await ctx.send(embed=embed_error(f"Solo tienes **{inv[item_real]}x {item_real}**."))
         await db.remove_item(uid, "personal", item_real, cantidad)
         await db.add_item(tid, "personal", item_real, cantidad)
         embed = discord.Embed(
-            title="🔄 Intercambio",
-            description=f"{ctx.author.mention} ha dado {cantidad}x {item_real} a {usuario.mention}.",
+            title="🎁 Item Entregado",
+            description=f"{ctx.author.mention} ha dado **{cantidad}x {item_real}** a {usuario.mention}.",
             color=0x3498DB
         )
         await ctx.send(embed=embed)
-        await self.log("INTERCAMBIO", f"{ctx.author.name} dio {cantidad}x {item_real} a {usuario.name}")
+        await self.log("DAR", f"{ctx.author.name} dio {cantidad}x {item_real} a {usuario.name}")
         try:
             await ctx.message.delete()
         except:
@@ -1887,6 +1920,33 @@ class Principal(BaseCog):
             await ctx.message.delete()
         except:
             pass
+
+    # ── Bienvenida y dinero inicial automático ──────────────────────────
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        if member.bot:
+            return
+        # Crear registros del usuario en la base de datos
+        await db.ensure_user(member.id)
+        # Dar dinero inicial si está configurado
+        start_money = await db.get_start_money()
+        if start_money > 0:
+            await db.add_cash(member.id, start_money)
+            # Intentar notificar al nuevo miembro por DM
+            try:
+                embed = discord.Embed(
+                    title="💰 ¡Bienvenido/a!",
+                    description=(
+                        f"¡Bienvenido/a a **{member.guild.name}**!\n\n"
+                        f"Has recibido **${start_money:,}** como dinero inicial.\n"
+                        f"Usa `-balance` para ver tu saldo."
+                    ),
+                    color=0x00FF00
+                )
+                embed.set_footer(text=member.guild.name)
+                await member.send(embed=embed)
+            except (discord.Forbidden, discord.HTTPException):
+                pass  # El usuario tiene los DMs cerrados, no pasa nada
 
 class TrabajoView(discord.ui.View):
     trabajo_data = {}
@@ -4607,6 +4667,38 @@ class Admin(BaseCog):
         except:
             pass
 
+    @commands.command(name='poner')
+    @tiene_rol_give_take()
+    async def poner(self, ctx, miembro: discord.Member = None, item: str = None, cantidad: int = None):
+        """Pone un item en el inventario de un usuario. Solo Encargado de Items."""
+        if not miembro or not item or not cantidad:
+            return await ctx.send(embed=embed_help(
+                "poner",
+                "Pone un item directamente en el inventario de un usuario.",
+                "-poner @usuario <item> <cantidad>",
+                "-poner @Juan Pistola 1",
+                "Encargado de Items"
+            ))
+        if cantidad <= 0:
+            return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
+        # Verificar que el item existe en la tienda
+        item_data = TIENDA_ITEMS_DICT.get(item.lower())
+        item_nombre = item_data[0] if item_data else item
+        await db.ensure_user(miembro.id)
+        await db.add_item(miembro.id, "personal", item_nombre, cantidad)
+        embed = discord.Embed(
+            title="📦 Item Añadido",
+            description=f"Se han puesto **{cantidad}x {item_nombre}** en el inventario de {miembro.mention}.",
+            color=0x00FF00
+        )
+        embed.set_footer(text=f"Ejecutado por {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+        await self.log("PONER", f"{ctx.author.name} puso {cantidad}x {item_nombre} en inv de {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
     @commands.command(name='mass-economy')
     @tiene_rol_equipo_especial()
     async def mass_economy(self, ctx, rol: discord.Role = None, cantidad: int = None):
@@ -4629,12 +4721,54 @@ class Admin(BaseCog):
                 await db.add_cash(member.id, cantidad)
             except Exception:
                 errores += 1
-        embed = discord.Embed(
-            description=("**$" + f"{cantidad:,}" + " entregados a **" + str(len(miembros) - errores) + " miembros con " + rol.name + ("." if not errores else f" ({errores} errores).")),
-            color=0x00FF00
-        )
+        exitosos = len(miembros) - errores
+        desc = f"**${cantidad:,}** entregados a **{exitosos}** miembros con {rol.mention}"
+        desc += f" (**{errores} errores**)." if errores else "."
+        embed = discord.Embed(description=desc, color=0x00FF00)
         await msg.edit(embed=embed)
-        await self.log("MASS_ECONOMY", f"{ctx.author.name} dio ${cantidad:,} a {len(miembros)} miembros con rol {rol.name}")
+        await self.log("MASS_ECONOMY", f"{ctx.author.name} dio ${cantidad:,} a {exitosos} miembros con rol {rol.name} ({errores} errores)")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='set-economy')
+    @tiene_rol_equipo_especial()
+    async def set_economy(self, ctx, cantidad: int = None):
+        if cantidad is None:
+            start = await db.get_start_money()
+            estado = f"**${start:,}**" if start > 0 else "**Desactivado**"
+            return await ctx.send(embed=embed_help(
+                "set-economy",
+                "Configura el dinero inicial que reciben los nuevos miembros al unirse al servidor.",
+                "-set-economy <cantidad>",
+                "-set-economy 500",
+                "Equipo Especial"
+            ) if False else discord.Embed(
+                title="⚙️ Economía Inicial",
+                description=f"Los nuevos miembros reciben: {estado}\n\n"
+                            f"Usa `-set-economy <cantidad>` para cambiarlo.\n"
+                            f"Usa `-set-economy 0` para desactivarlo.",
+                color=0x3498DB
+            ))
+        if cantidad < 0:
+            return await ctx.send(embed=embed_error("La cantidad no puede ser negativa."))
+        await db.set_start_money(cantidad)
+        if cantidad == 0:
+            embed = discord.Embed(
+                title="⚙️ Economía Inicial Desactivada",
+                description="Los nuevos miembros ya **no recibirán** dinero al unirse.",
+                color=0xFF4500
+            )
+        else:
+            embed = discord.Embed(
+                title="✅ Economía Inicial Configurada",
+                description=f"Los nuevos miembros recibirán **${cantidad:,}** al unirse al servidor.",
+                color=0x00FF00
+            )
+        embed.set_footer(text=f"Configurado por {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+        await self.log("SET_ECONOMY", f"{ctx.author.name} configuró economía inicial a ${cantidad:,}")
         try:
             await ctx.message.delete()
         except:
@@ -5047,7 +5181,11 @@ class Soporte(BaseCog):
         embed.add_field(name="\u200b", value="✅ → **Si te vas a unir.**\n🚔 → **Si te unes como policía.**\n❌ → **No te unes.**\n😅 → **Si te vas a unir tarde.**", inline=False)
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
         embed.set_footer(text=f"Soporte: {autor.display_name}  ·  NOVA AGORA", icon_url=autor.display_avatar.url)
-        msg = await canal.send(content="@rol", embed=embed)
+        msg = await canal.send(
+            content="@everyone",
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(everyone=True)
+        )
         for emoji in ["✅", "🚔", "❌", "😅"]:
             await msg.add_reaction(emoji)
         await self.log("VOTACION", f"{autor.name} → {datos['hora']}")
@@ -5079,13 +5217,13 @@ class Soporte(BaseCog):
 class Ayuda(BaseCog):
     CATEGORIAS = {
         "roleplay": {"emoji": "🚔", "nombre": "Roleplay", "comandos": [("-me <acción>", "Acción en primera persona"), ("-do <pensamiento>", "Pensamiento en voz alta"), ("-entorno <descripción> [| lugar]", "Describe el entorno y alerta a LSPD"), ("-reparar @user [desc]", "Repara un vehículo (mecánico)"), ("-curar @user [desc]", "Cura a un paciente (médico)")]},
-        "economia": {"emoji": "🏦", "nombre": "Economía", "comandos": [("-banco", "Gestiona tu dinero"), ("-balance-top", "Top de dinero"), ("-blanquear", "Convierte gramos de droga (solo MAFIA)"), ("-inv [tipo]", "Muestra inventario"), ("-tienda", "Compra items"), ("-comprar <item> [cantidad]", "Compra artículo"), ("-comprar-licencia <tipo>", "Compra licencias"), ("-licencia [@usuario]", "Ver licencias"), ("-use <item>", "Usa un item"), ("-intercambio @user <cantidad> <item>", "Da items"), ("-mover <item> <cant> <origen> <destino>", "Mueve items")]},
+        "economia": {"emoji": "🏦", "nombre": "Economía", "comandos": [("-banco", "Gestiona tu dinero"), ("-balance-top", "Top de dinero"), ("-blanquear", "Convierte gramos de droga (solo MAFIA)"), ("-inv [tipo]", "Muestra inventario"), ("-tienda", "Compra items"), ("-comprar <item> [cantidad]", "Compra artículo"), ("-comprar-licencia <tipo>", "Compra licencias"), ("-licencia [@usuario]", "Ver licencias"), ("-use <item>", "Usa un item"), ("-dar @user <item> <cantidad>", "Da items a otro jugador"), ("-mover <item> <cant> <origen> <destino>", "Mueve items")]},
         "trabajos": {"emoji": "💼", "nombre": "Trabajos", "comandos": [("-trabajo", "Simula jornada laboral"), ("-bus", "Conduce autobús [AUTOBUSERO]"), ("-chatarrero", "Recolecta chatarra [CHATARRERO]"), ("-minar", "Extrae minerales [MINERO]"), ("-terminar-trabajo", "Finaliza trabajo")]},
         "atracos": {"emoji": "🏴", "nombre": "Atracos", "comandos": [("-rob", "Ver atracos"), ("-rob badu", "Badu"), ("-rob yellowjack", "Yellow Jack"), ("-rob ammu", "Ammu-Nation"), ("-rob vanilla", "Vanilla Unicorn"), ("-rob yate", "Yate"), ("-rob centro", "Centro Comercial"), ("-rob joyeria", "Joyería"), ("-rob paleto", "Banco Paleto"), ("-rob central", "Banco Central"), ("-rob pacific", "Pacific Bank (requiere 8 prep)"), ("-rob status", "Estado de atracos")]},
         "preparatorias": {"emoji": "🏴", "nombre": "Preparatorias", "comandos": [("-preparacion", "Ver estado general"), ("-preparacion badu <1>", "Prepara Badu"), ("-preparacion yellowjack <1-2>", "Prepara Yellow Jack"), ("-preparacion ammu <1-3>", "Prepara Ammu-Nation"), ("-preparacion vanilla <1-3>", "Prepara Vanilla Unicorn"), ("-preparacion yate <1-4>", "Prepara Yate"), ("-preparacion centro <1-4>", "Prepara Centro Comercial"), ("-preparacion joyeria <1-5>", "Prepara Joyería"), ("-preparacion paleto <1-6>", "Prepara Banco Paleto"), ("-preparacion central <1-7>", "Prepara Banco Central"), ("-preparacion pacific <1-8>", "Prepara Pacific Bank")]},
         "drogas": {"emoji": "💊", "nombre": "Drogas e Ilegal", "comandos": [("-droga", "Ver precios"), ("-droga comprar <tipo> [cantidad]", "Compra droga"), ("-droga vender <tipo> [cantidad]", "Vende droga (solo MAFIA ADMIN)"), ("-tienda-ilegal", "Mercado negro")]},
         "redes": {"emoji": "📱", "nombre": "Redes Sociales", "comandos": [("/movil", "Abre móvil"), ("/avion on/off", "Modo avión"), ("/wifi conectar/desconectar", "WiFi"), ("/comprar-sim", "Compra SIM"), ("/ig", "Instagram"), ("/tw", "Twitter"), ("/fb", "Facebook"), ("/deepweb", "DeepWeb anónimo"), ("/wa", "WhatsApp"), ("-x @user <msg>", "Twitter DM")]},
-        "admin": {"emoji": "⚙️", "nombre": "Administración", "comandos": [("-say <msg> 🔒", "Repite"), ("-kick @user 🔒", "Expulsa"), ("-warn @user <razón> 🔒", "Advierte"), ("-ban @user 🔒", "Banea"), ("-unban <id> 🔒", "Desbanea"), ("-money add/remove 🔒", "Modifica dinero"), ("-anuncio <msg> 🔒", "Anuncio"), ("-setprefix <p> 🔒", "Cambia prefijo"), ("-add-inv 🔒", "Añade item"), ("-rem-inv 🔒", "Quita item"), ("-add-coche 🔒", "Registra coche"), ("-remove-coche 🔒", "Elimina coche"), ("-add-droga 🔒", "Añade droga"), ("-add-licencia 🔒", "Da licencia"), ("-rem-licencia 🔒", "Quita licencia"), ("-quitar-warn 🔒", "Quita advertencia"), ("-economy-reset 🔒", "Resetea economía"), ("-reset-user 🔒", "Resetea usuario"), ("-create-item 🔒", "Crea item (precio INFINITY)"), ("-delete-item 🔒", "Elimina item"), ("-give-item 🔒", "Regala item"), ("-take-item 🔒", "Quita item"), ("-mass-economy 🔒", "Dinero masivo"), ("-purge <cantidad> 🔒", "Borra mensajes"), ("/dashboard", "Panel de control")]},
+        "admin": {"emoji": "⚙️", "nombre": "Administración", "comandos": [("-say <msg> 🔒", "Repite"), ("-kick @user 🔒", "Expulsa"), ("-warn @user <razón> 🔒", "Advierte"), ("-ban @user 🔒", "Banea"), ("-unban <id> 🔒", "Desbanea"), ("-money add/remove 🔒", "Modifica dinero"), ("-anuncio <msg> 🔒", "Anuncio"), ("-setprefix <p> 🔒", "Cambia prefijo"), ("-add-inv 🔒", "Añade item"), ("-rem-inv 🔒", "Quita item"), ("-add-coche 🔒", "Registra coche"), ("-remove-coche 🔒", "Elimina coche"), ("-add-droga 🔒", "Añade droga"), ("-add-licencia 🔒", "Da licencia"), ("-rem-licencia 🔒", "Quita licencia"), ("-quitar-warn 🔒", "Quita advertencia"), ("-economy-reset 🔒", "Resetea economía"), ("-reset-user 🔒", "Resetea usuario"), ("-create-item 🔒", "Crea item (precio INFINITY)"), ("-delete-item 🔒", "Elimina item"), ("-give-item 🔒", "Regala item"), ("-take-item 🔒", "Quita item"), ("-poner @user <item> <cant> 🔒", "Pone item en inv"), ("-mass-economy 🔒", "Dinero masivo"), ("-set-economy 🔒", "Dinero inicial nuevos"), ("-purge <cantidad> 🔒", "Borra mensajes"), ("/dashboard", "Panel de control")]},
         "moderacion": {"emoji": "🛡️", "nombre": "Moderación", "comandos": [("-mute @user 🔒", "Mutea"), ("-unmute @user 🔒", "Desmutea"), ("-delwarn @user <id> 🔒", "Elimina advertencia"), ("-history @user", "Historial sanciones"), ("-warnings @user", "Ver advertencias")]},
         "web": {"emoji": "🌐", "nombre": "Panel Web", "comandos": [("http://localhost:5000", "Accede a la web"), ("/register", "Registro"), ("/login", "Login"), ("/perfil", "Perfil")]}
     }
