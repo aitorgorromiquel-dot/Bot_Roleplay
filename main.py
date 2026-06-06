@@ -45,6 +45,8 @@ ROL_INICIADOR_ID = 1450592126491558131
 ROL_EQUIPO_ESPECIAL_ID = 1450592064365658134
 ROL_ADMIN_ID = 1450592064365658134  # Mismo que equipo especial o cambia por tu ID de admin
 ROL_MIEMBRO_BANDA_ID = 1512759486568468621  # 🎭 Rol Miembro Banda
+ROL_WARN_ID = 1450592143122108537           # ⚠️ Rol para poner warns
+ROL_GIVE_TAKE_ID = 1450592140710383658      # 🎁 Rol para give/take item
 ROL_DASHBOARD_ID = 1450592204849418294
 ROL_LSPD_OPERATIVO_ID = 1450592202165321759
 ROL_LSMD_ID = 1450592186600128567
@@ -1314,6 +1316,8 @@ def tiene_rol_mafia_admin(): return tiene_rol_o_owner(ROL_MAFIA_ADMIN_ID)
 def tiene_rol_minero(): return tiene_rol_o_owner(ROL_MINERO_ID)
 def tiene_rol_autobusero(): return tiene_rol_o_owner(ROL_AUTOBUSERO_ID)
 def tiene_rol_chatarrero(): return tiene_rol_o_owner(ROL_CHATARRERO_ID)
+def tiene_rol_warn(): return tiene_rol_o_owner(ROL_WARN_ID)
+def tiene_rol_give_take(): return tiene_rol_o_owner(ROL_GIVE_TAKE_ID)
 
 def tiene_rol_usuario():
     async def predicate(ctx):
@@ -4574,7 +4578,7 @@ class Admin(BaseCog):
             pass
 
     @commands.command(name='give-item')
-    @tiene_rol_equipo_especial()
+    @tiene_rol_give_take()
     async def give_item(self, ctx, miembro: discord.Member, item: str, cantidad: int = 1):
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
@@ -4588,7 +4592,7 @@ class Admin(BaseCog):
             pass
 
     @commands.command(name='take-item')
-    @tiene_rol_equipo_especial()
+    @tiene_rol_give_take()
     async def take_item(self, ctx, miembro: discord.Member, item: str, cantidad: int = 1):
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
@@ -4605,23 +4609,32 @@ class Admin(BaseCog):
 
     @commands.command(name='mass-economy')
     @tiene_rol_equipo_especial()
-    async def mass_economy(self, ctx, rol: discord.Role, cantidad: int):
+    async def mass_economy(self, ctx, rol: discord.Role = None, cantidad: int = None):
+        if not rol or not cantidad:
+            return await ctx.send(embed=embed_help("mass-economy", "Da dinero a todos los miembros de un rol.", "-mass-economy @Rol <cantidad>", "-mass-economy @Ciudadanos 1000", "Equipo Especial"))
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
         miembros = [m for m in ctx.guild.members if rol in m.roles and not m.bot]
         if not miembros:
             return await ctx.send(embed=embed_error(f"No hay miembros con el rol {rol.mention}."))
-        view = ConfirmView(ctx.author.id)
-        embed_confirm = discord.Embed(title="⚠️ Confirmar asignación masiva", description=f"¿Estás seguro de que quieres dar **${cantidad:,}** a **{len(miembros)}** miembros con el rol {rol.mention}?", color=0xFFA500)
-        await ctx.send(embed=embed_confirm, view=view)
-        await view.wait()
-        if not view.value:
-            return await ctx.send(embed=embed_info("Operación cancelada."))
+        msg = await ctx.send(embed=discord.Embed(
+            title="⏳ Procesando...",
+            description=f"Dando **${cantidad:,}** a **{len(miembros)}** miembros con el rol {rol.mention}...",
+            color=0xFFA500
+        ))
+        errores = 0
         for member in miembros:
-            await db.add_cash(member.id, cantidad)
-        embed = discord.Embed(title="✅ Asignación masiva completada", description=f"Se ha dado **${cantidad:,}** a **{len(miembros)}** miembros con el rol {rol.mention}.", color=0x00FF00)
-        await ctx.send(embed=embed)
-        await self.log("MASS_ECONOMY", f"{ctx.author.name} dio ${cantidad} a {len(miembros)} miembros con rol {rol.name}")
+            try:
+                await db.ensure_user(member.id)
+                await db.add_cash(member.id, cantidad)
+            except Exception:
+                errores += 1
+        embed = discord.Embed(
+            description=("**$" + f"{cantidad:,}" + " entregados a **" + str(len(miembros) - errores) + " miembros con " + rol.name + ("." if not errores else f" ({errores} errores).")),
+            color=0x00FF00
+        )
+        await msg.edit(embed=embed)
+        await self.log("MASS_ECONOMY", f"{ctx.author.name} dio ${cantidad:,} a {len(miembros)} miembros con rol {rol.name}")
         try:
             await ctx.message.delete()
         except:
@@ -5181,10 +5194,10 @@ class Moderacion(BaseCog):
             pass
 
     @commands.command(name='warn')
-    @commands.has_permissions(manage_messages=True)
+    @tiene_rol_warn()
     async def warn(self, ctx, miembro: discord.Member = None, *, razon: str = None):
         if not miembro or not razon:
-            return await ctx.send(embed=embed_help("warn", "Añade una advertencia a un usuario.", "-warn @usuario <razón>", "-warn @Juan No respeta las normas", "Gestionar mensajes"))
+            return await ctx.send(embed=embed_help("warn", "Añade una advertencia a un usuario.", "-warn @usuario <razón>", "-warn @Juan No respeta las normas", "Moderación"))
         await db.execute("INSERT INTO warnings (user_id, razon, fecha, agente_id, agente_nombre) VALUES (?, ?, ?, ?, ?)", (miembro.id, razon, datetime.now().isoformat(), ctx.author.id, str(ctx.author)))
         warns = await db.fetchall("SELECT id FROM warnings WHERE user_id = ?", (miembro.id,))
         num_warns = len(warns)
@@ -6554,11 +6567,13 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
     tiene_permiso = any(r.id in roles_permitidos for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
     if not tiene_permiso:
         return await interaction.response.send_message(embed=embed_error("No tienes permiso para usar este comando."), ephemeral=True)
+    icon_url = interaction.guild.icon.url if interaction.guild.icon else None
+    fecha = datetime.now().strftime("%d/%m/%Y")
     embed = discord.Embed(color=0x2B2D31, timestamp=datetime.now())
-    embed.set_author(name="NOVA DEVELOPERS", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-    embed.add_field(name="📢 ANUNCIO ADMINISTRATIVO", value=mensaje, inline=False)
+    embed.set_author(name="NOVA DEVELOPERS", icon_url=icon_url)
+    embed.add_field(name="📣 ANUNCIO ADMINISTRATIVO", value=f"\n{mensaje}\n", inline=False)
     embed.add_field(name="\u200b", value="━━━━━━━━━━━━━━━━━━━━\n📣 Sistema oficial de comunicaciones\n⚡ Mantente atento a próximas novedades", inline=False)
-    embed.set_footer(text="Nova Agora RP • Administración Oficial")
+    embed.set_footer(text=f"Nova Agora RP • Administración Oficial • {fecha}", icon_url=icon_url)
     await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
 @bot.event
