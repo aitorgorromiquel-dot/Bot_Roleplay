@@ -44,6 +44,7 @@ OWNER_IDS = [1059183337832468510, 729054497233436775, 1259792008248037442]
 ROL_INICIADOR_ID = 1450592126491558131
 ROL_EQUIPO_ESPECIAL_ID = 1450592064365658134
 ROL_ADMIN_ID = 1450592064365658134  # Mismo que equipo especial o cambia por tu ID de admin
+ROL_MIEMBRO_BANDA_ID = 1512759486568468621  # 🎭 Rol Miembro Banda
 ROL_DASHBOARD_ID = 1450592204849418294
 ROL_LSPD_OPERATIVO_ID = 1450592202165321759
 ROL_LSMD_ID = 1450592186600128567
@@ -1420,24 +1421,26 @@ class Principal(BaseCog):
     @tiene_rol_usuario()
     async def inv(self, ctx, tipo: Optional[str] = None):
         uid = ctx.author.id
+        tipo_map = {'banda': 'ilegal', 'encima': 'personal'}
         if not tipo:
-            return await ctx.send(embed=embed_info("🎒 Inventarios", "Tipos: personal · vehiculo · propiedad · negocios · ilegal\nUsa `-inv [tipo]`"))
+            return await ctx.send(embed=embed_info("🎒 Inventarios", "Tipos: encima · vehiculo · propiedad · negocios · banda\nUsa `-inv [tipo]`"))
         t = tipo.lower()
+        t = tipo_map.get(t, t)
         if t not in ['personal', 'vehiculo', 'propiedad', 'negocios', 'ilegal']:
-            return await ctx.send(embed=embed_error("Tipos: personal, vehiculo, propiedad, negocios, ilegal"))
+            return await ctx.send(embed=embed_error("Tipos: encima, vehiculo, propiedad, negocios, banda"))
         if t == 'ilegal':
             grams = await db.get_drug_grams(uid)
             if not grams:
-                return await ctx.send(embed=embed_info("💊 Inventario Ilegal", "No tienes gramos de droga acumulados."))
+                return await ctx.send(embed=embed_info("🎭 Inventario Banda", "No tienes gramos de droga acumulados."))
             desc = "\n".join([f"{EMOJIS_DROGA.get(droga, '💊')} **{droga}:** {gramos} gramos" for droga, gramos in grams.items()])
-            embed = discord.Embed(title="💊 INVENTARIO ILEGAL (Gramos)", description=desc, color=0x8B0000)
-            embed.set_footer(text="Usa -inv ilegal transferir para enviar gramos a otro usuario")
+            embed = discord.Embed(title="🎭 INVENTARIO BANDA (Gramos)", description=desc, color=0x8B0000)
+            embed.set_footer(text="Usa -inv banda transferir para enviar gramos a otro usuario")
             view = InvIlegalView(ctx.author.id, grams)
             await ctx.send(embed=embed, view=view)
             return
         inv = await db.get_inventory(uid, t)
         txt = "\n".join([f"{await get_emoji('inventory')} **{it}** x{c}" for it, c in sorted(inv.items())]) if inv else "*Vacío*"
-        embed = discord.Embed(title=f"{t.capitalize()}", description=txt, color=0x3498DB)
+        embed = discord.Embed(title=f"{'Encima' if t == 'personal' else t.capitalize()}", description=txt, color=0x3498DB)
         economy = await db.get_economy(uid)
         emoji_money = await get_emoji('money')
         emoji_bank = await get_emoji('bank')
@@ -3387,7 +3390,7 @@ class PDA(BaseCog):
         embed.add_field(name="🏦 Caja Municipal", value=f"**${caja:,}**", inline=False)
         embed.add_field(
             name="Comandos",
-            value="`-pda detener @u <motivo>`\n`-pda encarcelar @u <min> <motivo>`\n`-pda multar @u <cantidad> <motivo>`\n`-pda requisar @u <arma>`\n`-pda guardar @u <item>`\n`-pda evidencia @u`\n`-pda buscar <nombre>`\n`-crear-placa @u LSPD-0001`\n`-multas`\n`-des-esposar @u <motivo>`",
+            value="`-pda detener @u <motivo>`\n`-pda encarcelar @u <min> <motivo>`\n`-pda multar @u <cantidad> <motivo>`\n`-pda quitar-multa @u`\n`-pda requisar @u <arma>`\n`-pda guardar @u <item>`\n`-pda evidencia @u`\n`-pda buscar <nombre>`\n`-crear-placa @u LSPD-0001`\n`-multas`\n`-esposar @u <motivo>`\n`-des-esposar @u <motivo>`",
             inline=False
         )
         await ctx.send(embed=embed)
@@ -3525,6 +3528,25 @@ class PDA(BaseCog):
         except:
             pass
 
+    @pda.command(name='quitar-multa')
+    @tiene_rol_lspd_operativo()
+    async def pda_quitar_multa(self, ctx, usuario: discord.Member):
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_u = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        multas = await db.fetchall("SELECT id, cantidad, motivo FROM multas WHERE user_id = ? AND pagada = 0", (usuario.id,))
+        if not multas:
+            return await ctx.send(embed=embed_error(f"{nombre_u} no tiene multas pendientes."))
+        total = sum(m[1] for m in multas)
+        await db.execute("UPDATE multas SET pagada = 1 WHERE user_id = ? AND pagada = 0", (usuario.id,))
+        embed = discord.Embed(title="✅ MULTA ELIMINADA", description=f"Se han eliminado **{len(multas)} multa(s)** de {nombre_u} por un total de **${total:,}**.", color=0x00FF00)
+        embed.set_footer(text=f"Agente: {nombre_ag}")
+        await ctx.send(embed=embed)
+        await self.log("PDA_QUITAR_MULTA", f"{nombre_ag} quitó multas a {nombre_u} (${total:,})")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
     @pda.command(name='buscar')
     async def pda_buscar(self, ctx, *, nombre: str):
         rows = await db.fetchall("SELECT user_id, dni_nombre, dni_apellidos FROM users WHERE dni_nombre LIKE ? OR dni_apellidos LIKE ?", (f'%{nombre}%', f'%{nombre}%'))
@@ -3578,6 +3600,25 @@ class PDA(BaseCog):
             total += m['cantidad']
         embed.add_field(name="Total pendiente", value=f"**${total:,}**", inline=False)
         await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='esposar')
+    @tiene_rol_lspd_operativo()
+    async def esposar(self, ctx, usuario: discord.Member, *, motivo: str):
+        nombre_ag = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
+        nombre_det = await self.obtener_nombre_dni(usuario.id) or usuario.display_name
+        embed = discord.Embed(
+            title="🔗 ESPOSADO",
+            description=f"***{nombre_ag} ha esposado a {nombre_det}.***\n\n**Motivo:** {motivo}",
+            color=0xFF6600,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="LSPD — Nova Agora RP")
+        await ctx.send(embed=embed)
+        await self.log("ESPOSAR", f"{nombre_ag} esposó a {nombre_det}: {motivo}")
         try:
             await ctx.message.delete()
         except:
@@ -6291,6 +6332,40 @@ class Alertas(BaseCog):
             pass
         await self.log("ALERTA_ROBO", f"{ctx.author.name} activó la alerta de robo")
 
+    @commands.command(name='alerta-defcon')
+    @tiene_rol_lspd_operativo()
+    async def alerta_defcon(self, ctx, nivel: int = None):
+        if nivel is None or nivel not in range(1, 7):
+            embed = discord.Embed(
+                title="🛡️ SISTEMA DEFCON",
+                description="**Uso:** `-alerta-defcon <nivel>`\n\n**Niveles disponibles:**\n🔵 DEFCON 6 — Paz total\n🟢 DEFCON 5 — Vigilancia normal\n🟡 DEFCON 4 — Alerta elevada\n🟠 DEFCON 3 — Alerta alta\n🔴 DEFCON 2 — Peligro inminente\n🚨 DEFCON 1 — MÁXIMA EMERGENCIA",
+                color=0x3498DB
+            )
+            return await ctx.send(embed=embed)
+        defcon_data = {
+            6: {"color": 0x3498DB, "emoji": "🔵", "nombre": "PAZ TOTAL", "desc": "***Situación completamente tranquila. Sin amenazas activas. Patrullaje rutinario.***", "accion": "Patrullaje estándar. Sin alerta activa."},
+            5: {"color": 0x2ECC71, "emoji": "🟢", "nombre": "VIGILANCIA NORMAL", "desc": "***Vigilancia estándar activa. Sin amenazas confirmadas. Estado operativo normal.***", "accion": "Mantener vigilancia. Reportar cualquier actividad sospechosa."},
+            4: {"color": 0xF1C40F, "emoji": "🟡", "nombre": "ALERTA ELEVADA", "desc": "***Actividad sospechosa detectada. Se requiere presencia policial reforzada en zonas clave.***", "accion": "Reforzar patrullaje. Estar alerta ante posibles incidentes."},
+            3: {"color": 0xE67E22, "emoji": "🟠", "nombre": "ALERTA ALTA", "desc": "***Amenaza confirmada en la ciudad. Todas las unidades deben estar en posición.***", "accion": "Todas las unidades en alerta. Coordinación con superiores obligatoria."},
+            2: {"color": 0xE74C3C, "emoji": "🔴", "nombre": "PELIGRO INMINENTE", "desc": "***PELIGRO INMINENTE. Situación crítica activa. Se requiere respuesta inmediata de todas las unidades.***", "accion": "Respuesta inmediata requerida. Evacuar civiles de la zona si es necesario."},
+            1: {"color": 0x8B0000, "emoji": "🚨", "nombre": "MÁXIMA EMERGENCIA", "desc": "***⚠️ DEFCON 1 — MÁXIMA EMERGENCIA. SITUACIÓN FUERA DE CONTROL. TODAS LAS UNIDADES DEBEN ACUDIR DE INMEDIATO. ⚠️***", "accion": "EMERGENCIA TOTAL. Todas las unidades disponibles a sus puestos. Sin excepción."},
+        }
+        d = defcon_data[nivel]
+        embed = discord.Embed(
+            title=f"{d['emoji']} DEFCON {nivel} — {d['nombre']} {d['emoji']}",
+            description=d['desc'],
+            color=d['color'],
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="📋 Acción requerida", value=d['accion'], inline=False)
+        embed.set_footer(text=f"Activado por {ctx.author.display_name} • LSPD Nova Agora RP")
+        await ctx.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
+        await self.log("ALERTA_DEFCON", f"{ctx.author.name} activó DEFCON {nivel}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
 # ==================== COG: Disponibilidad ====================
 class Disponibilidad(BaseCog):
     @commands.command(name='dispo')
@@ -6321,10 +6396,16 @@ class Disponibilidad(BaseCog):
                 desc = f"🚓 Actualmente hay **{cantidad} {unidad} disponibles** patrullando la ciudad."
             footer = "⚡ Tiempo de respuesta sujeto a disponibilidad."
         elif servicio == 'lsmd':
+            rol_lsmd = ctx.guild.get_role(ROL_LSMD_ID)
+            if rol_lsmd:
+                await ctx.send(rol_lsmd.mention)
             estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
             desc = f"🚑 **Unidades disponibles:** {cantidad}\n📞 **Pendientes de avisos del 911:** {random.randint(0,3)}\n❤️ **Personal médico operativo:** {cantidad} {'médico' if cantidad == 1 else 'médicos'}\n🟢 **Estado operativo:** {'Operativo' if cantidad > 0 else 'No disponible'}"
             footer = "Servicio de emergencias médicas de Los Santos."
         else:  # lssd
+            rol_lssd = ctx.guild.get_role(ROL_SHERIFF_ID)
+            if rol_lssd:
+                await ctx.send(rol_lssd.mention)
             estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
             desc = f"🌵 **Patrullaje rural activo:** {cantidad} {'unidad' if cantidad == 1 else 'unidades'}\n🚓 **Supervisión de carreteras:** {'Activa' if cantidad > 0 else 'Inactiva'}\n⚠️ **Atención a emergencias fuera de ciudad:** {'Disponible' if cantidad > 0 else 'No disponible'}\n🟢 **Estado operativo:** {'Operativo' if cantidad > 0 else 'No disponible'}"
             footer = "Sheriff's Department - Condado de Blaine"
