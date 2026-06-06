@@ -6724,10 +6724,9 @@ def _load_font(path, size):
         return ImageFont.load_default()
 
 def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
-    """Genera la imagen del DNI. data: dict con campos del usuario."""
+    """Genera imagen DNI. Compatiblee con Pillow 10+. Sin paste(color, 2-tuple)."""
     if not PIL_AVAILABLE:
-        raise RuntimeError("Pillow no está instalado.")
-    import io, math
+        raise RuntimeError("Pillow no instalado. Ejecuta: pip install Pillow qrcode[pil]")
     # ── Paleta ──
     NAVY      = (15, 38, 99)
     NAVY2     = (24, 52, 128)
@@ -6743,124 +6742,124 @@ def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
     draw = ImageDraw.Draw(img)
 
     # ── WATERMARK diagonal ──
-    wm = Image.new("RGBA", (W*2, H*2), (0,0,0,0))
-    wmd = ImageDraw.Draw(wm)
-    fwm = _load_font(_FONT_BOLD, 18)
-    for row in range(25):
-        for col in range(15):
-            wmd.text((col*320 + (row%2)*160, row*70),
-                     "REPÚBLICA DE SAN ANDREAS", fill=(160,175,210,30), font=fwm)
-    wm_rot = wm.rotate(25, expand=False).crop((0, 0, W, H))
-    base = img.convert("RGBA")
-    base.alpha_composite(wm_rot)
-    img  = base.convert("RGB")
-    draw = ImageDraw.Draw(img)
+    try:
+        wm  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        wmd = ImageDraw.Draw(wm)
+        fwm = _load_font(_FONT_BOLD, 18)
+        for row in range(-2, 18):
+            for col in range(-1, 10):
+                wmd.text(
+                    (col * 300 + (row % 2) * 150, row * 65),
+                    "REPÚBLICA DE SAN ANDREAS",
+                    fill=(160, 175, 210, 28), font=fwm
+                )
+        wm_rot = wm.rotate(25, resample=Image.BICUBIC)
+        base   = img.convert("RGBA")
+        base.alpha_composite(wm_rot)
+        img    = base.convert("RGB")
+        draw   = ImageDraw.Draw(img)
+    except Exception:
+        pass  # watermark opcional
 
     # ── HEADER ──
-    draw.rectangle([(0,0),(W,105)], fill=NAVY)
-    draw.ellipse([(18,12),(92,86)], fill=GOLD, outline=GOLD_DRK, width=2)
-    draw.text((31,32), "SA", fill=NAVY, font=_load_font(_FONT_BOLD, 28))
-    draw.text((112,14), "REPÚBLICA DE SAN ANDREAS", fill=WHITE, font=_load_font(_FONT_BOLD, 36))
-    draw.text((112,62), "DOCUMENTO NACIONAL DE IDENTIDAD", fill=GOLD, font=_load_font(_FONT_BASE, 17))
-    draw.text((1072,14), "SAR", fill=WHITE, font=_load_font(_FONT_BOLD, 38))
-    draw.text((1056,62), "IDENTITY DOCUMENT", fill=GOLD, font=_load_font(_FONT_BASE, 14))
-
-    # ── LÍNEA DORADA ──
-    draw.rectangle([(0,105),(W,110)], fill=GOLD)
-
-    # ── BANDA LATERAL IZQUIERDA ──
-    draw.rectangle([(0,110),(36,H-100)], fill=NAVY2)
-    band = Image.new("RGBA",(36, H-210),(0,0,0,0))
-    bd   = ImageDraw.Draw(band)
-    fb   = _load_font(_FONT_BOLD, 11)
-    for y in range(0, H-210, 145):
-        bd.text((3,y), "DOCUMENTO NACIONAL DE IDENTIDAD •", fill=(255,255,255,170), font=fb)
-    band_rot = band.rotate(90, expand=True)
-    img.paste(NAVY2, (0, 110), None)
-    draw.rectangle([(0,110),(36,H-100)], fill=NAVY2)
+    draw.rectangle([0, 0, W, 105], fill=NAVY)
+    draw.ellipse([18, 12, 92, 86], fill=GOLD, outline=GOLD_DRK, width=2)
+    draw.text((31, 32),  "SA",                               fill=NAVY,  font=_load_font(_FONT_BOLD, 28))
+    draw.text((112, 14), "REPÚBLICA DE SAN ANDREAS",         fill=WHITE, font=_load_font(_FONT_BOLD, 36))
+    draw.text((112, 62), "DOCUMENTO NACIONAL DE IDENTIDAD",  fill=GOLD,  font=_load_font(_FONT_BASE, 17))
+    draw.text((1072, 14), "SAR",               fill=WHITE, font=_load_font(_FONT_BOLD, 38))
+    draw.text((1056, 62), "IDENTITY DOCUMENT", fill=GOLD,  font=_load_font(_FONT_BASE, 14))
+    draw.rectangle([0, 105, W, 110], fill=GOLD)
+    draw.rectangle([0, 110, 38, H - 100], fill=NAVY2)
 
     # ── FOTO ──
     PX, PY, PW, PH = 55, 125, 215, 270
-    draw.rectangle([(PX-3,PY-3),(PX+PW+3,PY+PH+3)], fill=GOLD, outline=GOLD_DRK, width=2)
+    draw.rectangle([PX-3, PY-3, PX+PW+3, PY+PH+3], fill=GOLD, outline=GOLD_DRK, width=2)
     if avatar_bytes:
         try:
-            av = Image.open(io.BytesIO(avatar_bytes)).convert("RGB").resize((PW,PH), Image.LANCZOS)
+            av   = Image.open(io.BytesIO(avatar_bytes)).convert("RGB").resize((PW, PH), Image.LANCZOS)
             img.paste(av, (PX, PY))
+            draw = ImageDraw.Draw(img)
         except Exception:
-            draw.rectangle([(PX,PY),(PX+PW,PY+PH)], fill=(80,100,140))
+            draw.rectangle([PX, PY, PX+PW, PY+PH], fill=(80, 100, 140))
+            draw.text((PX+42, PY+110), "FOTOGRAFÍA", fill=(180, 190, 210), font=_load_font(_FONT_BASE, 18))
     else:
-        draw.rectangle([(PX,PY),(PX+PW,PY+PH)], fill=(80,100,140))
-        draw.text((PX+42,PY+110), "FOTOGRAFÍA", fill=(180,190,210), font=_load_font(_FONT_BASE,18))
-    draw.text((PX+46,PY+PH+8), "FOTOGRAFÍA", fill=(80,80,120), font=_load_font(_FONT_BASE,12))
+        draw.rectangle([PX, PY, PX+PW, PY+PH], fill=(80, 100, 140))
+        draw.text((PX+42, PY+110), "FOTOGRAFÍA", fill=(180, 190, 210), font=_load_font(_FONT_BASE, 18))
+    draw.text((PX+46, PY+PH+8), "FOTOGRAFÍA", fill=(80, 80, 120), font=_load_font(_FONT_BASE, 12))
 
     # ── FIRMA ──
-    SX,SY,SW,SH = 55,432,215,68
-    draw.rectangle([(SX,SY),(SX+SW,SY+SH)], outline=(160,170,200), width=1, fill=WHITE)
-    pts = [(SX+12,SY+48),(SX+38,SY+26),(SX+68,SY+52),(SX+108,SY+22),(SX+152,SY+46),(SX+195,SY+30)]
-    draw.line(pts, fill=(30,30,80), width=2)
-    draw.text((SX+28,SY+SH+6), "FIRMA DEL TITULAR", fill=(80,80,120), font=_load_font(_FONT_BASE,12))
+    SX, SY, SW, SH = 55, 432, 215, 68
+    draw.rectangle([SX, SY, SX+SW, SY+SH], outline=(160, 170, 200), width=1, fill=WHITE)
+    draw.line(
+        [(SX+12, SY+48), (SX+38, SY+26), (SX+68, SY+52),
+         (SX+108, SY+22), (SX+152, SY+46), (SX+195, SY+30)],
+        fill=(30, 30, 80), width=2
+    )
+    draw.text((SX+28, SY+SH+6), "FIRMA DEL TITULAR", fill=(80, 80, 120), font=_load_font(_FONT_BASE, 12))
 
-    # ── NÚMERO DOCUMENTO (caja azul) ──
-    NX,NY = 290,432
-    draw.rectangle([(NX,NY),(NX+440,NY+68)], fill=NAVY)
-    draw.text((NX+10,NY+5), "NÚMERO DE DOCUMENTO", fill=GOLD, font=_load_font(_FONT_BASE,12))
-    draw.text((NX+16,NY+22), str(data.get("numero","00000000X")), fill=WHITE, font=_load_font(_FONT_MONO,36))
+    # ── NÚMERO DE DOCUMENTO ──
+    NX, NY = 290, 432
+    draw.rectangle([NX, NY, NX+440, NY+68], fill=NAVY)
+    draw.text((NX+10, NY+5),  "NÚMERO DE DOCUMENTO",             fill=GOLD,  font=_load_font(_FONT_BASE, 12))
+    draw.text((NX+16, NY+22), str(data.get("numero","00000000X")), fill=WHITE, font=_load_font(_FONT_MONO, 36))
 
     # ── CAMPOS ──
     f_lbl = _load_font(_FONT_BASE, 13)
     f_val = _load_font(_FONT_BOLD, 20)
     def campo(x, y, label, value):
-        draw.text((x, y), label.upper(), fill=LABEL_CLR, font=f_lbl)
-        draw.text((x, y+18), str(value).upper()[:28], fill=TEXT_CLR, font=f_val)
+        draw.text((x, y),    label.upper(),           fill=LABEL_CLR, font=f_lbl)
+        draw.text((x, y+18), str(value).upper()[:28], fill=TEXT_CLR,  font=f_val)
 
-    # Calcular fechas
-    try:
-        bd_obj   = datetime.strptime(str(data.get("edad","01/01/2000")), "%d/%m/%Y")
-        exp_date = datetime.now().strftime("%d/%m/%Y")
-        val_date = f"{datetime.now().day:02d}/{datetime.now().month:02d}/{datetime.now().year+10}"
-    except Exception:
-        exp_date = datetime.now().strftime("%d/%m/%Y")
-        val_date = f"{datetime.now().year+10}"
-
-    CL, CR = 290, 680
-    campo(CL,120,"APELLIDOS",           data.get("apellidos","–"))
-    campo(CL,200,"FECHA DE NACIMIENTO", data.get("edad","–"))
-    campo(CL,280,"NACIONALIDAD",        data.get("nacionalidad","–"))
-    campo(CL,360,"FECHA DE EXPEDICIÓN", exp_date)
-    campo(CR,120,"NOMBRE",              data.get("nombre","–"))
-    campo(CR,200,"SEXO",               data.get("genero","–"))
-    campo(CR,280,"LUGAR DE NACIMIENTO", data.get("color_ojos","SAN ANDREAS"))
-    campo(CR,360,"VÁLIDO HASTA",        val_date)
+    exp_date = datetime.now().strftime("%d/%m/%Y")
+    val_date = f"{datetime.now().day:02d}/{datetime.now().month:02d}/{datetime.now().year+10}"
+    CL, CR   = 290, 680
+    campo(CL, 120, "APELLIDOS",           data.get("apellidos","–"))
+    campo(CL, 200, "FECHA DE NACIMIENTO", data.get("edad","–"))
+    campo(CL, 280, "NACIONALIDAD",        data.get("nacionalidad","–"))
+    campo(CL, 360, "FECHA DE EXPEDICIÓN", exp_date)
+    campo(CR, 120, "NOMBRE",              data.get("nombre","–"))
+    campo(CR, 200, "SEXO",                data.get("genero","–"))
+    campo(CR, 280, "LUGAR DE NACIMIENTO", data.get("color_ojos","SAN ANDREAS"))
+    campo(CR, 360, "VÁLIDO HASTA",        val_date)
 
     # ── QR ──
-    qr_txt = f"NOVA:{data.get('numero','?')}|{data.get('nombre','?')} {data.get('apellidos','?')}"
-    qr     = _qrcode_module.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=5, border=2)
-    qr.add_data(qr_txt)
-    qr.make(fit=True)
-    qr_img = qr.make_image(fill_color=(15,38,99), back_color="white").convert("RGB")
-    qr_img = qr_img.resize((140,140), Image.LANCZOS)
-    QX, QY = W-158, 412
-    draw.rectangle([(QX-5,QY-5),(QX+145,QY+145)], outline=GOLD, width=2, fill=WHITE)
-    img.paste(qr_img, (QX, QY))
-    draw.text((QX+6, QY+148), "VERIFICACIÓN DIGITAL", fill=(80,80,120), font=_load_font(_FONT_BASE,11))
+    try:
+        qr_txt = f"NOVA:{data.get('numero','?')}|{data.get('nombre','?')} {data.get('apellidos','?')}"
+        qr     = _qrcode_module.QRCode(
+            version=1,
+            error_correction=_qrcode_module.constants.ERROR_CORRECT_H,
+            box_size=5, border=2
+        )
+        qr.add_data(qr_txt)
+        qr.make(fit=True)
+        qr_img = qr.make_image(fill_color=(15,38,99), back_color="white").convert("RGB")
+        qr_img = qr_img.resize((140, 140), Image.LANCZOS)
+        QX, QY = W - 158, 412
+        draw.rectangle([QX-5, QY-5, QX+145, QY+145], outline=GOLD, width=2, fill=WHITE)
+        img.paste(qr_img, (QX, QY))
+        draw = ImageDraw.Draw(img)
+        draw.text((QX+6, QY+148), "VERIFICACIÓN DIGITAL", fill=(80,80,120), font=_load_font(_FONT_BASE, 11))
+    except Exception:
+        draw.text((W-150, 450), "QR NO DISP.", fill=LABEL_CLR, font=_load_font(_FONT_BASE, 12))
 
-    # ── SELLO "VÁLIDO" ──
-    draw.ellipse([(W-95, H-118),(W-12, H-44)], outline=GOLD, width=3)
-    draw.text((W-82, H-92), "VÁLIDO", fill=GOLD, font=_load_font(_FONT_BOLD,14))
+    # ── SELLO ──
+    draw.ellipse([W-95, H-118, W-12, H-44], outline=GOLD, width=3)
+    draw.text((W-82, H-92), "VÁLIDO", fill=GOLD, font=_load_font(_FONT_BOLD, 14))
 
-    # ── LÍNEA + MRZ ──
-    draw.rectangle([(0,H-100),(W,H-96)], fill=GOLD)
-    draw.rectangle([(0,H-95),(W,H)], fill=NAVY)
+    # ── MRZ ──
+    draw.rectangle([0, H-100, W, H-96], fill=GOLD)
+    draw.rectangle([0, H-95,  W, H],    fill=NAVY)
     num = str(data.get("numero","00000000X"))
     ape = data.get("apellidos","UNKNOWN").upper().replace(" ","<")
     nom = data.get("nombre","UNKNOWN").upper().replace(" ","<")
     try:
-        bd_o    = datetime.strptime(str(data.get("edad","01/01/2000")),"%d/%m/%Y")
+        bd_o    = datetime.strptime(str(data.get("edad","01/01/2000")), "%d/%m/%Y")
         birth_m = bd_o.strftime("%y%m%d")
         exp_m   = f"{(bd_o.year+36)%100:02d}{bd_o.month:02d}{bd_o.day:02d}"
     except Exception:
-        birth_m, exp_m = "000000","000000"
-    pad = lambda s,n: (s+"<"*n)[:n]
+        birth_m, exp_m = "000000", "000000"
+    def pad(s, n): return (s + "<" * n)[:n]
     mrz1 = f"IDSAD{pad(num,9)}{pad(ape+'<<'+nom, 39)}"
     mrz2 = f"{pad(num,9)}0SAR{birth_m}F{exp_m}{'<'*28}"
     f_mrz = _load_font(_FONT_MONO, 16)
@@ -6868,10 +6867,10 @@ def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
     draw.text((15, H-60), mrz2, fill=WHITE, font=f_mrz)
 
     # ── BORDE ──
-    draw.rectangle([(1,1),(W-2,H-2)], outline=GOLD_DRK, width=2)
+    draw.rectangle([1, 1, W-2, H-2], outline=GOLD_DRK, width=2)
 
     out = io.BytesIO()
-    img.save(out, format="PNG", dpi=(150,150))
+    img.save(out, format="PNG", dpi=(150, 150))
     out.seek(0)
     return out.getvalue()
 
