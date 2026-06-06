@@ -165,6 +165,29 @@ TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in _custom_items]
 TIENDA_ITEMS_DICT = {name.lower(): (name, precio, emoji, desc) for name, precio, emoji, desc in TIENDA_ITEMS_FULL}
 ILLEGAL_TIENDA_ITEMS = {"dispositivo de hackeo", "termita", "tarjeta de crédito", "gas lacrimógeno", "pasamontañas", "bolsas atraco", "ganzúa", "mascaras"}
 
+# ─── Drogas personalizadas ──────────────────────────────────────────────────
+CUSTOM_DROGAS_FILE = "custom_drogas.json"
+
+def _cargar_custom_drogas():
+    if os.path.exists(CUSTOM_DROGAS_FILE):
+        with open(CUSTOM_DROGAS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def _guardar_custom_drogas(data: dict):
+    with open(CUSTOM_DROGAS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+_custom_drogas = _cargar_custom_drogas()
+DROGAS_FULL: dict = {**PRECIOS_DROGAS_BASE, **_custom_drogas}
+EMOJIS_DROGA_FULL: dict = {**EMOJIS_DROGA, **{k: v.get("emoji","💊") for k,v in _custom_drogas.items()}}
+
+def _reload_drogas():
+    global DROGAS_FULL, EMOJIS_DROGA_FULL
+    cd = _cargar_custom_drogas()
+    DROGAS_FULL = {**PRECIOS_DROGAS_BASE, **cd}
+    EMOJIS_DROGA_FULL = {**EMOJIS_DROGA, **{k: v.get("emoji","💊") for k,v in cd.items()}}
+
 # Definición completa de atracos con preparatorias
 HEIST_DEFINITIONS = {
     "badu": {
@@ -325,6 +348,24 @@ def embed_help(comando, desc, uso, ej, perm=""):
 async def get_emoji(key):
     row = await db.fetchone("SELECT emoji FROM emoji_settings WHERE key = ?", (key,))
     return row[0] if row and row[0] else DEFAULT_EMOJIS.get(key, "⚙️")
+
+async def get_animated_bot_emoji(name: str, guild: discord.Guild = None) -> str:
+    """
+    Devuelve el emoji animado configurado para 'name' ('tick' o 'cross').
+    Si no hay animado configurado y se pasa guild, busca un emoji personalizado en el servidor.
+    Si no encuentra nada, devuelve el emoji estático correspondiente.
+    """
+    row = await db.fetchone("SELECT emoji_id FROM animated_emojis WHERE name = ?", (name,))
+    if row:
+        prefix = "a" if name in ("tick", "cross") else ""
+        tag = f"<{prefix}:{name}:{row[0]}>" if prefix else f"<:{name}:{row[0]}>"
+        return tag
+    if guild:
+        match = discord.utils.get(guild.emojis, name=name)
+        if match:
+            prefix = "a" if match.animated else ""
+            return f"<{prefix}:{match.name}:{match.id}>" if prefix else f"<:{match.name}:{match.id}>"
+    return "✅" if name == "tick" else ("❌" if name == "cross" else "⚙️")
 
 def es_precio_infinito(precio):
     return precio >= PRECIO_INFINITO
@@ -637,6 +678,27 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_timestamp ON antiraid_actions(timestamp)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_drug_grams_user ON drug_grams(user_id)")
 
+            # 🔁 Migración de columnas DNI en tabla users (por si la BD es antigua y no tiene esas columnas)
+            dni_columns = {
+                "dni_nombre": "TEXT",
+                "dni_apellidos": "TEXT",
+                "dni_edad": "INTEGER",
+                "dni_genero": "TEXT",
+                "dni_nacionalidad": "TEXT",
+                "dni_color_ojos": "TEXT",
+                "dni_altura": "TEXT",
+                "dni_profesion": "TEXT",
+                "dni_numero": "TEXT",
+                "dni_fecha_creacion": "TEXT",
+            }
+            existing_cols_cursor = await db.execute("PRAGMA table_info(users)")
+            existing_cols = {row[1] async for row in existing_cols_cursor}
+            for col_name, col_type in dni_columns.items():
+                if col_name not in existing_cols:
+                    await db.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                    print(f"✅ Columna '{col_name}' añadida a 'users' (migración DNI)")
+            await db.commit()
+
             # 🔁 Migración de datos antiguos de heist_prep a la nueva tabla (CORREGIDO)
             cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='heist_prep'")
             if await cursor.fetchone():
@@ -815,13 +877,29 @@ class Database:
         return None
 
     async def set_dni(self, user_id, data):
+        # Asegurar que la fila exista en users
         await self.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+        # Guardar datos DNI con upsert robusto (ON CONFLICT) para que funcione en BDs antiguas
         await self.execute("""
-            UPDATE users SET dni_nombre=?, dni_apellidos=?, dni_edad=?, dni_genero=?, dni_nacionalidad=?,
-            dni_color_ojos=?, dni_altura=?, dni_profesion=?, dni_numero=?, dni_fecha_creacion=?
-            WHERE user_id=?
-        """, (data["nombre"], data["apellidos"], data["edad"], data["genero"], data["nacionalidad"],
-              data["color_ojos"], data["altura"], data["profesion"], data["numero"], data["fecha_creacion"], user_id))
+            INSERT INTO users (user_id, dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad,
+                dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                dni_nombre=excluded.dni_nombre,
+                dni_apellidos=excluded.dni_apellidos,
+                dni_edad=excluded.dni_edad,
+                dni_genero=excluded.dni_genero,
+                dni_nacionalidad=excluded.dni_nacionalidad,
+                dni_color_ojos=excluded.dni_color_ojos,
+                dni_altura=excluded.dni_altura,
+                dni_profesion=excluded.dni_profesion,
+                dni_numero=excluded.dni_numero,
+                dni_fecha_creacion=excluded.dni_fecha_creacion
+        """, (
+            user_id, data["nombre"], data["apellidos"], data["edad"], data["genero"],
+            data["nacionalidad"], data["color_ojos"], data["altura"], data["profesion"],
+            data["numero"], data["fecha_creacion"]
+        ))
 
     async def delete_dni(self, user_id):
         await self.execute("""
@@ -4783,6 +4861,172 @@ class Admin(BaseCog):
         await ctx.channel.purge(limit=cantidad + 1)
         await ctx.send(embed=embed_success("🗑️ Mensajes eliminados", f"Se han eliminado {cantidad} mensajes."), delete_after=5)
 
+    # ─── Gestión de Drogas ──────────────────────────────────────────────────
+
+    @commands.command(name='crear-droga')
+    @tiene_rol_equipo_especial()
+    async def crear_droga(self, ctx, nombre: str = None, emoji: str = None, compra: int = None, venta: int = None):
+        if not nombre or not emoji or compra is None or venta is None:
+            return await ctx.send(embed=embed_help(
+                "crear-droga",
+                "Crea una nueva droga personalizada.",
+                "-crear-droga <nombre> <emoji> <precio_compra> <precio_venta>",
+                "-crear-droga Crystal 💎 200 400",
+                "Equipo Especial"
+            ))
+        if compra <= 0 or venta <= 0:
+            return await ctx.send(embed=embed_error("Los precios deben ser mayores a 0."))
+        nombre_cap = nombre.capitalize()
+        if nombre_cap in DROGAS_FULL:
+            return await ctx.send(embed=embed_error(f"Ya existe una droga llamada **{nombre_cap}**."))
+        cd = _cargar_custom_drogas()
+        cd[nombre_cap] = {"compra": compra, "venta": venta, "emoji": emoji}
+        _guardar_custom_drogas(cd)
+        # Insertar en DB de precios dinámicos
+        await db.execute(
+            "INSERT OR REPLACE INTO precios_drogas (droga, precio_compra, precio_venta) VALUES (?, ?, ?)",
+            (nombre_cap, compra, venta)
+        )
+        _reload_drogas()
+        embed = discord.Embed(
+            title="✅ Droga Creada",
+            description=f"{emoji} **{nombre_cap}** añadida al mercado.\n💰 Compra: **${compra:,}** | 💵 Venta: **${venta:,}**",
+            color=0x00FF00
+        )
+        embed.set_footer(text=f"Creado por {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+        await self.log("CREAR_DROGA", f"{ctx.author.name} creó droga '{nombre_cap}' (compra:{compra}, venta:{venta})")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='eliminar-droga')
+    @tiene_rol_equipo_especial()
+    async def eliminar_droga(self, ctx, *, nombre: str = None):
+        if not nombre:
+            return await ctx.send(embed=embed_help(
+                "eliminar-droga",
+                "Elimina una droga personalizada del mercado.",
+                "-eliminar-droga <nombre>",
+                "-eliminar-droga Crystal",
+                "Equipo Especial"
+            ))
+        nombre_cap = nombre.strip().capitalize()
+        if nombre_cap in PRECIOS_DROGAS_BASE:
+            return await ctx.send(embed=embed_error("No puedes eliminar una droga base. Solo drogas personalizadas."))
+        cd = _cargar_custom_drogas()
+        if nombre_cap not in cd:
+            return await ctx.send(embed=embed_error(f"No existe ninguna droga personalizada llamada **{nombre_cap}**."))
+        del cd[nombre_cap]
+        _guardar_custom_drogas(cd)
+        await db.execute("DELETE FROM precios_drogas WHERE droga = ?", (nombre_cap,))
+        _reload_drogas()
+        embed = discord.Embed(
+            title="🗑️ Droga Eliminada",
+            description=f"**{nombre_cap}** ha sido eliminada del mercado.",
+            color=0xFF6600
+        )
+        await ctx.send(embed=embed)
+        await self.log("ELIMINAR_DROGA", f"{ctx.author.name} eliminó droga '{nombre_cap}'")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='editar-droga')
+    @tiene_rol_equipo_especial()
+    async def editar_droga(self, ctx, *, nombre: str = None):
+        if not nombre:
+            return await ctx.send(embed=embed_help(
+                "editar-droga",
+                "Edita los precios, emoji o nombre de una droga.",
+                "-editar-droga <nombre>",
+                "-editar-droga Marihuana",
+                "Equipo Especial"
+            ))
+        nombre_cap = nombre.strip().capitalize()
+        droga_data = DROGAS_FULL.get(nombre_cap)
+        if not droga_data:
+            return await ctx.send(embed=embed_error(f"No existe ninguna droga llamada **{nombre_cap}**."))
+        # Construir datos completos incluyendo emoji
+        data = {
+            "compra": droga_data.get("compra", 0),
+            "venta":  droga_data.get("venta", 0),
+            "emoji":  EMOJIS_DROGA_FULL.get(nombre_cap, droga_data.get("emoji", "💊"))
+        }
+        view = EditarDrogaView(ctx.author.id, nombre_cap, data)
+        msg = await ctx.send(embed=view.build_embed(), view=view)
+        view.message = msg
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    # ─── Gestión de Roles ───────────────────────────────────────────────────
+
+    @commands.command(name='agregar-rol')
+    @tiene_rol_give_take()
+    async def agregar_rol(self, ctx, miembro: discord.Member = None, rol: discord.Role = None):
+        if not miembro or not rol:
+            return await ctx.send(embed=embed_help(
+                "agregar-rol",
+                "Agrega un rol a un usuario.",
+                "-agregar-rol @usuario @rol",
+                "-agregar-rol @Juan @Ciudadano",
+                "Encargado Items/Permisos"
+            ))
+        if rol >= ctx.guild.me.top_role:
+            return await ctx.send(embed=embed_error("No puedo asignar un rol igual o superior al mío."))
+        if rol >= ctx.author.top_role and not ctx.author.guild_permissions.administrator:
+            return await ctx.send(embed=embed_error("No puedes asignar un rol igual o superior al tuyo."))
+        if rol in miembro.roles:
+            return await ctx.send(embed=embed_error(f"{miembro.mention} ya tiene el rol {rol.mention}."))
+        await miembro.add_roles(rol, reason=f"Asignado por {ctx.author}")
+        embed = discord.Embed(
+            title="✅ Rol Agregado",
+            description=f"{rol.mention} asignado a {miembro.mention}.",
+            color=0x00FF00
+        )
+        embed.set_footer(text=f"Por {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+        await self.log("AGREGAR_ROL", f"{ctx.author.name} dio rol '{rol.name}' a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+    @commands.command(name='eliminar-rol')
+    @tiene_rol_give_take()
+    async def eliminar_rol(self, ctx, miembro: discord.Member = None, rol: discord.Role = None):
+        if not miembro or not rol:
+            return await ctx.send(embed=embed_help(
+                "eliminar-rol",
+                "Quita un rol de un usuario.",
+                "-eliminar-rol @usuario @rol",
+                "-eliminar-rol @Juan @Ciudadano",
+                "Encargado Items/Permisos"
+            ))
+        if rol >= ctx.guild.me.top_role:
+            return await ctx.send(embed=embed_error("No puedo quitar un rol igual o superior al mío."))
+        if rol >= ctx.author.top_role and not ctx.author.guild_permissions.administrator:
+            return await ctx.send(embed=embed_error("No puedes quitar un rol igual o superior al tuyo."))
+        if rol not in miembro.roles:
+            return await ctx.send(embed=embed_error(f"{miembro.mention} no tiene el rol {rol.mention}."))
+        await miembro.remove_roles(rol, reason=f"Quitado por {ctx.author}")
+        embed = discord.Embed(
+            title="🗑️ Rol Eliminado",
+            description=f"{rol.mention} quitado a {miembro.mention}.",
+            color=0xFF6600
+        )
+        embed.set_footer(text=f"Por {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+        await self.log("ELIMINAR_ROL", f"{ctx.author.name} quitó rol '{rol.name}' a {miembro.name}")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
     @commands.command(name='editar-item')
     @tiene_rol_equipo_especial()
     async def editar_item(self, ctx, *, nombre_item: str):
@@ -4790,67 +5034,83 @@ class Admin(BaseCog):
         nombre_item = nombre_item.strip()
         item_data = TIENDA_ITEMS_DICT.get(nombre_item.lower())
         if not item_data:
-            await ctx.send(embed=embed_error("***No se encontró el item especificado.***"))
+            await ctx.send(embed=embed_error("No se encontró el item especificado."))
             return
-        item_original = item_data
-
-        view = EditarItemView(ctx.author.id, nombre_item, item_original)
-        embed = discord.Embed(
-            title="📝 ***Editar Item***",
-            description=f"***Selecciona qué deseas modificar de `{nombre_item}`.***",
-            color=0x3498DB
-        )
-        await ctx.send(embed=embed, view=view)
+        view = EditarItemView(ctx.author.id, item_data[0], list(item_data))
+        msg = await ctx.send(embed=view.build_embed(), view=view)
+        view.message = msg
         try:
             await ctx.message.delete()
         except:
             pass
 
 class EditarItemView(discord.ui.View):
-    def __init__(self, user_id, item_name, item_data):
-        super().__init__(timeout=60)
+    def __init__(self, user_id, item_name, item_data, message=None):
+        super().__init__(timeout=120)
         self.user_id = user_id
         self.item_name = item_name
-        self.item_data = item_data
+        self.item_data = list(item_data)   # [nombre, precio, emoji, desc]
+        self.message = message             # referencia al mensaje para actualizar en tiempo real
+
+    def build_embed(self):
+        nombre, precio, emoji, desc = self.item_data
+        precio_str = formatear_precio(precio) if not callable(formatear_precio) else formatear_precio(precio)
+        e = discord.Embed(title=f"📝 Editando item: `{nombre}`", color=0x3498DB)
+        e.add_field(name="📛 Nombre",     value=f"`{nombre}`",         inline=True)
+        e.add_field(name="💰 Precio",     value=precio_str,            inline=True)
+        e.add_field(name="🎨 Emoji",      value=emoji or "—",          inline=True)
+        e.add_field(name="📄 Descripción",value=desc or "Sin desc.",   inline=False)
+        e.set_footer(text="Selecciona qué campo editar · Los cambios se aplican al instante")
+        return e
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("***No eres el dueño de esta solicitud.***", ephemeral=True)
+            await interaction.response.send_message("No eres el dueño de esta solicitud.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.select(placeholder="***Selecciona una opción***", options=[
-        discord.SelectOption(label="***Editar Nombre***", value="nombre"),
-        discord.SelectOption(label="***Editar Precio***", value="precio"),
-        discord.SelectOption(label="***Editar Descripción***", value="descripcion"),
+    async def refresh(self, interaction: discord.Interaction = None):
+        """Actualiza el embed del mensaje original con los datos actuales."""
+        if self.message:
+            try:
+                await self.message.edit(embed=self.build_embed(), view=self)
+            except Exception:
+                pass
+
+    @discord.ui.select(placeholder="Selecciona qué deseas editar", options=[
+        discord.SelectOption(label="Editar Nombre",      value="nombre",      emoji="📛"),
+        discord.SelectOption(label="Editar Precio",      value="precio",      emoji="💰"),
+        discord.SelectOption(label="Editar Emoji",       value="emoji",       emoji="🎨"),
+        discord.SelectOption(label="Editar Descripción", value="descripcion", emoji="📄"),
     ])
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
         opcion = select.values[0]
         if opcion == "nombre":
-            modal = EditarNombreModal(self.item_name, self.item_data)
-            await interaction.response.send_modal(modal)
+            modal = EditarNombreModal(self.item_name, self.item_data, self)
         elif opcion == "precio":
-            modal = EditarPrecioModal(self.item_name, self.item_data)
-            await interaction.response.send_modal(modal)
-        elif opcion == "descripcion":
-            modal = EditarDescripcionModal(self.item_name, self.item_data)
-            await interaction.response.send_modal(modal)
+            modal = EditarPrecioModal(self.item_name, self.item_data, self)
+        elif opcion == "emoji":
+            modal = EditarEmojiModal(self.item_name, self.item_data, self)
+        else:
+            modal = EditarDescripcionModal(self.item_name, self.item_data, self)
+        await interaction.response.send_modal(modal)
 
-class EditarNombreModal(discord.ui.Modal, title="***Editar Nombre del Item***"):
-    def __init__(self, item_name, item_data):
+class EditarNombreModal(discord.ui.Modal, title="Editar Nombre del Item"):
+    def __init__(self, item_name, item_data, view: EditarItemView):
         super().__init__()
         self.item_name = item_name
         self.item_data = item_data
-    nuevo_nombre = discord.ui.TextInput(label="***Nuevo nombre***", placeholder="Ej: Súper Hacha", max_length=50)
+        self.parent_view = view
+    nuevo_nombre = discord.ui.TextInput(label="Nuevo nombre", placeholder="Ej: Súper Hacha", max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
         global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         nuevo = self.nuevo_nombre.value.strip()
         if not nuevo:
-            await interaction.response.send_message("***El nombre no puede estar vacío.***", ephemeral=True)
+            await interaction.response.send_message("El nombre no puede estar vacío.", ephemeral=True)
             return
         if nuevo.lower() in TIENDA_ITEMS_DICT and nuevo.lower() != self.item_name.lower():
-            await interaction.response.send_message("***Ya existe un item con ese nombre.***", ephemeral=True)
+            await interaction.response.send_message("Ya existe un item con ese nombre.", ephemeral=True)
             return
         custom_items = []
         if os.path.exists(CUSTOM_ITEMS_FILE):
@@ -4868,14 +5128,18 @@ class EditarNombreModal(discord.ui.Modal, title="***Editar Nombre del Item***"):
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
         TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
         TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
-        await interaction.response.send_message(f"***Nombre del item actualizado a `{nuevo}`.***", ephemeral=True)
+        self.parent_view.item_name = nuevo
+        self.parent_view.item_data[0] = nuevo
+        await interaction.response.send_message(f"✅ Nombre actualizado → `{nuevo}`", ephemeral=True)
+        await self.parent_view.refresh()
 
-class EditarPrecioModal(discord.ui.Modal, title="***Editar Precio del Item***"):
-    def __init__(self, item_name, item_data):
+class EditarPrecioModal(discord.ui.Modal, title="Editar Precio del Item"):
+    def __init__(self, item_name, item_data, view: EditarItemView):
         super().__init__()
         self.item_name = item_name
         self.item_data = item_data
-    nuevo_precio = discord.ui.TextInput(label="***Nuevo precio***", placeholder="Ej: 1500 o INFINITY", max_length=12)
+        self.parent_view = view
+    nuevo_precio = discord.ui.TextInput(label="Nuevo precio", placeholder="Ej: 1500 o INFINITY", max_length=12)
 
     async def on_submit(self, interaction: discord.Interaction):
         global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
@@ -4888,7 +5152,7 @@ class EditarPrecioModal(discord.ui.Modal, title="***Editar Precio del Item***"):
                 if nuevo <= 0:
                     raise ValueError
             except ValueError:
-                await interaction.response.send_message("***El precio debe ser un número entero positivo o INFINITY.***", ephemeral=True)
+                await interaction.response.send_message("El precio debe ser un número entero positivo o INFINITY.", ephemeral=True)
                 return
         custom_items = []
         if os.path.exists(CUSTOM_ITEMS_FILE):
@@ -4906,20 +5170,55 @@ class EditarPrecioModal(discord.ui.Modal, title="***Editar Precio del Item***"):
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
         TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
         TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
-        await interaction.response.send_message(f"***Precio del item actualizado a {formatear_precio(nuevo)}.***", ephemeral=True)
+        self.parent_view.item_data[1] = nuevo
+        await interaction.response.send_message(f"✅ Precio actualizado → {formatear_precio(nuevo)}", ephemeral=True)
+        await self.parent_view.refresh()
 
-class EditarDescripcionModal(discord.ui.Modal, title="***Editar Descripción del Item***"):
-    def __init__(self, item_name, item_data):
+class EditarEmojiModal(discord.ui.Modal, title="Editar Emoji del Item"):
+    def __init__(self, item_name, item_data, view: EditarItemView):
         super().__init__()
         self.item_name = item_name
         self.item_data = item_data
-    nueva_desc = discord.ui.TextInput(label="***Nueva descripción***", placeholder="Describe el item", style=discord.TextStyle.paragraph, max_length=200)
+        self.parent_view = view
+    nuevo_emoji = discord.ui.TextInput(label="Nuevo emoji", placeholder="Ej: 🔫 o cualquier emoji", max_length=10)
 
     async def on_submit(self, interaction: discord.Interaction):
         global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
-        nueva = self.nueva_desc.value.strip()
-        if not nueva:
-            nueva = "Sin descripción"
+        nuevo = self.nuevo_emoji.value.strip()
+        if not nuevo:
+            await interaction.response.send_message("El emoji no puede estar vacío.", ephemeral=True)
+            return
+        custom_items = []
+        if os.path.exists(CUSTOM_ITEMS_FILE):
+            with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
+                custom_items = json.load(f)
+        encontrado = False
+        for i, ci in enumerate(custom_items):
+            if ci[0].lower() == self.item_name.lower():
+                custom_items[i][2] = nuevo
+                encontrado = True
+                break
+        if not encontrado:
+            custom_items.append([self.item_name, self.item_data[1], nuevo, self.item_data[3]])
+        with open(CUSTOM_ITEMS_FILE, "w", encoding="utf-8") as f:
+            json.dump(custom_items, f, indent=2, ensure_ascii=False)
+        TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
+        TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
+        self.parent_view.item_data[2] = nuevo
+        await interaction.response.send_message(f"✅ Emoji actualizado → {nuevo}", ephemeral=True)
+        await self.parent_view.refresh()
+
+class EditarDescripcionModal(discord.ui.Modal, title="Editar Descripción del Item"):
+    def __init__(self, item_name, item_data, view: EditarItemView):
+        super().__init__()
+        self.item_name = item_name
+        self.item_data = item_data
+        self.parent_view = view
+    nueva_desc = discord.ui.TextInput(label="Nueva descripción", placeholder="Describe el item", style=discord.TextStyle.paragraph, max_length=200)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
+        nueva = self.nueva_desc.value.strip() or "Sin descripción"
         custom_items = []
         if os.path.exists(CUSTOM_ITEMS_FILE):
             with open(CUSTOM_ITEMS_FILE, "r", encoding="utf-8") as f:
@@ -4936,7 +5235,154 @@ class EditarDescripcionModal(discord.ui.Modal, title="***Editar Descripción del
             json.dump(custom_items, f, indent=2, ensure_ascii=False)
         TIENDA_ITEMS_FULL = list(TIENDA_ITEMS_BASE) + [tuple(c) for c in custom_items]
         TIENDA_ITEMS_DICT = {name.lower(): (name, pr, em, desc) for name, pr, em, desc in TIENDA_ITEMS_FULL}
-        await interaction.response.send_message(f"***Descripción del item actualizada.***", ephemeral=True)
+        self.parent_view.item_data[3] = nueva
+        await interaction.response.send_message(f"✅ Descripción actualizada.", ephemeral=True)
+        await self.parent_view.refresh()
+
+# ─── Editar Droga (sistema idéntico a editar-item pero para drogas) ──────────
+
+class EditarDrogaView(discord.ui.View):
+    def __init__(self, user_id: int, droga_nombre: str, droga_data: dict, message=None):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        self.droga_nombre = droga_nombre
+        # droga_data: {"compra": int, "venta": int, "emoji": str}
+        self.droga_data = dict(droga_data)
+        self.message = message
+
+    def build_embed(self) -> discord.Embed:
+        d = self.droga_data
+        emoji = EMOJIS_DROGA_FULL.get(self.droga_nombre, d.get("emoji", "💊"))
+        e = discord.Embed(title=f"💊 Editando droga: `{self.droga_nombre}`", color=0x9B59B6)
+        e.add_field(name="📛 Nombre",       value=f"`{self.droga_nombre}`",    inline=True)
+        e.add_field(name="🎨 Emoji",        value=emoji,                       inline=True)
+        e.add_field(name="\u200b",          value="\u200b",                    inline=True)
+        e.add_field(name="💰 Precio Compra",value=f"${d.get('compra',0):,}",   inline=True)
+        e.add_field(name="💵 Precio Venta", value=f"${d.get('venta',0):,}",    inline=True)
+        e.set_footer(text="Selecciona qué campo editar · Los cambios se aplican al instante")
+        return e
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("No eres el dueño de esta solicitud.", ephemeral=True)
+            return False
+        return True
+
+    async def refresh(self):
+        if self.message:
+            try:
+                await self.message.edit(embed=self.build_embed(), view=self)
+            except Exception:
+                pass
+
+    @discord.ui.select(placeholder="Selecciona qué deseas editar", options=[
+        discord.SelectOption(label="Editar Nombre",       value="nombre",  emoji="📛"),
+        discord.SelectOption(label="Editar Emoji",        value="emoji",   emoji="🎨"),
+        discord.SelectOption(label="Editar Precio Compra",value="compra",  emoji="💰"),
+        discord.SelectOption(label="Editar Precio Venta", value="venta",   emoji="💵"),
+    ])
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        opcion = select.values[0]
+        if opcion == "nombre":
+            modal = EditarNombreDrogaModal(self.droga_nombre, self.droga_data, self)
+        elif opcion == "emoji":
+            modal = EditarEmojiDrogaModal(self.droga_nombre, self.droga_data, self)
+        elif opcion == "compra":
+            modal = EditarPrecioDrogaModal(self.droga_nombre, self.droga_data, self, "compra")
+        else:
+            modal = EditarPrecioDrogaModal(self.droga_nombre, self.droga_data, self, "venta")
+        await interaction.response.send_modal(modal)
+
+class EditarNombreDrogaModal(discord.ui.Modal, title="Editar Nombre de Droga"):
+    def __init__(self, droga_nombre, droga_data, view: EditarDrogaView):
+        super().__init__()
+        self.droga_nombre = droga_nombre
+        self.droga_data = droga_data
+        self.parent_view = view
+    nuevo_nombre = discord.ui.TextInput(label="Nuevo nombre", placeholder="Ej: Crystal", max_length=40)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global DROGAS_FULL, EMOJIS_DROGA_FULL
+        nuevo = self.nuevo_nombre.value.strip()
+        if not nuevo:
+            await interaction.response.send_message("El nombre no puede estar vacío.", ephemeral=True)
+            return
+        if nuevo in DROGAS_FULL and nuevo != self.droga_nombre:
+            await interaction.response.send_message("Ya existe una droga con ese nombre.", ephemeral=True)
+            return
+        # Es una droga base → no se puede renombrar
+        if self.droga_nombre in PRECIOS_DROGAS_BASE:
+            await interaction.response.send_message("No puedes renombrar una droga base. Solo drogas personalizadas.", ephemeral=True)
+            return
+        cd = _cargar_custom_drogas()
+        if self.droga_nombre in cd:
+            cd[nuevo] = cd.pop(self.droga_nombre)
+        _guardar_custom_drogas(cd)
+        _reload_drogas()
+        self.parent_view.droga_nombre = nuevo
+        await interaction.response.send_message(f"✅ Nombre actualizado → `{nuevo}`", ephemeral=True)
+        await self.parent_view.refresh()
+
+class EditarEmojiDrogaModal(discord.ui.Modal, title="Editar Emoji de Droga"):
+    def __init__(self, droga_nombre, droga_data, view: EditarDrogaView):
+        super().__init__()
+        self.droga_nombre = droga_nombre
+        self.droga_data = droga_data
+        self.parent_view = view
+    nuevo_emoji = discord.ui.TextInput(label="Nuevo emoji", placeholder="Ej: 🌿", max_length=10)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        nuevo = self.nuevo_emoji.value.strip()
+        if not nuevo:
+            await interaction.response.send_message("El emoji no puede estar vacío.", ephemeral=True)
+            return
+        cd = _cargar_custom_drogas()
+        if self.droga_nombre not in cd:
+            cd[self.droga_nombre] = dict(self.droga_data)
+        cd[self.droga_nombre]["emoji"] = nuevo
+        _guardar_custom_drogas(cd)
+        _reload_drogas()
+        self.parent_view.droga_data["emoji"] = nuevo
+        await interaction.response.send_message(f"✅ Emoji actualizado → {nuevo}", ephemeral=True)
+        await self.parent_view.refresh()
+
+class EditarPrecioDrogaModal(discord.ui.Modal):
+    def __init__(self, droga_nombre, droga_data, view: EditarDrogaView, campo: str):
+        titulo = "Editar Precio de Compra" if campo == "compra" else "Editar Precio de Venta"
+        super().__init__(title=titulo)
+        self.droga_nombre = droga_nombre
+        self.droga_data = droga_data
+        self.parent_view = view
+        self.campo = campo
+        self.nuevo_precio = discord.ui.TextInput(
+            label=f"Nuevo precio de {campo}",
+            placeholder="Ej: 150",
+            max_length=12
+        )
+        self.add_item(self.nuevo_precio)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            nuevo = int(self.nuevo_precio.value.strip())
+            if nuevo <= 0:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("El precio debe ser un número entero positivo.", ephemeral=True)
+            return
+        cd = _cargar_custom_drogas()
+        if self.droga_nombre not in cd:
+            cd[self.droga_nombre] = dict(self.droga_data)
+        cd[self.droga_nombre][self.campo] = nuevo
+        _guardar_custom_drogas(cd)
+        _reload_drogas()
+        # Actualizar en DB también
+        await db.execute(
+            f"UPDATE precios_drogas SET precio_{self.campo} = ? WHERE droga = ?",
+            (nuevo, self.droga_nombre)
+        )
+        self.parent_view.droga_data[self.campo] = nuevo
+        await interaction.response.send_message(f"✅ Precio de {self.campo} actualizado → ${nuevo:,}", ephemeral=True)
+        await self.parent_view.refresh()
 
 # ==================== COG: Roleplay ====================
 class Roleplay(BaseCog):
@@ -6013,7 +6459,27 @@ class DNI(BaseCog):
         uid = interaction.user.id
         existing = await db.get_dni(uid)
         if existing:
-            return await interaction.response.send_message(embed=embed_error("Ya tienes un DNI registrado."))
+            # Mostrar su DNI existente con la fecha en que fue creado
+            fecha_creacion = ""
+            try:
+                fecha_creacion = datetime.fromisoformat(existing['fecha_creacion']).strftime('%d/%m/%Y a las %H:%M')
+            except Exception:
+                fecha_creacion = existing.get('fecha_creacion', 'desconocida')
+            embed = discord.Embed(
+                title="🪪 Ya tienes un DNI registrado",
+                description=(
+                    f"No puedes crear un nuevo DNI porque ya tienes uno registrado desde el **{fecha_creacion}**.\n\n"
+                    f"Si necesitas modificarlo, contacta con un administrador (`/borrardni`).\n\n"
+                    f"**📋 Tu DNI actual:**\n"
+                    f"> 🌟 **Nombre:** {existing['nombre']} {existing['apellidos']}\n"
+                    f"> 📅 **Edad:** {existing['edad']}\n"
+                    f"> 🎖️ **Profesión:** {existing['profesion']}\n"
+                    f"> 🔐 **Nº DNI:** `{existing['numero']}`"
+                ),
+                color=0xFF6600
+            )
+            embed.set_footer(text=f"NOVA AGORA V2 • DNI ya registrado • {datetime.now():%d/%m/%Y}")
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
         numero = f"{random.randint(10000000, 99999999)}{random.choice('ABCDEFGHJKLMNPQRSTVWXYZ')}"
         data = {"nombre": nombre, "apellidos": apellidos, "edad": edad, "genero": genero, "nacionalidad": nacionalidad, "color_ojos": color_ojos, "altura": altura, "profesion": profesion, "numero": numero, "fecha_creacion": datetime.now().isoformat()}
         await db.set_dni(uid, data)
@@ -6023,17 +6489,44 @@ class DNI(BaseCog):
 
     @commands.command(name='ver')
     @tiene_rol_usuario()
-    async def ver(self, ctx, subcomando: str = None, usuario: Optional[discord.Member] = None):
+    async def ver(self, ctx, subcomando: str = None, *, resto: str = None):
         if subcomando is None or subcomando.lower() != 'dni':
-            return await ctx.send(embed=embed_info("📋 Comando ver", "Usa `-ver dni [usuario]` para ver el DNI de alguien."))
-        uid = usuario.id if usuario else ctx.author.id
+            return await ctx.send(embed=embed_info("📋 Comando ver", "Usa `-ver dni [@usuario]` para ver el DNI de alguien."))
+
+        # Resolver el usuario destino: mención, ID numérica o el propio autor
+        target = None
+        uid = ctx.author.id
+        if ctx.message.mentions:
+            target = ctx.message.mentions[0]
+            uid = target.id
+        elif resto:
+            # Intentar por ID numérica
+            try:
+                posible_id = int(resto.strip().strip("<@!>"))
+                target = ctx.guild.get_member(posible_id)
+                if not target:
+                    try:
+                        target = await ctx.guild.fetch_member(posible_id)
+                    except Exception:
+                        pass
+                uid = posible_id
+            except ValueError:
+                pass
+
         dni = await db.get_dni(uid)
         if not dni:
-            return await ctx.send(embed=embed_error("Ese usuario no tiene DNI."))
-        target = usuario or ctx.author
-        embed = discord.Embed(title="DOCUMENTO NACIONAL DE IDENTIDAD • NOVA AGORA V2", description="ESTADOS UNIDOS · LOS ANGELES", color=0x00D1FF, timestamp=datetime.now())
-        embed.set_author(name=target.display_name, icon_url=target.display_avatar.url)
-        embed.set_thumbnail(url=target.display_avatar.url)
+            nombre_target = target.display_name if target else ctx.author.display_name
+            return await ctx.send(embed=embed_error(f"**{nombre_target}** no tiene DNI registrado en el sistema."))
+
+        display_target = target or ctx.author
+        embed = discord.Embed(
+            title="DOCUMENTO NACIONAL DE IDENTIDAD • NOVA AGORA V2",
+            description="ESTADOS UNIDOS · LOS ANGELES",
+            color=0x00D1FF,
+            timestamp=datetime.now()
+        )
+        embed.set_author(name=display_target.display_name, icon_url=display_target.display_avatar.url)
+        embed.set_thumbnail(url=display_target.display_avatar.url)
         embed.add_field(name="✨ ESTADO", value="LOS ANGELES", inline=False)
         embed.add_field(name="🌟 NOMBRE", value=f"**{dni['nombre']}**", inline=False)
         embed.add_field(name="💫 APELLIDOS", value=f"**{dni['apellidos']}**", inline=False)
@@ -6045,7 +6538,11 @@ class DNI(BaseCog):
         embed.add_field(name="🌍 NACIONALIDAD", value=dni['nacionalidad'], inline=False)
         embed.add_field(name="🔐 Nº DNI", value=f"**{dni['numero']}**", inline=False)
         embed.add_field(name="✅ ESTADO DEL DOCUMENTO", value="**VÁLIDO**", inline=False)
-        embed.add_field(name="🗓️ EMITIDO", value=datetime.fromisoformat(dni['fecha_creacion']).strftime('%d/%m/%Y %H:%M'), inline=False)
+        try:
+            fecha_emitido = datetime.fromisoformat(dni['fecha_creacion']).strftime('%d/%m/%Y %H:%M')
+        except Exception:
+            fecha_emitido = str(dni.get('fecha_creacion', 'desconocida'))
+        embed.add_field(name="🗓️ EMITIDO", value=fecha_emitido, inline=False)
         embed.set_footer(text=f"NOVA AGORA V2 • CARNET OFICIAL • {datetime.now():%d/%m/%Y}")
         await ctx.send(embed=embed)
         try:
