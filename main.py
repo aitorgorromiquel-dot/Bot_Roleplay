@@ -5209,16 +5209,16 @@ class Moderacion(BaseCog):
             pass
 
     @commands.command(name='delwarn')
-    @commands.has_permissions(administrator=True)
+    @tiene_rol_warn()
     async def delwarn(self, ctx, miembro: discord.Member = None, id_warn: int = None):
         if not miembro or not id_warn:
-            return await ctx.send(embed=embed_help("delwarn", "Elimina una advertencia de un usuario por su ID.", "-delwarn @usuario <id_warn>", "-delwarn @Juan 3", "Administrador"))
+            return await ctx.send(embed=embed_help("delwarn", "Elimina una advertencia de un usuario por su ID.", "-delwarn @usuario <numero_warn>", "-delwarn @Juan 3", "Moderación"))
         row = await db.fetchone("SELECT id FROM warnings WHERE id = ? AND user_id = ?", (id_warn, miembro.id))
         if not row:
-            return await ctx.send(embed=embed_error("Advertencia no encontrada."))
+            return await ctx.send(embed=embed_error(f"No se encontró la advertencia #{id_warn} para {miembro.mention}."))
         await db.execute("DELETE FROM warnings WHERE id = ?", (id_warn,))
-        await self.registrar_log_moderacion(ctx, f"WARN #{id_warn} ELIMINADA", miembro, "Eliminada por administrador")
-        await ctx.send(embed=embed_success("🗑️ Advertencia eliminada", f"Se eliminó la advertencia #{id_warn} de {miembro.mention}.", 0xFF6600))
+        await ctx.send(embed=embed_success("🗑️ Advertencia eliminada", f"Se eliminó la advertencia **#{id_warn}** de {miembro.mention}.", 0xFF6600))
+        await self.log("DELWARN", f"{ctx.author.name} eliminó warn #{id_warn} de {miembro.name}")
         try:
             await ctx.message.delete()
         except:
@@ -5234,7 +5234,7 @@ class Moderacion(BaseCog):
         embed = discord.Embed(title=f"📜 Historial de sanciones de {miembro.display_name}", color=discord.Color.blue(), timestamp=datetime.now())
         embed.set_thumbnail(url=miembro.display_avatar.url)
         if warns:
-            warns_text = "\n".join([f"**#{w[0]}** - {w[1]} (por {w[4]}) - {datetime.fromisoformat(w[3]).strftime('%d/%m/%Y %H:%M')}" for w in warns])
+            warns_text = "\n".join([f"**#{w[0]}** - {w[1]} (por {w[3] or 'Desconocido'}) - {datetime.fromisoformat(w[2]).strftime('%d/%m/%Y %H:%M')}" for w in warns])
             embed.add_field(name="⚠️ Advertencias", value=warns_text, inline=False)
         else:
             embed.add_field(name="⚠️ Advertencias", value="*Ninguna*", inline=False)
@@ -5259,7 +5259,8 @@ class Moderacion(BaseCog):
             return await ctx.send(embed=embed_success("✅ Sin advertencias", f"{miembro.display_name} no tiene advertencias."))
         embed = discord.Embed(title=f"⚠️ Advertencias de {miembro.display_name}", color=discord.Color.orange())
         for w in warns:
-            embed.add_field(name=f"#{w[0]}", value=f"Razón: {w[1]}\nPor: {w[4]}\nFecha: {datetime.fromisoformat(w[3]).strftime('%d/%m/%Y %H:%M')}", inline=False)
+            warn_id, razon, fecha, agente = w[0], w[1], w[2], w[3]
+            embed.add_field(name=f"#{warn_id}", value=f"**Razón:** {razon}\n**Por:** {agente or 'Desconocido'}\n**Fecha:** {datetime.fromisoformat(fecha).strftime('%d/%m/%Y %H:%M')}", inline=False)
         await ctx.send(embed=embed)
         try:
             await ctx.message.delete()
@@ -6571,8 +6572,8 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
     fecha = datetime.now().strftime("%d/%m/%Y")
     embed = discord.Embed(color=0x2B2D31, timestamp=datetime.now())
     embed.set_author(name="NOVA DEVELOPERS", icon_url=icon_url)
-    embed.add_field(name="📣 ANUNCIO ADMINISTRATIVO", value=f"\n{mensaje}\n", inline=False)
-    embed.add_field(name="\u200b", value="━━━━━━━━━━━━━━━━━━━━\n📣 Sistema oficial de comunicaciones\n⚡ Mantente atento a próximas novedades", inline=False)
+    embed.add_field(name="📣 ANUNCIO ADMINISTRATIVO", value=f"\n***{mensaje}***\n", inline=False)
+    embed.add_field(name="\u200b", value="━━━━━━━━━━━━━━━━━━━━\n***📣 Sistema oficial de comunicaciones***\n***⚡ Mantente atento a próximas novedades***", inline=False)
     embed.set_footer(text=f"Nova Agora RP • Administración Oficial • {fecha}", icon_url=icon_url)
     await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
