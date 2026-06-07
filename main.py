@@ -925,23 +925,36 @@ class Database:
 
     # DNI
     async def get_dni(self, user_id):
-        row = await self.fetchone("SELECT dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad, dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion FROM users WHERE user_id = ?", (user_id,))
+        # Añadir columna dni_id_play si no existe (migración automática)
+        try:
+            await self.execute("ALTER TABLE users ADD COLUMN dni_id_play TEXT DEFAULT NULL")
+        except Exception:
+            pass  # Ya existe
+        row = await self.fetchone(
+            "SELECT dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad, "
+            "dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion, dni_id_play "
+            "FROM users WHERE user_id = ?", (user_id,)
+        )
         if row and row[0]:
             return {
                 "nombre": row[0], "apellidos": row[1], "edad": row[2], "genero": row[3],
                 "nacionalidad": row[4], "color_ojos": row[5], "altura": row[6],
-                "profesion": row[7], "numero": row[8], "fecha_creacion": row[9]
+                "profesion": row[7], "numero": row[8], "fecha_creacion": row[9],
+                "id_play": row[10] or ""
             }
         return None
 
     async def set_dni(self, user_id, data):
-        # Asegurar que la fila exista en users
+        # Migración automática: añadir columna si no existe
+        try:
+            await self.execute("ALTER TABLE users ADD COLUMN dni_id_play TEXT DEFAULT NULL")
+        except Exception:
+            pass
         await self.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-        # Guardar datos DNI con upsert robusto (ON CONFLICT) para que funcione en BDs antiguas
         await self.execute("""
             INSERT INTO users (user_id, dni_nombre, dni_apellidos, dni_edad, dni_genero, dni_nacionalidad,
-                dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dni_color_ojos, dni_altura, dni_profesion, dni_numero, dni_fecha_creacion, dni_id_play)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 dni_nombre=excluded.dni_nombre,
                 dni_apellidos=excluded.dni_apellidos,
@@ -952,18 +965,19 @@ class Database:
                 dni_altura=excluded.dni_altura,
                 dni_profesion=excluded.dni_profesion,
                 dni_numero=excluded.dni_numero,
-                dni_fecha_creacion=excluded.dni_fecha_creacion
+                dni_fecha_creacion=excluded.dni_fecha_creacion,
+                dni_id_play=excluded.dni_id_play
         """, (
             user_id, data["nombre"], data["apellidos"], data["edad"], data["genero"],
             data["nacionalidad"], data["color_ojos"], data["altura"], data["profesion"],
-            data["numero"], data["fecha_creacion"]
+            data["numero"], data["fecha_creacion"], data.get("id_play", "")
         ))
 
     async def delete_dni(self, user_id):
         await self.execute("""
             UPDATE users SET dni_nombre=NULL, dni_apellidos=NULL, dni_edad=NULL, dni_genero=NULL,
             dni_color_ojos=NULL, dni_altura=NULL, dni_profesion=NULL,
-            dni_numero=NULL, dni_fecha_creacion=NULL WHERE user_id=?
+            dni_numero=NULL, dni_fecha_creacion=NULL, dni_id_play=NULL WHERE user_id=?
         """, (user_id,))
 
     # Multas
@@ -6861,7 +6875,7 @@ def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
     campo(CL, 360, "FECHA DE EXPEDICIÓN", exp_date)
     campo(CR, 120, "NOMBRE",              data.get("nombre","–"))
     campo(CR, 200, "SEXO",                data.get("genero","–"))
-    campo(CR, 280, "LUGAR DE NACIMIENTO", data.get("color_ojos","SAN ANDREAS"))
+    campo(CR, 280, "COLOR DE OJOS",       data.get("color_ojos","–"))
     campo(CR, 360, "VÁLIDO HASTA",        val_date)
 
     # ── QR ──
@@ -6935,7 +6949,8 @@ async def generar_imagen_dni(data: dict, avatar_url: str = None) -> io.BytesIO:
 
 class DNI(BaseCog):
     @app_commands.command(name='dni', description="Crea tu DNI de personaje en NOVA AGORA V2")
-    async def dni(self, interaction: discord.Interaction, nombre: str, apellidos: str, edad: int, genero: str, nacionalidad: str, color_ojos: str, altura: str, profesion: str):
+    async def dni(self, interaction: discord.Interaction, nombre: str, apellidos: str, edad: int, genero: str, nacionalidad: str, color_ojos: str, altura: str, profesion: str, id_play: str = ""):
+        # id_play = nombre de PSN/Xbox/Steam del jugador. Solo para el nick, NO aparece en la imagen.
         uid = interaction.user.id
         existing = await db.get_dni(uid)
         if existing:
@@ -6945,15 +6960,17 @@ class DNI(BaseCog):
                 fecha_creacion = datetime.fromisoformat(existing['fecha_creacion']).strftime('%d/%m/%Y a las %H:%M')
             except Exception:
                 fecha_creacion = existing.get('fecha_creacion', 'desconocida')
+            id_play_txt = f"\n> 🎮 **NAME PSN:** `{existing.get('id_play','')}`" if existing.get("id_play") else ""
             embed = discord.Embed(
                 title="🪪 Ya tienes un DNI registrado",
                 description=(
                     f"No puedes crear un nuevo DNI porque ya tienes uno registrado desde el **{fecha_creacion}**.\n\n"
                     f"Si necesitas modificarlo, contacta con un administrador (`/borrardni`).\n\n"
                     f"**📋 Tu DNI actual:**\n"
-                    f"> 🌟 **Nombre:** {existing['nombre']} {existing['apellidos']}\n"
+                    f"> 🌟 **Nombre IC:** {existing['nombre']} {existing['apellidos']}\n"
                     f"> 📅 **Edad:** {existing['edad']}\n"
-                    f"> 🎖️ **Profesión:** {existing['profesion']}\n"
+                    f"> 🎖️ **Profesión:** {existing['profesion']}"
+                    f"{id_play_txt}\n"
                     f"> 🔐 **Nº DNI:** `{existing['numero']}`"
                 ),
                 color=0xFF6600
@@ -6964,24 +6981,39 @@ class DNI(BaseCog):
         data   = {
             "nombre": nombre, "apellidos": apellidos, "edad": edad, "genero": genero,
             "nacionalidad": nacionalidad, "color_ojos": color_ojos, "altura": altura,
-            "profesion": profesion, "numero": numero, "fecha_creacion": datetime.now().isoformat()
+            "profesion": profesion, "numero": numero,
+            "fecha_creacion": datetime.now().isoformat(),
+            "id_play": id_play.strip()   # Solo para el nickname, NO en la imagen del DNI
         }
         await db.set_dni(uid, data)
         await interaction.response.defer()
 
-        # ── Actualizar nickname del usuario: emoji + Nombre Apellidos ──
+        # ── Actualizar nickname: 👤• Nombre Apellidos | PSN_ID ──
         nickname_log = ""
         try:
             emoji_ciudadano = await get_emoji("ciudadano")  # 👤 o custom
-            # Formato: "👤 Nombre Apellidos" (max 32 chars, límite Discord)
-            nombre_completo = f"{nombre} {apellidos}"
-            nick_nuevo = f"{emoji_ciudadano} {nombre_completo}"[:32]
+            nombre_ic  = f"{nombre} {apellidos}"            # NAME IC  (personaje)
+            id_psn     = id_play.strip()                    # NAME PSN (jugador)
+            if id_psn:
+                # Formato completo: 👤• Nombre Apellidos | PSN_ID
+                nick_raw  = f"{emoji_ciudadano}• {nombre_ic} | {id_psn}"
+            else:
+                # Sin PSN: 👤• Nombre Apellidos
+                nick_raw  = f"{emoji_ciudadano}• {nombre_ic}"
+            nick_nuevo = nick_raw[:32]                       # Discord max 32 chars
             await interaction.user.edit(nick=nick_nuevo)
-            nickname_log = f"\n> 🏷️ **Apodo en servidor:** `{nick_nuevo}`"
+            if id_psn:
+                nickname_log = (
+                    f"\n> 🏷️ **NAME IC:** `{nombre_ic}`"
+                    f"\n> 🎮 **NAME PSN:** `{id_psn}`"
+                    f"\n> 📛 **Apodo Discord:** `{nick_nuevo}`"
+                )
+            else:
+                nickname_log = f"\n> 🏷️ **Apodo Discord:** `{nick_nuevo}`"
         except discord.Forbidden:
-            nickname_log = "\n> ⚠️ Sin permiso para cambiar apodo (hazlo manualmente)."
+            nickname_log = "\n> ⚠️ Sin permiso para cambiar apodo (pídelo a un admin)."
         except Exception as e_nick:
-            nickname_log = f"\n> ⚠️ Apodo no cambiado: {e_nick}"
+            nickname_log = f"\n> ⚠️ Apodo no actualizado: {e_nick}"
 
         # ── Generar y enviar imagen DNI ──
         try:
@@ -7196,8 +7228,12 @@ class DNI(BaseCog):
                 if not dni:
                     skip += 1
                     continue
-                nombre_completo = f"{dni.get('nombre','?')} {dni.get('apellidos','')}"
-                nick_nuevo = f"{emoji_ciudadano} {nombre_completo}"[:32]
+                nombre_ic = f"{dni.get('nombre','?')} {dni.get('apellidos','')}"
+                id_psn    = dni.get("id_play", "").strip()
+                if id_psn:
+                    nick_nuevo = f"{emoji_ciudadano}• {nombre_ic} | {id_psn}"[:32]
+                else:
+                    nick_nuevo = f"{emoji_ciudadano}• {nombre_ic}"[:32]
                 if member.display_name == nick_nuevo:
                     skip += 1
                     continue
