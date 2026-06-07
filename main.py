@@ -212,7 +212,18 @@ _rebuild_tienda()
 ILLEGAL_TIENDA_ITEMS = {"dispositivo de hackeo", "termita", "tarjeta de crédito", "gas lacrimógeno", "pasamontañas", "bolsas atraco", "ganzúa", "mascaras"}
 
 # ─── Drogas personalizadas ──────────────────────────────────────────────────
-CUSTOM_DROGAS_FILE = "custom_drogas.json"
+CUSTOM_DROGAS_FILE       = "custom_drogas.json"
+DELETED_BASE_DROGAS_FILE = "deleted_base_drogas.json"
+
+def _load_deleted_base_drogas():
+    if os.path.exists(DELETED_BASE_DROGAS_FILE):
+        with open(DELETED_BASE_DROGAS_FILE, "r", encoding="utf-8") as f:
+            return {n for n in json.load(f)}
+    return set()
+
+def _save_deleted_base_drogas(deleted_set: set):
+    with open(DELETED_BASE_DROGAS_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(deleted_set), f, indent=2, ensure_ascii=False)
 
 def _cargar_custom_drogas():
     if os.path.exists(CUSTOM_DROGAS_FILE):
@@ -375,6 +386,7 @@ DEFAULT_EMOJIS = {
     "money":"💰","bank":"🏦","black_money":"💶","inventory":"🎒","shop":"🏪","work":"⚙️","rob":"💰",
     "casino":"🎰","drugs":"💊","vehicle":"🚗","weapon":"🔫","pda":"🚨","phone":"📱","ig":"📸",
     "twitter":"🐦","facebook":"📘","deepweb":"🕸️","whatsapp":"💬","ticket":"📩","admin":"🔧","mod":"🔨",
+    "ciudadano":"👤",  # Emoji de ciudadano en el nickname. Cámbialo con -set-emoji ciudadano <emoji>
 }
 
 PRECIO_INFINITO = 10**12  # Representa precio infinito
@@ -5076,28 +5088,39 @@ class Admin(BaseCog):
         if not nombre:
             return await ctx.send(embed=embed_help(
                 "eliminar-droga",
-                "Elimina una droga personalizada del mercado.",
+                "Elimina cualquier droga del mercado (base o personalizada).",
                 "-eliminar-droga <nombre>",
                 "-eliminar-droga Crystal",
                 "Equipo Especial"
             ))
         nombre_cap = nombre.strip().capitalize()
-        if nombre_cap in PRECIOS_DROGAS_BASE:
-            return await ctx.send(embed=embed_error("No puedes eliminar una droga base. Solo drogas personalizadas."))
+        # Verificar que la droga existe en el mercado actual
+        if nombre_cap not in DROGAS_FULL:
+            return await ctx.send(embed=embed_error(
+                f"No existe ninguna droga llamada **{nombre_cap}** en el mercado.\n"
+                f"Usa `-drogas` para ver las drogas disponibles."
+            ))
+        is_base = nombre_cap in PRECIOS_DROGAS_BASE
+        # 1) Eliminar de custom_drogas.json si está ahí
         cd = _cargar_custom_drogas()
-        if nombre_cap not in cd:
-            return await ctx.send(embed=embed_error(f"No existe ninguna droga personalizada llamada **{nombre_cap}**."))
-        del cd[nombre_cap]
-        _guardar_custom_drogas(cd)
+        if nombre_cap in cd:
+            del cd[nombre_cap]
+            _guardar_custom_drogas(cd)
         await db.execute("DELETE FROM precios_drogas WHERE droga = ?", (nombre_cap,))
+        # 2) Si es droga base, marcarla como eliminada
+        if is_base:
+            deleted = _load_deleted_base_drogas()
+            deleted.add(nombre_cap)
+            _save_deleted_base_drogas(deleted)
         _reload_drogas()
+        tipo = "base" if is_base else "personalizada"
         embed = discord.Embed(
             title="🗑️ Droga Eliminada",
-            description=f"**{nombre_cap}** ha sido eliminada del mercado.",
+            description=f"**{nombre_cap}** ({tipo}) ha sido eliminada del mercado.",
             color=0xFF6600
         )
         await ctx.send(embed=embed)
-        await self.log("ELIMINAR_DROGA", f"{ctx.author.name} eliminó droga '{nombre_cap}'")
+        await self.log("ELIMINAR_DROGA", f"{ctx.author.name} eliminó droga '{nombre_cap}' ({tipo})")
         try:
             await ctx.message.delete()
         except:
@@ -5375,15 +5398,18 @@ class EditarPrecioModal(discord.ui.Modal, title="Editar Precio del Item"):
     async def on_submit(self, interaction: discord.Interaction):
         global TIENDA_ITEMS_FULL, TIENDA_ITEMS_DICT
         precio_str = self.nuevo_precio.value.strip().upper()
-        if precio_str == "INFINITY":
+        if precio_str in ("INFINITY", "INF", "INFINITO", "∞", "INFINITE", "MAX"):
             nuevo = PRECIO_INFINITO
         else:
             try:
-                nuevo = int(precio_str)
+                nuevo = int(precio_str.replace(".","").replace(",","").replace("$",""))
                 if nuevo <= 0:
                     raise ValueError
             except ValueError:
-                await interaction.response.send_message("El precio debe ser un número entero positivo o INFINITY.", ephemeral=True)
+                await interaction.response.send_message(
+                    "❌ Precio inválido. Usa un número positivo o escribe **INFINITY** para precio infinito.",
+                    ephemeral=True
+                )
                 return
         custom_items = []
         if os.path.exists(CUSTOM_ITEMS_FILE):
@@ -6711,9 +6737,12 @@ class LicenciaModal(discord.ui.Modal, title="Gestionar licencia"):
 # ══════════════════════════════════════════════════════════════════════════════
 # GENERADOR DE IMAGEN DNI — NOVA AGORA V2
 # ══════════════════════════════════════════════════════════════════════════════
-_FONT_BASE = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
-_FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-_FONT_MONO = "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf"
+# DejaVu: soporte completo de caracteres españoles (ñ, é, í, ó, ú, ü, etc.)
+_FONT_BASE    = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+_FONT_BOLD    = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+_FONT_MONO    = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
+_FONT_ITALIC  = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf"   # firma cursiva
+_FONT_FALLBACK = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
 def _load_font(path, size):
     if not PIL_AVAILABLE:
@@ -6788,14 +6817,19 @@ def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
         draw.text((PX+42, PY+110), "FOTOGRAFÍA", fill=(180, 190, 210), font=_load_font(_FONT_BASE, 18))
     draw.text((PX+46, PY+PH+8), "FOTOGRAFÍA", fill=(80, 80, 120), font=_load_font(_FONT_BASE, 12))
 
-    # ── FIRMA ──
+    # ── FIRMA (cursiva con nombre del titular) ──
     SX, SY, SW, SH = 55, 432, 215, 68
     draw.rectangle([SX, SY, SX+SW, SY+SH], outline=(160, 170, 200), width=1, fill=WHITE)
-    draw.line(
-        [(SX+12, SY+48), (SX+38, SY+26), (SX+68, SY+52),
-         (SX+108, SY+22), (SX+152, SY+46), (SX+195, SY+30)],
-        fill=(30, 30, 80), width=2
-    )
+    firma_nombre = f"{data.get('nombre','').split()[0]} {data.get('apellidos','').split()[0]}"
+    f_firma = _load_font(_FONT_ITALIC, 18)
+    # Centrar la firma en la caja
+    try:
+        bb = draw.textbbox((0,0), firma_nombre, font=f_firma)
+        fw = bb[2] - bb[0]
+        fx = SX + max(5, (SW - fw) // 2)
+    except Exception:
+        fx = SX + 12
+    draw.text((fx, SY+22), firma_nombre, fill=(20, 20, 80), font=f_firma)
     draw.text((SX+28, SY+SH+6), "FIRMA DEL TITULAR", fill=(80, 80, 120), font=_load_font(_FONT_BASE, 12))
 
     # ── NÚMERO DE DOCUMENTO ──
@@ -6815,7 +6849,14 @@ def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
     val_date = f"{datetime.now().day:02d}/{datetime.now().month:02d}/{datetime.now().year+10}"
     CL, CR   = 290, 680
     campo(CL, 120, "APELLIDOS",           data.get("apellidos","–"))
-    campo(CL, 200, "FECHA DE NACIMIENTO", data.get("edad","–"))
+    # Edad: si es número entero mostrar "X años", si tiene "/" es fecha, mostrar tal cual
+    edad_raw = data.get("edad","–")
+    try:
+        edad_int = int(str(edad_raw))
+        edad_display = f"{edad_int} AÑOS"
+    except (ValueError, TypeError):
+        edad_display = str(edad_raw)
+    campo(CL, 200, "FECHA DE NACIMIENTO", edad_display)
     campo(CL, 280, "NACIONALIDAD",        data.get("nacionalidad","–"))
     campo(CL, 360, "FECHA DE EXPEDICIÓN", exp_date)
     campo(CR, 120, "NOMBRE",              data.get("nombre","–"))
@@ -6920,11 +6961,64 @@ class DNI(BaseCog):
             embed.set_footer(text=f"NOVA AGORA V2 • DNI ya registrado • {datetime.now():%d/%m/%Y}")
             return await interaction.response.send_message(embed=embed, ephemeral=True)
         numero = f"{random.randint(10000000, 99999999)}{random.choice('ABCDEFGHJKLMNPQRSTVWXYZ')}"
-        data = {"nombre": nombre, "apellidos": apellidos, "edad": edad, "genero": genero, "nacionalidad": nacionalidad, "color_ojos": color_ojos, "altura": altura, "profesion": profesion, "numero": numero, "fecha_creacion": datetime.now().isoformat()}
+        data   = {
+            "nombre": nombre, "apellidos": apellidos, "edad": edad, "genero": genero,
+            "nacionalidad": nacionalidad, "color_ojos": color_ojos, "altura": altura,
+            "profesion": profesion, "numero": numero, "fecha_creacion": datetime.now().isoformat()
+        }
         await db.set_dni(uid, data)
-        await interaction.response.send_message("✨ **** CREA TÚ DNI EN NOVA AGORA V2 ****")
-        embed = discord.Embed(title="✅ DNI CREADO", description=f"**Nombre:** {nombre}\n**Apellidos:** {apellidos}\n**Edad:** {edad}\n**Género:** {genero}\n**Nacionalidad:** {nacionalidad}\n**Color de ojos:** {color_ojos}\n**Altura:** {altura}\n**Profesión:** {profesion}\n**Número DNI:** `{numero}`", color=0x00FF00)
-        await interaction.followup.send(embed=embed)
+        await interaction.response.defer()
+
+        # ── Actualizar nickname del usuario: emoji + Nombre Apellidos ──
+        nickname_log = ""
+        try:
+            emoji_ciudadano = await get_emoji("ciudadano")  # 👤 o custom
+            # Formato: "👤 Nombre Apellidos" (max 32 chars, límite Discord)
+            nombre_completo = f"{nombre} {apellidos}"
+            nick_nuevo = f"{emoji_ciudadano} {nombre_completo}"[:32]
+            await interaction.user.edit(nick=nick_nuevo)
+            nickname_log = f"\n> 🏷️ **Apodo en servidor:** `{nick_nuevo}`"
+        except discord.Forbidden:
+            nickname_log = "\n> ⚠️ Sin permiso para cambiar apodo (hazlo manualmente)."
+        except Exception as e_nick:
+            nickname_log = f"\n> ⚠️ Apodo no cambiado: {e_nick}"
+
+        # ── Generar y enviar imagen DNI ──
+        try:
+            img_buf = await generar_imagen_dni(data, str(interaction.user.display_avatar.url))
+            embed = discord.Embed(
+                description=(
+                    "IDENTIFICACIÓN ESTADO LOS ANGELES, NOVA AGORA"
+                    + nickname_log
+                ),
+                color=0x0F2663,
+                timestamp=datetime.now()
+            )
+            embed.set_image(url="attachment://dni.png")
+            embed.set_footer(
+                text=f"NOVA AGORA V2 • Nº {numero} • {datetime.now().strftime('%d/%m/%Y')}",
+                icon_url=interaction.user.display_avatar.url
+            )
+            file = discord.File(img_buf, filename="dni.png")
+            await interaction.followup.send(
+                content=f"✅ **DNI creado correctamente**, {interaction.user.mention}",
+                file=file, embed=embed
+            )
+        except Exception as e:
+            embed = discord.Embed(
+                title="✅ DNI Registrado",
+                description=(
+                    f"**`{nombre} {apellidos}`**\n\n"
+                    f"> 📅 **Edad:** {edad}\n"
+                    f"> ⚧ **Género:** {genero}\n"
+                    f"> 🌍 **Nacionalidad:** {nacionalidad}\n"
+                    f"> 🎖️ **Profesión:** {profesion}\n"
+                    f"> 🔐 **Nº DNI:** `{numero}`"
+                    + nickname_log
+                ),
+                color=0x00FF00, timestamp=datetime.now()
+            )
+            await interaction.followup.send(embed=embed)
 
     @commands.command(name='ver')
     @check_ban()
@@ -7001,15 +7095,128 @@ class DNI(BaseCog):
         except Exception:
             pass
 
-    @app_commands.command(name='borrardni', description="Elimina el DNI de un usuario (solo administradores) en NOVA AGORA V2")
+    @app_commands.command(name='borrardni', description="[Admin] Elimina el DNI de un usuario del sistema")
     @app_commands.checks.has_permissions(administrator=True)
     async def borrardni(self, interaction: discord.Interaction, usuario: discord.Member):
-        dni = await db.get_dni(usuario.id)
-        if not dni:
-            return await interaction.response.send_message(embed=embed_error("Ese usuario no tiene DNI."))
-        await db.delete_dni(usuario.id)
-        await interaction.response.send_message("✨ **** BORRA DNI EN NOVA AGORA V2 ****")
-        await interaction.followup.send(embed=embed_success("🗑️ DNI eliminado", f"Se eliminó el DNI de {usuario.mention}.", 0xFF0000))
+        """Elimina el DNI de cualquier usuario. Solo administradores."""
+        try:
+            await interaction.response.defer(ephemeral=True)
+            dni = await db.get_dni(usuario.id)
+            if not dni:
+                return await interaction.followup.send(
+                    embed=embed_error(f"{usuario.mention} no tiene DNI registrado en el sistema."),
+                    ephemeral=True
+                )
+            nombre_dni = f"{dni.get('nombre','?')} {dni.get('apellidos','?')}"
+            await db.delete_dni(usuario.id)
+            embed = discord.Embed(
+                title="🗑️ DNI Eliminado",
+                description=(
+                    f"El DNI de {usuario.mention} ha sido eliminado correctamente.\n\n"
+                    f"**Titular:** {nombre_dni}\n"
+                    f"**Nº Documento:** `{dni.get('numero','?')}` \n"
+                    f"**Eliminado por:** {interaction.user.mention}"
+                ),
+                color=0xFF0000,
+                timestamp=datetime.now()
+            )
+            embed.set_thumbnail(url=usuario.display_avatar.url)
+            embed.set_footer(text="NOVA AGORA V2 • DNI eliminado del sistema")
+            # Intentar limpiar el nickname (quitar el apodo del personaje)
+            try:
+                await usuario.edit(nick=None)
+            except Exception:
+                pass  # Sin permiso o no es necesario
+            await interaction.followup.send(embed=embed, ephemeral=False)
+            await self.log("BORRARDNI", f"{interaction.user.name} eliminó DNI de {usuario.name} ({nombre_dni})")
+        except Exception as e:
+            try:
+                await interaction.followup.send(embed=embed_error(f"Error al eliminar DNI: {e}"), ephemeral=True)
+            except Exception:
+                pass
+
+    @app_commands.command(name='mi-dni', description="Elimina tu propio DNI para poder crearlo de nuevo")
+    async def mi_dni_borrar(self, interaction: discord.Interaction):
+        """Permite a un usuario borrar su propio DNI (con confirmación)."""
+        try:
+            await interaction.response.defer(ephemeral=True)
+            dni = await db.get_dni(interaction.user.id)
+            if not dni:
+                return await interaction.followup.send(
+                    embed=embed_error("No tienes ningún DNI registrado."),
+                    ephemeral=True
+                )
+
+            class ConfirmBorrarDNI(discord.ui.View):
+                def __init__(self): super().__init__(timeout=30)
+                @discord.ui.button(label="✅ Sí, borrar mi DNI", style=discord.ButtonStyle.danger)
+                async def confirm(self, i: discord.Interaction, b: discord.ui.Button):
+                    await db.delete_dni(i.user.id)
+                    embed = discord.Embed(title="🗑️ Tu DNI ha sido eliminado", description="Ahora puedes crear uno nuevo con `/dni`.", color=0xFF6600)
+                    await i.response.edit_message(embed=embed, view=None)
+                @discord.ui.button(label="❌ Cancelar", style=discord.ButtonStyle.secondary)
+                async def cancel(self, i: discord.Interaction, b: discord.ui.Button):
+                    await i.response.edit_message(content="Cancelado. Tu DNI no ha sido modificado.", embed=None, view=None)
+
+            embed = discord.Embed(
+                title="⚠️ ¿Eliminar tu DNI?",
+                description=(
+                    f"**Nombre:** {dni.get('nombre','?')} {dni.get('apellidos','?')}\n"
+                    f"**Nº:** `{dni.get('numero','?')}` \n\n"
+                    "Esta acción es **irreversible**. ¿Confirmas?"
+                ),
+                color=0xFFA500
+            )
+            await interaction.followup.send(embed=embed, view=ConfirmBorrarDNI(), ephemeral=True)
+        except Exception as e:
+            try:
+                await interaction.followup.send(embed=embed_error(f"Error: {e}"), ephemeral=True)
+            except Exception:
+                pass
+
+    @borrardni.error
+    async def borrardni_error(self, interaction: discord.Interaction, error):
+        if isinstance(error, app_commands.MissingPermissions):
+            try:
+                await interaction.response.send_message(embed=embed_error("Necesitas permisos de Administrador para usar este comando."), ephemeral=True)
+            except Exception:
+                pass
+
+    @app_commands.command(name='sync-nick', description="[Admin] Sincroniza el apodo de un usuario con su DNI")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sync_nick(self, interaction: discord.Interaction, usuario: discord.Member = None):
+        """Actualiza el nickname de un usuario (o todos) con su nombre del DNI."""
+        await interaction.response.defer(ephemeral=True)
+        targets = [usuario] if usuario else [m for m in interaction.guild.members if not m.bot]
+        emoji_ciudadano = await get_emoji("ciudadano")
+        ok, skip, err = 0, 0, 0
+        for member in targets:
+            try:
+                dni = await db.get_dni(member.id)
+                if not dni:
+                    skip += 1
+                    continue
+                nombre_completo = f"{dni.get('nombre','?')} {dni.get('apellidos','')}"
+                nick_nuevo = f"{emoji_ciudadano} {nombre_completo}"[:32]
+                if member.display_name == nick_nuevo:
+                    skip += 1
+                    continue
+                await member.edit(nick=nick_nuevo)
+                ok += 1
+            except discord.Forbidden:
+                err += 1
+            except Exception:
+                err += 1
+        embed = discord.Embed(
+            title="🏷️ Sync de Nicknames",
+            description=(
+                f"✅ Actualizados: **{ok}**\n"
+                f"⏭️ Sin cambios: **{skip}**\n"
+                f"❌ Sin permiso: **{err}**"
+            ),
+            color=0x00FF00
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 # ==================== COG: Trabajos ====================
 class Trabajos(BaseCog):
