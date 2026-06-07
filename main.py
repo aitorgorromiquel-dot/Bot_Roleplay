@@ -5920,7 +5920,7 @@ class Soporte(BaseCog):
             return names[-1]
 
         e_si    = find_emoji(guild, "si",    "check",  "tick",  "si_rol",  "☑️")
-        e_no    = find_emoji(guild, "no",    "cross",  "nope",  "no_rol",  "🟥")
+        e_no    = find_emoji(guild, "no",    "cross",  "nope",  "no_rol",  "❌")
         e_lspd  = find_emoji(guild, "lspd",  "policia","cop",   "badge",   "🚔")
         e_lsmd  = find_emoji(guild, "lsmd",  "medico", "ems",   "doctor",  "🏥")
         e_tarde = find_emoji(guild, "tarde", "clock",  "reloj", "later",   "🕐")
@@ -7940,7 +7940,7 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
     embed.set_author(name="NOVA DEVELOPERS", icon_url=icon_url)
     embed.add_field(
         name="📣 ANUNCIO ADMINISTRATIVO",
-        value=f"```\n{mensaje}\n```",
+        value=f">>> {mensaje}",
         inline=False
     )
     embed.add_field(
