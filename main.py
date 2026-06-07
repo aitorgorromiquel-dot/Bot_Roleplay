@@ -2289,10 +2289,12 @@ class Drogas(BaseCog):
         for droga, emoji in EMOJIS_DROGA_FULL.items():
             precio_compra = await db.get_precio_droga(droga, True)
             precio_venta = await db.get_precio_droga(droga, False)
+            compra_txt = "`∞`" if precio_compra >= PRECIO_INFINITO else f"`${precio_compra:,}`"
+            venta_txt  = "`∞`" if precio_venta  >= PRECIO_INFINITO else f"`${precio_venta:,}`"
             embed.add_field(
-                name=f"{emoji} {droga}",
-                value=f"🛒 Compra: **${precio_compra}**\n💵 Venta: **${precio_venta}**",
-                inline=False
+                name=f"{emoji} **{droga}**",
+                value=f"🛒 **Compra:** {compra_txt}\n💵 **Venta:** {venta_txt}",
+                inline=True
             )
         embed.set_footer(text="Precios dinámicos según oferta/demanda")
         await ctx.send(embed=embed)
@@ -5906,29 +5908,64 @@ class Soporte(BaseCog):
         await self._publicar_votacion(ctx.channel, ctx.author, {"hora": hora, "tema": tema})
 
     async def _publicar_votacion(self, canal, autor, datos):
-        embed = discord.Embed(title="📌 VOTACIÓN DE ROL 📌", color=discord.Color.blue(), timestamp=datetime.now())
-        embed.add_field(name="📌 → Hora:", value=f"```\n{datos['hora']}\n```", inline=False)
-        if datos.get("tema"):
-            embed.add_field(name="📝 → Tema:", value=f"```\n{datos['tema']}\n```", inline=False)
-        embed.add_field(name="\u200b", value="✅ → **Si te vas a unir.**\n🚔 → **Si te unes como policía.**\n❌ → **No te unes.**\n😅 → **Si te vas a unir tarde.**", inline=False)
-        embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
-        embed.set_footer(text=f"Soporte: {autor.display_name}  ·  NOVA AGORA", icon_url=autor.display_avatar.url)
+        """Publica la votación con diseño estilo imagen de referencia + 6 reacciones."""
+        guild = canal.guild
+
+        def find_emoji(guild, *names):
+            """Busca emoji custom del servidor; si no existe devuelve el último (fallback unicode)."""
+            for name in names[:-1]:
+                e = discord.utils.find(lambda em, n=name: em.name.lower() == n.lower(), guild.emojis)
+                if e:
+                    return str(e)
+            return names[-1]
+
+        e_si    = find_emoji(guild, "si",    "check",  "tick",  "si_rol",  "☑️")
+        e_no    = find_emoji(guild, "no",    "cross",  "nope",  "no_rol",  "🟥")
+        e_lspd  = find_emoji(guild, "lspd",  "policia","cop",   "badge",   "🚔")
+        e_lsmd  = find_emoji(guild, "lsmd",  "medico", "ems",   "doctor",  "🏥")
+        e_tarde = find_emoji(guild, "tarde", "clock",  "reloj", "later",   "🕐")
+        e_duda  = find_emoji(guild, "duda",  "maybe",  "quiza", "hmm",     "😐")
+
+        hora = datos.get("hora", "??:??")
+        tema = datos.get("tema", "")
+
+        desc_txt = f"Rol a las **{hora}**"
+        if tema:
+            desc_txt += f"\n{tema}"
+
+        opciones = (
+            f"{e_si}  **Si entraré a rol.**\n"
+            f"{e_no}  **No entraré a rol.**\n"
+            f"{e_lspd}  **Entraré de LSPD.**\n"
+            f"{e_lsmd}  **Entraré de LSMD.**\n"
+            f"{e_tarde}  **Entraré más tarde.**"
+        )
+
+        embed = discord.Embed(
+            title="📊 | VOTACION ROL",
+            description=f"```\n{desc_txt}\n```",
+            color=0x2563EB,
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="\u200b", value=opciones, inline=False)
+        if guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
+        embed.set_footer(
+            text=f"Realizado por {autor.display_name}",
+            icon_url=autor.display_avatar.url
+        )
+
         msg = await canal.send(
             content="@everyone",
             embed=embed,
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
-        # Emojis HUD: tick verde (✅), escudo/policía (🚔), cruz roja (❌), reloj (😅)
-        # Si tienes emojis animados custom, sube los SVGs como emojis al servidor
-        # y usa -emoji-animado para registrarlos. El código usará los custom automáticamente.
-        tick_emoji = await get_animated_bot_emoji("tick", interaction.guild if hasattr(interaction, "guild") else None)
-        cross_emoji = await get_animated_bot_emoji("cross", msg.guild if hasattr(msg, "guild") else None)
-        for reaction_emoji in [tick_emoji, "🚔", cross_emoji, "😅"]:
+        for reaction_emoji in [e_si, e_no, e_lspd, e_lsmd, e_tarde, e_duda]:
             try:
                 await msg.add_reaction(reaction_emoji)
             except Exception:
-                pass  # Si el emoji custom no está disponible, lo ignora
-        await self.log("VOTACION", f"{autor.name} → {datos['hora']}")
+                pass
+        await self.log("VOTACION", f"{autor.name} → {hora}")
 
     @commands.command(name='cierre-rol')
     @tiene_rol_iniciador()
@@ -7901,8 +7938,20 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
     fecha = datetime.now().strftime("%d/%m/%Y")
     embed = discord.Embed(color=0x2B2D31, timestamp=datetime.now())
     embed.set_author(name="NOVA DEVELOPERS", icon_url=icon_url)
-    embed.add_field(name="📣 ANUNCIO ADMINISTRATIVO", value=f"\n***{mensaje}***\n", inline=False)
-    embed.add_field(name="\u200b", value="━━━━━━━━━━━━━━━━━━━━\n***📣 Sistema oficial de comunicaciones***\n***⚡ Mantente atento a próximas novedades***", inline=False)
+    embed.add_field(
+        name="📣 ANUNCIO ADMINISTRATIVO",
+        value=f"```\n{mensaje}\n```",
+        inline=False
+    )
+    embed.add_field(
+        name="\u200b",
+        value=(
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "`📣` **Sistema oficial de comunicaciones**\n"
+            "`⚡` **Mantente atento a próximas novedades**"
+        ),
+        inline=False
+    )
     embed.set_footer(text=f"Nova Agora RP • Administración Oficial • {fecha}", icon_url=icon_url)
     await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
