@@ -5857,6 +5857,201 @@ class Hosting(BaseCog):
             if expiry:
                 print(f"❌ Bot ha expirado - Última expiración fue: {expiry}")
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SISTEMA AVANZADO DE VOTACIONES Y ROL — NOVA AGORA V2
+# Persistent Views (timeout=None + custom_id) para que sobrevivan reinicios.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Cache en memoria de votaciones activas ──
+VOTACIONES_ACTIVAS: dict = {}
+# {msg_id (int): {canal_id, guild_id, autor_id, hora, tema, votos_si: set, votos_no: set, iniciado: bool}}
+
+def _vot_can_manage(interaction: discord.Interaction) -> bool:
+    """True si el usuario puede gestionar el rol (admin o roles de staff)."""
+    if interaction.user.guild_permissions.administrator:
+        return True
+    for rid in (ROL_INICIADOR_ID, ROL_EQUIPO_ESPECIAL_ID):
+        r = interaction.guild.get_role(rid)
+        if r and r in interaction.user.roles:
+            return True
+    return False
+
+# ────────────────────────────────────────────────────────────────
+# MODAL: Iniciar Rol
+# ────────────────────────────────────────────────────────────────
+class IniciarRolModal(discord.ui.Modal, title="🎮 Iniciar Sesión de Rol"):
+    iniciador  = discord.ui.TextInput(
+        label="👤 Iniciador IC", placeholder="ej: Pablo Gómez", min_length=1, max_length=30)
+    ciudadanos = discord.ui.TextInput(
+        label="👥 Ciudadanos conectados", placeholder="ej: 45", min_length=1, max_length=5)
+    policias   = discord.ui.TextInput(
+        label="🚔 Policías (LSPD)", placeholder="ej: 8", min_length=1, max_length=5)
+    ems        = discord.ui.TextInput(
+        label="🏥 Sanitarios (EMS/LSMD)", placeholder="ej: 3", required=False, max_length=5)
+    mecanicos  = discord.ui.TextInput(
+        label="🔧 Mecánicos", placeholder="ej: 2", required=False, max_length=5)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            ciu  = int(self.ciudadanos.value.strip() or 0)
+            pol  = int(self.policias.value.strip()   or 0)
+            e    = int(self.ems.value.strip()        or 0)
+            mec  = int(self.mecanicos.value.strip()  or 0)
+            ini  = self.iniciador.value.strip()
+            total = ciu + pol + e + mec
+        except ValueError:
+            return await interaction.response.send_message(
+                embed=embed_error("Los campos numéricos deben ser números."), ephemeral=True)
+
+        embed = discord.Embed(
+            title="🚨 ESTAMOS EN ROL 🚨",
+            description=f">>> Sesión iniciada a las {datetime.now().strftime('%H:%M')} 🇪🇸",
+            color=discord.Color.red(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="📌 Iniciador",      value=f"```{ini}```",   inline=False)
+        embed.add_field(name="👥 Ciudadanos",      value=f"```{ciu}```",   inline=True)
+        embed.add_field(name="🚔 LSPD",           value=f"```{pol}```",   inline=True)
+        embed.add_field(name="🏥 EMS",            value=f"```{e}```",     inline=True)
+        embed.add_field(name="🔧 Mecánicos",      value=f"```{mec}```",   inline=True)
+        embed.add_field(name="📊 Total Sesión",   value=f"```{total}```", inline=True)
+        if interaction.guild.icon:
+            embed.set_thumbnail(url=interaction.guild.icon.url)
+        embed.set_footer(
+            text=f"Publicado por {interaction.user.display_name} · NOVA AGORA",
+            icon_url=interaction.user.display_avatar.url
+        )
+        panel_view = PanelControlView()
+        await interaction.response.send_message(
+            content=f"<@&{ROL_USUARIO_ID}>",
+            embed=embed,
+            view=panel_view,
+            allowed_mentions=discord.AllowedMentions(roles=True)
+        )
+
+# ────────────────────────────────────────────────────────────────
+# VIEW: Botón "Iniciar Rol!" (se añade a la votación al llegar a 10 ✅)
+# ────────────────────────────────────────────────────────────────
+class IniciarRolView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="🟢 Iniciar Rol!", style=discord.ButtonStyle.success,
+        custom_id="nova_iniciar_rol_v2"
+    )
+    async def btn_iniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not _vot_can_manage(interaction):
+            return await interaction.response.send_message(
+                embed=embed_error("Solo el staff puede iniciar el rol."), ephemeral=True)
+        await interaction.response.send_modal(IniciarRolModal())
+
+# ────────────────────────────────────────────────────────────────
+# VIEW: Panel de Control (Reiniciar Rol / Cerrar Rol)
+# ────────────────────────────────────────────────────────────────
+class PanelControlView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="♻️ Reiniciar Rol", style=discord.ButtonStyle.primary,
+        custom_id="nova_panel_reiniciar_v2"
+    )
+    async def btn_reiniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not _vot_can_manage(interaction):
+            return await interaction.response.send_message(
+                embed=embed_error("Solo el staff puede reiniciar el rol."), ephemeral=True)
+        await interaction.response.send_modal(IniciarRolModal())
+
+    @discord.ui.button(
+        label="🔴 Cerrar Rol", style=discord.ButtonStyle.danger,
+        custom_id="nova_panel_cerrar_v2"
+    )
+    async def btn_cerrar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not _vot_can_manage(interaction):
+            return await interaction.response.send_message(
+                embed=embed_error("Solo el staff puede cerrar el rol."), ephemeral=True)
+        # Editar el panel actual → indicar rol cerrado
+        embed_cerrado = discord.Embed(
+            title="⛔ ROL CERRADO",
+            description=f">>> El rol ha finalizado. ¡Hasta mañana!\n\n🇪🇸 Próxima apertura: **16:00** (hora española)",
+            color=discord.Color.dark_gray(),
+            timestamp=datetime.now()
+        )
+        embed_cerrado.set_footer(
+            text=f"Cerrado por {interaction.user.display_name} · NOVA AGORA",
+            icon_url=interaction.user.display_avatar.url
+        )
+        if interaction.guild.icon:
+            embed_cerrado.set_thumbnail(url=interaction.guild.icon.url)
+        # Deshabilitar botones del panel
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(embed=embed_cerrado, view=self)
+        # Enviar botón de nueva votación
+        nueva_view = NuevaVotacionView()
+        nueva_embed = discord.Embed(
+            title="📊 ¿Habrá rol mañana?",
+            description=(
+                ">>> Pulsa el botón para crear la votación del próximo rol.\n"
+                "¡Cuantos más votos, más actividad!"
+            ),
+            color=0x2563EB
+        )
+        if interaction.guild.icon:
+            nueva_embed.set_thumbnail(url=interaction.guild.icon.url)
+        await interaction.followup.send(embed=nueva_embed, view=nueva_view)
+
+# ────────────────────────────────────────────────────────────────
+# MODAL: Nueva Votación (para el día siguiente)
+# ────────────────────────────────────────────────────────────────
+class NuevaVotacionModal(discord.ui.Modal, title="📊 Nueva Votación de Rol"):
+    tema = discord.ui.TextInput(
+        label="Tema / Título",
+        default="Votación de rol para mañana",
+        max_length=100
+    )
+    hora = discord.ui.TextInput(
+        label="Hora del rol 🇪🇸",
+        placeholder="ej: 16:00",
+        min_length=4, max_length=10
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        hora_txt = self.hora.value.strip()
+        # Añadir bandera de España a la hora
+        if "🇪🇸" not in hora_txt:
+            hora_txt = f"{hora_txt} 🇪🇸"
+        datos = {"hora": hora_txt, "tema": self.tema.value.strip()}
+        await interaction.response.defer()
+        # Publicar votación en el canal actual
+        cog_soporte = interaction.client.cogs.get("Soporte")
+        if cog_soporte:
+            await cog_soporte._publicar_votacion(interaction.channel, interaction.user, datos)
+        else:
+            await interaction.followup.send(embed=embed_error("Error interno: cog Soporte no encontrado."), ephemeral=True)
+
+# ────────────────────────────────────────────────────────────────
+# VIEW: Botón "Votación de rol" (se muestra tras cierre)
+# ────────────────────────────────────────────────────────────────
+class NuevaVotacionView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="📊 Crear Votación de Rol", style=discord.ButtonStyle.primary,
+        custom_id="nova_nueva_votacion_v2"
+    )
+    async def btn_nueva_votacion(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not _vot_can_manage(interaction):
+            return await interaction.response.send_message(
+                embed=embed_error("Solo el staff puede crear la votación."), ephemeral=True)
+        await interaction.response.send_modal(NuevaVotacionModal())
+
+# ── Lista global de persistent views para registrar al inicio ──
+PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView]
+
 # ==================== COG: Soporte ====================
 class Soporte(BaseCog):
     @commands.command(name='status')
@@ -5880,8 +6075,14 @@ class Soporte(BaseCog):
             await ctx.message.delete()
         except:
             pass
-        msg_status = await ctx.send(content=f"<@&{ROL_USUARIO_ID}>", embed=embed)
-        # Reacciones HUD para que la comunidad interactúe
+        # ── Mismo mensaje de siempre + botones PanelControl adjuntos ──
+        panel_view = PanelControlView()
+        msg_status = await ctx.send(
+            content=f"<@&{ROL_USUARIO_ID}>",
+            embed=embed,
+            view=panel_view,
+            allowed_mentions=discord.AllowedMentions(roles=True)
+        )
         tick_emoji = await get_animated_bot_emoji("tick", ctx.guild)
         cross_emoji = await get_animated_bot_emoji("cross", ctx.guild)
         for r in [tick_emoji, "🚔", cross_emoji, "😅"]:
@@ -5895,17 +6096,39 @@ class Soporte(BaseCog):
     @tiene_rol_iniciador()
     async def votacion(self, ctx, hora: str = None, *, tema: str = None):
         if not hora:
-            embed = embed_help("votacion", "Crea una votación de rol en el canal actual con reacciones.", "-votacion <hora> [tema]", "-votacion 20:00", "Iniciador de rol")
+            embed = embed_help("votacion", "Crea una votación de rol.", "-votacion <hora> [tema]", "-votacion 20:00 Viernes 🇪🇸", "Iniciador de rol")
             return await ctx.send(embed=embed)
+        hora_txt = hora.strip()
         try:
-            datetime.strptime(hora, "%H:%M")
+            datetime.strptime(hora_txt.replace(" 🇪🇸","").strip(), "%H:%M")
         except (ValueError, TypeError):
             return await ctx.send(embed=embed_error("Hora inválida. Formato: HH:MM"))
+        if "🇪🇸" not in hora_txt:
+            hora_txt = f"{hora_txt} 🇪🇸"
         try:
             await ctx.message.delete()
-        except:
+        except Exception:
             pass
-        await self._publicar_votacion(ctx.channel, ctx.author, {"hora": hora, "tema": tema})
+        await self._publicar_votacion(ctx.channel, ctx.author, {"hora": hora_txt, "tema": tema})
+
+    @commands.command(name='forzar-inicio')
+    @tiene_rol_equipo_especial()
+    async def forzar_inicio(self, ctx, msg_id: int = None):
+        """Inyecta manualmente el botón 'Iniciar Rol!' en cualquier mensaje de votación."""
+        if not msg_id:
+            return await ctx.send(embed=embed_error("Uso: `-forzar-inicio <ID_del_mensaje>`"), delete_after=5)
+        try:
+            msg = await ctx.channel.fetch_message(msg_id)
+        except discord.NotFound:
+            return await ctx.send(embed=embed_error(f"Mensaje `{msg_id}` no encontrado en este canal."), delete_after=5)
+        view = IniciarRolView()
+        await msg.edit(view=view)
+        await ctx.send(embed=embed_success("✅ Botón inyectado", f"Se añadió el botón **Iniciar Rol!** al mensaje `{msg_id}`."), delete_after=8)
+        await self.log("FORZAR_INICIO", f"{ctx.author.name} inyectó botón en msg {msg_id}")
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
 
     async def _publicar_votacion(self, canal, autor, datos):
         """Publica la votación con diseño estilo imagen de referencia + 6 reacciones."""
@@ -5960,6 +6183,19 @@ class Soporte(BaseCog):
             embed=embed,
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
+        # Registrar votación en cache global para tracking de votos
+        VOTACIONES_ACTIVAS[msg.id] = {
+            "canal_id":  canal.id,
+            "guild_id":  guild.id,
+            "autor_id":  autor.id,
+            "hora":      hora,
+            "tema":      tema,
+            "votos_si":  set(),
+            "votos_no":  set(),
+            "iniciado":  False,
+            "embed_ref": embed,
+            "e_si":      e_si,
+        }
         for reaction_emoji in [e_si, e_no, e_lspd, e_lsmd, e_tarde, e_duda]:
             try:
                 await msg.add_reaction(reaction_emoji)
@@ -5967,11 +6203,71 @@ class Soporte(BaseCog):
                 pass
         await self.log("VOTACION", f"{autor.name} → {hora}")
 
+    # ── Listener: tracking de reacciones para votaciones (old + new format) ──
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """Detecta reacciones ✅/☑️ en votaciones activas e inyecta el botón al llegar a 10."""
+        if payload.user_id == self.bot.user.id:
+            return
+        msg_id = payload.message_id
+        emoji  = str(payload.emoji)
+        # Emojis positivos reconocidos (✅ antiguo + ☑️ nuevo + emoji custom)
+        EMOJIS_SI = {"✅", "☑️", "☑"}
+        if msg_id not in VOTACIONES_ACTIVAS:
+            # Intentar cargar el mensaje si existe en el canal activo (compatibilidad antigua)
+            return
+        vot = VOTACIONES_ACTIVAS[msg_id]
+        e_si = vot.get("e_si", "☑️")
+        if emoji in EMOJIS_SI or emoji == e_si:
+            vot["votos_si"].add(payload.user_id)
+        elif emoji in {"❌", "🟥", "✗"}:
+            vot["votos_no"].add(payload.user_id)
+        else:
+            return
+        # Verificar umbral de 10 votos positivos
+        if len(vot["votos_si"]) >= 10 and not vot.get("iniciado"):
+            vot["iniciado"] = True
+            try:
+                guild   = self.bot.get_guild(payload.guild_id)
+                canal   = guild.get_channel(payload.channel_id)
+                msg     = await canal.fetch_message(msg_id)
+                view    = IniciarRolView()
+                await msg.edit(view=view)
+                await canal.send(
+                    embed=discord.Embed(
+                        title="🟢 ¡10 votos alcanzados!",
+                        description=f">>> La votación ha alcanzado **{len(vot['votos_si'])} votos** positivos.\nEl staff puede pulsar **'Iniciar Rol!'** cuando esté listo.",
+                        color=0x00FF00,
+                        timestamp=datetime.now()
+                    ),
+                    delete_after=30
+                )
+                await self.log("AUTO_INICIO", f"10 votos alcanzados en msg {msg_id}")
+            except Exception as e:
+                print(f"[VOTACION] Error auto-botón: {e}")
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        """Retira el voto cuando el usuario quita su reacción."""
+        if payload.user_id == self.bot.user.id:
+            return
+        msg_id = payload.message_id
+        emoji  = str(payload.emoji)
+        if msg_id not in VOTACIONES_ACTIVAS:
+            return
+        vot = VOTACIONES_ACTIVAS[msg_id]
+        e_si = vot.get("e_si", "☑️")
+        if emoji in {"✅", "☑️", "☑"} or emoji == e_si:
+            vot["votos_si"].discard(payload.user_id)
+        elif emoji in {"❌", "🟥", "✗"}:
+            vot["votos_no"].discard(payload.user_id)
+
     @commands.command(name='cierre-rol')
     @tiene_rol_iniciador()
     async def cierre_rol(self, ctx):
+        # ── Mensaje original EXACTO ──
         canal_votacion = ctx.guild.get_channel(1450592843751100622)
-        rol_usuario = ctx.guild.get_role(ROL_USUARIO_ID)
+        rol_usuario    = ctx.guild.get_role(ROL_USUARIO_ID)
         mensaje = (
             "@everyone\n\n"
             "# 📢 CIERRE DE ROL\n\n"
@@ -5984,9 +6280,21 @@ class Soporte(BaseCog):
             f"{rol_usuario.mention if rol_usuario else '<@&1450592204849418294>'}"
         )
         await ctx.send(mensaje)
+
+        # ── NUEVO: botón para lanzar la votación del día siguiente ──
+        nueva_view  = NuevaVotacionView()
+        nueva_embed = discord.Embed(
+            title="📊 ¿Habrá rol mañana?",
+            description=">>> Pulsa el botón para crear la votación del próximo rol.\n¡Cuantos más votos, más actividad!",
+            color=0x2563EB
+        )
+        if ctx.guild.icon:
+            nueva_embed.set_thumbnail(url=ctx.guild.icon.url)
+        await ctx.send(embed=nueva_embed, view=nueva_view)
+
         try:
             await ctx.message.delete()
-        except:
+        except Exception:
             pass
         await self.log("CIERRE_ROL", f"{ctx.author.display_name if ctx.author else 'Desconocido'} cerró el rol")
 
@@ -7920,7 +8228,9 @@ def get_pre(bot, msg):
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
+intents.members          = True
+intents.reactions        = True   # Para tracking de reacciones en votaciones (incluidas antiguas)
+intents.guilds           = True
 intents.voice_states = True
 intents.guilds = True
 intents.guild_messages = True
@@ -7957,6 +8267,11 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
 
 @bot.event
 async def on_ready():
+    # Registrar persistent views para que los botones sobrevivan reinicios
+    for view_cls in PERSISTENT_VIEWS:
+        bot.add_view(view_cls())
+    print(f"[VIEWS] {len(PERSISTENT_VIEWS)} persistent views registradas.")
+
     print(f"✅ Bot conectado como {bot.user}")
     if bot.guilds:
         guild = bot.guilds[0]
