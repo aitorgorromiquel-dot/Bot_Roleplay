@@ -5955,13 +5955,13 @@ class PanelControlView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="♻️ Reiniciar Rol", style=discord.ButtonStyle.primary,
+        label="🔄 Actualizar", style=discord.ButtonStyle.primary,
         custom_id="nova_panel_reiniciar_v2"
     )
     async def btn_reiniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not _vot_can_manage(interaction):
             return await interaction.response.send_message(
-                embed=embed_error("Solo el staff puede reiniciar el rol."), ephemeral=True)
+                embed=embed_error("Solo el staff puede actualizar el rol."), ephemeral=True)
         await interaction.response.send_modal(IniciarRolModal())
 
     @discord.ui.button(
@@ -6095,14 +6095,25 @@ class Soporte(BaseCog):
     @commands.command(name='votacion')
     @tiene_rol_iniciador()
     async def votacion(self, ctx, hora: str = None, *, tema: str = None):
+        """
+        Publica votación de rol. Al llegar a 10 votos positivos (☑️/✅)
+        el bot añade automáticamente el botón 'Iniciar Rol!'.
+        Uso: -votacion <HH:MM> [tema]
+        """
         if not hora:
-            embed = embed_help("votacion", "Crea una votación de rol.", "-votacion <hora> [tema]", "-votacion 20:00 Viernes 🇪🇸", "Iniciador de rol")
+            embed = embed_help(
+                "votacion",
+                "Crea una votación de rol.\nAl llegar a **10 votos positivos** aparece el botón Iniciar Rol! automáticamente.",
+                "-votacion <hora> [tema]",
+                "-votacion 16:00 Viernes 🇪🇸",
+                "Iniciador de rol"
+            )
             return await ctx.send(embed=embed)
         hora_txt = hora.strip()
         try:
             datetime.strptime(hora_txt.replace(" 🇪🇸","").strip(), "%H:%M")
         except (ValueError, TypeError):
-            return await ctx.send(embed=embed_error("Hora inválida. Formato: HH:MM"))
+            return await ctx.send(embed=embed_error("Hora inválida. Formato: HH:MM (ej: 16:00)"))
         if "🇪🇸" not in hora_txt:
             hora_txt = f"{hora_txt} 🇪🇸"
         try:
@@ -6114,17 +6125,91 @@ class Soporte(BaseCog):
     @commands.command(name='forzar-inicio')
     @tiene_rol_equipo_especial()
     async def forzar_inicio(self, ctx, msg_id: int = None):
-        """Inyecta manualmente el botón 'Iniciar Rol!' en cualquier mensaje de votación."""
+        """
+        [Staff] Inyecta el botón 'Iniciar Rol!' en cualquier mensaje de votación.
+        Útil cuando la detección automática falla (bot reiniciado, mensaje antiguo).
+        Uso: -forzar-inicio <ID_del_mensaje>
+        El mensaje puede estar en CUALQUIER canal del servidor.
+        """
         if not msg_id:
-            return await ctx.send(embed=embed_error("Uso: `-forzar-inicio <ID_del_mensaje>`"), delete_after=5)
+            embed = embed_help(
+                "forzar-inicio",
+                "Inyecta el botón **Iniciar Rol!** en un mensaje de votación existente.\n"
+                "Úsalo cuando el bot se haya reiniciado y no detecte los 10 votos automáticamente.",
+                "-forzar-inicio <ID_del_mensaje>",
+                "-forzar-inicio 1234567890123456789",
+                "Equipo Especial"
+            )
+            return await ctx.send(embed=embed, delete_after=15)
+
+        # Buscar el mensaje en todos los canales de texto del servidor
+        msg = None
+        canal_encontrado = None
+        # 1. Intentar en el canal actual primero (más rápido)
         try:
             msg = await ctx.channel.fetch_message(msg_id)
+            canal_encontrado = ctx.channel
         except discord.NotFound:
-            return await ctx.send(embed=embed_error(f"Mensaje `{msg_id}` no encontrado en este canal."), delete_after=5)
+            pass
+        except discord.HTTPException:
+            pass
+
+        # 2. Si no está en el canal actual, buscar en todos los canales
+        if not msg:
+            for canal in ctx.guild.text_channels:
+                if canal.id == ctx.channel.id:
+                    continue
+                try:
+                    msg = await canal.fetch_message(msg_id)
+                    canal_encontrado = canal
+                    break
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    continue
+
+        if not msg:
+            return await ctx.send(
+                embed=embed_error(
+                    f"No se encontró el mensaje con ID `{msg_id}` en ningún canal del servidor.\n"
+                    "Verifica que el ID sea correcto (activa Modo Desarrollador → clic derecho → Copiar ID)."
+                ),
+                delete_after=10
+            )
+
+        # Registrar en VOTACIONES_ACTIVAS para que el tracking funcione
+        if msg_id not in VOTACIONES_ACTIVAS:
+            VOTACIONES_ACTIVAS[msg_id] = {
+                "canal_id":  canal_encontrado.id,
+                "guild_id":  ctx.guild.id,
+                "autor_id":  ctx.author.id,
+                "hora":      "??:??",
+                "tema":      "",
+                "votos_si":  set(),
+                "votos_no":  set(),
+                "iniciado":  False,
+                "e_si":      "☑️",
+            }
+
+        # Inyectar el botón
         view = IniciarRolView()
-        await msg.edit(view=view)
-        await ctx.send(embed=embed_success("✅ Botón inyectado", f"Se añadió el botón **Iniciar Rol!** al mensaje `{msg_id}`."), delete_after=8)
-        await self.log("FORZAR_INICIO", f"{ctx.author.name} inyectó botón en msg {msg_id}")
+        try:
+            await msg.edit(view=view)
+        except discord.Forbidden:
+            return await ctx.send(
+                embed=embed_error("Sin permiso para editar ese mensaje."),
+                delete_after=8
+            )
+
+        embed_ok = discord.Embed(
+            title="✅ Botón inyectado",
+            description=(
+                f"El botón **🟢 Iniciar Rol!** se ha añadido al mensaje `{msg_id}`\n"
+                f"📍 Canal: {canal_encontrado.mention}\n\n"
+                "El staff puede pulsarlo cuando esté listo para iniciar el rol."
+            ),
+            color=0x00FF00
+        )
+        await ctx.send(embed=embed_ok, delete_after=15)
+        await self.log("FORZAR_INICIO", f"{ctx.author.name} inyectó botón en msg {msg_id} (canal: {canal_encontrado.name})")
         try:
             await ctx.message.delete()
         except Exception:
