@@ -7954,15 +7954,15 @@ class EncuestasSorteosMafia(BaseCog):
     # ──────────────────────────────────────────────
     # DROPS ILEGALES
     # ──────────────────────────────────────────────
-    @commands.command(name="comprar")
+    @commands.command(name="drop", aliases=["comprar-drop", "cargamento"])
     @check_ban()
     @tiene_rol_usuario()
     async def comprar(self, ctx, subcomando: str = None):
-        """Subcomando: drop — Compra un cargamento ilegal."""
-        if subcomando is None or subcomando.lower() != "drop":
+        """Compra un cargamento ilegal del menú desplegable. Uso: -drop"""
+        if subcomando is not None and subcomando.lower() not in ("drop","comprar","kit"):
             return await ctx.send(embed=embed_help(
-                "comprar drop", "Compra un cargamento ilegal del menú.",
-                "-comprar drop", "-comprar drop", "Ciudadano"
+                "drop", "Compra un cargamento ilegal del menú.",
+                "-drop", "-drop", "Ciudadano"
             ))
         kits_txt = "\n".join(
             f"{v['label']} — **${v['precio']:,}**" for v in KITS_DROP.values()
