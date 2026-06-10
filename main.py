@@ -726,6 +726,50 @@ class Database:
                     PRIMARY KEY (name, emoji_id)
                 )
             """)
+            # ── Sorteos ──
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS sorteos (
+                    msg_id     INTEGER PRIMARY KEY,
+                    canal_id   INTEGER,
+                    guild_id   INTEGER,
+                    premio     TEXT,
+                    ends_at    INTEGER,
+                    ganadores  INTEGER DEFAULT 1,
+                    participantes TEXT DEFAULT '[]',
+                    creador_id INTEGER,
+                    activo     INTEGER DEFAULT 1
+                )
+            """)
+            # ── Encuestas ──
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS encuestas (
+                    msg_id   INTEGER PRIMARY KEY,
+                    titulo   TEXT,
+                    opcion_a TEXT,
+                    opcion_b TEXT,
+                    votos_a  TEXT DEFAULT '[]',
+                    votos_b  TEXT DEFAULT '[]'
+                )
+            """)
+            # ── Banco Mafia ──
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS mafia_bank (
+                    id     INTEGER PRIMARY KEY DEFAULT 1,
+                    saldo  REAL DEFAULT 0
+                )
+            """)
+            await db.execute("INSERT OR IGNORE INTO mafia_bank (id, saldo) VALUES (1, 0)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS mafia_transacciones (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fecha        TEXT,
+                    banda_id     INTEGER,
+                    banda_nombre TEXT,
+                    kit          TEXT,
+                    monto        REAL,
+                    tipo         TEXT DEFAULT 'compra'
+                )
+            """)
             # Índices
             await db.execute("CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_warnings_user ON warnings(user_id)")
@@ -1398,6 +1442,93 @@ class Database:
     async def get_all_animated_emojis(self):
         rows = await self.fetchall("SELECT name, emoji_id, added_by, added_at FROM animated_emojis")
         return [{"name": r[0], "emoji_id": r[1], "added_by": r[2], "added_at": r[3]} for r in rows]
+
+    # ── Sorteos ──
+    async def create_sorteo(self, msg_id, canal_id, guild_id, premio, ends_at, ganadores, creador_id):
+        await self.execute(
+            "INSERT INTO sorteos (msg_id,canal_id,guild_id,premio,ends_at,ganadores,creador_id) VALUES (?,?,?,?,?,?,?)",
+            (msg_id, canal_id, guild_id, premio, ends_at, ganadores, creador_id)
+        )
+    async def get_sorteo(self, msg_id):
+        row = await self.fetchone("SELECT * FROM sorteos WHERE msg_id=?", (msg_id,))
+        if not row: return None
+        keys = ["msg_id","canal_id","guild_id","premio","ends_at","ganadores","participantes","creador_id","activo"]
+        d = dict(zip(keys, row))
+        d["participantes"] = json.loads(d["participantes"] or "[]")
+        return d
+    async def sorteo_join(self, msg_id, user_id):
+        row = await self.fetchone("SELECT participantes FROM sorteos WHERE msg_id=?", (msg_id,))
+        if not row: return False, 0
+        p = json.loads(row[0] or "[]")
+        joined = user_id in p
+        if not joined:
+            p.append(user_id)
+            await self.execute("UPDATE sorteos SET participantes=? WHERE msg_id=?", (json.dumps(p), msg_id))
+        return joined, len(p)
+    async def sorteo_leave(self, msg_id, user_id):
+        row = await self.fetchone("SELECT participantes FROM sorteos WHERE msg_id=?", (msg_id,))
+        if not row: return len([])
+        p = json.loads(row[0] or "[]")
+        if user_id in p:
+            p.remove(user_id)
+            await self.execute("UPDATE sorteos SET participantes=? WHERE msg_id=?", (json.dumps(p), msg_id))
+        return len(p)
+    async def get_active_sorteos(self):
+        rows = await self.fetchall("SELECT msg_id,canal_id,guild_id,premio,ends_at,ganadores,participantes,creador_id FROM sorteos WHERE activo=1")
+        result = []
+        for r in rows:
+            d = {"msg_id":r[0],"canal_id":r[1],"guild_id":r[2],"premio":r[3],"ends_at":r[4],"ganadores":r[5],"participantes":json.loads(r[6] or "[]"),"creador_id":r[7]}
+            result.append(d)
+        return result
+    async def close_sorteo(self, msg_id):
+        await self.execute("UPDATE sorteos SET activo=0 WHERE msg_id=?", (msg_id,))
+
+    # ── Encuestas ──
+    async def create_encuesta(self, msg_id, titulo, opcion_a, opcion_b):
+        await self.execute(
+            "INSERT INTO encuestas (msg_id,titulo,opcion_a,opcion_b) VALUES (?,?,?,?)",
+            (msg_id, titulo, opcion_a, opcion_b)
+        )
+    async def vote_encuesta(self, msg_id, user_id, opcion):
+        """opcion = 'a' o 'b'. Retorna (votos_a, votos_b, ya_votaba)"""
+        row = await self.fetchone("SELECT votos_a,votos_b FROM encuestas WHERE msg_id=?", (msg_id,))
+        if not row: return 0, 0, False
+        va, vb = json.loads(row[0] or "[]"), json.loads(row[1] or "[]")
+        ya_tenia = user_id in va or user_id in vb
+        # Quitar voto previo
+        if user_id in va: va.remove(user_id)
+        if user_id in vb: vb.remove(user_id)
+        # Añadir nuevo voto
+        if opcion == "a": va.append(user_id)
+        else:             vb.append(user_id)
+        await self.execute("UPDATE encuestas SET votos_a=?,votos_b=? WHERE msg_id=?",
+                           (json.dumps(va), json.dumps(vb), msg_id))
+        return len(va), len(vb), ya_tenia
+    async def get_encuesta(self, msg_id):
+        row = await self.fetchone("SELECT titulo,opcion_a,opcion_b,votos_a,votos_b FROM encuestas WHERE msg_id=?", (msg_id,))
+        if not row: return None
+        return {"titulo":row[0],"opcion_a":row[1],"opcion_b":row[2],
+                "votos_a":json.loads(row[3] or "[]"),"votos_b":json.loads(row[4] or "[]")}
+
+    # ── Mafia Bank ──
+    async def mafia_get_saldo(self):
+        row = await self.fetchone("SELECT saldo FROM mafia_bank WHERE id=1")
+        return row[0] if row else 0
+    async def mafia_add(self, monto):
+        await self.execute("UPDATE mafia_bank SET saldo=saldo+? WHERE id=1", (monto,))
+    async def mafia_subtract(self, monto):
+        row = await self.fetchone("SELECT saldo FROM mafia_bank WHERE id=1")
+        if not row or row[0] < monto: return False
+        await self.execute("UPDATE mafia_bank SET saldo=saldo-? WHERE id=1", (monto,))
+        return True
+    async def mafia_add_tx(self, banda_id, banda_nombre, kit, monto, tipo="compra"):
+        await self.execute(
+            "INSERT INTO mafia_transacciones (fecha,banda_id,banda_nombre,kit,monto,tipo) VALUES (?,?,?,?,?,?)",
+            (datetime.now().strftime("%d/%m/%Y %H:%M"), banda_id, banda_nombre, kit, monto, tipo)
+        )
+    async def mafia_get_txs(self, limit=10):
+        rows = await self.fetchall("SELECT fecha,banda_nombre,kit,monto,tipo FROM mafia_transacciones ORDER BY id DESC LIMIT ?", (limit,))
+        return rows
 
     # Expiración (hosting)
     async def get_expiry(self):
@@ -6050,7 +6181,7 @@ class NuevaVotacionView(discord.ui.View):
         await interaction.response.send_modal(NuevaVotacionModal())
 
 # ── Lista global de persistent views para registrar al inicio ──
-PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView]
+PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView, EncuestaView, SorteoView]
 
 # ==================== COG: Soporte ====================
 class Soporte(BaseCog):
@@ -7377,6 +7508,538 @@ async def generar_imagen_dni(data: dict, avatar_url: str = None) -> io.BytesIO:
     buf.seek(0)
     return buf
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SISTEMA ENCUESTAS + SORTEOS + DROPS + MAFIA — NOVA AGORA V2
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Helper: parsear duración ──
+def _parse_duracion(txt: str) -> int:
+    """Convierte '1d', '2h', '30m', '45s' → segundos. Devuelve -1 si falla."""
+    txt = txt.strip().lower()
+    import re
+    m = re.fullmatch(r"(\d+)(d|h|m|s)", txt)
+    if not m: return -1
+    n, u = int(m.group(1)), m.group(2)
+    return n * {"d": 86400, "h": 3600, "m": 60, "s": 1}[u]
+
+# ── Zonas drop ilegales ──
+DROP_ZONAS = [
+    "📍 Cualquier parte de la ciudad (Aleatorio)", "🎰 Zona del Casino",
+    "🍦 Zona del Vanilla Unicorn", "🏭 Zona Burro Heights",
+    "⛳ Zona del Club de Golf", "🏜️ Sandy Shores — Lugar 1",
+    "🏜️ Sandy Shores — Lugar 2", "🏜️ Sandy Shores — Lugar 3 (cerca de Paleto Bay)",
+    "🌊 Paleto Cove — Lugar 1", "🌊 Paleto Cove — Lugar 2",
+    "🏟️ Zona Arena War", "🚤 Zona Mar (Lanchas / Embarcadero)",
+    "🌿 Paleto Bay Ríos — Lugar 1", "🌿 Paleto Bay Ríos — Lugar 2",
+    "🌿 Paleto Bay Ríos — Lugar 3",
+]
+
+KITS_DROP = {
+    "marihuana":     {"label": "🌿 Kit Marihuana",                  "precio": 300,   "desc": "Hierba de calidad para distribución rápida."},
+    "armas_blancas": {"label": "🔪 Kit Armas Blancas",              "precio": 600,   "desc": "Navajas, machetes y herramientas 'especiales'."},
+    "cortas":        {"label": "🔫 Kit Armas de Fuego Cortas",      "precio": 1500,  "desc": "Pistolas y revólveres compactos."},
+    "medianas":      {"label": "⚙️ Kit Armas de Fuego Medianas",    "precio": 3500,  "desc": "SMGs y rifles ligeros de gama media."},
+    "largas":        {"label": "🪖 Kit Armas de Fuego Largas",      "precio": 8000,  "desc": "Carabina o AK49. Solo para los más serios."},
+}
+
+# ═══════════════════════════
+# VIEWS Y MODALES
+# ═══════════════════════════
+
+# ── Encuesta: Modal ──
+class EncuestaModal(discord.ui.Modal, title="📊 Crear Encuesta"):
+    titulo   = discord.ui.TextInput(
+        label="¿Qué título le pones?", placeholder="Ej: ¿Cómo va tu roleplay esta semana?",
+        min_length=3, max_length=80
+    )
+    opcion_a = discord.ui.TextInput(
+        label="¿Qué mensaje 1 le pones? (Opción A)", placeholder="Describe la Opción A...",
+        style=discord.TextStyle.long, min_length=1, max_length=300
+    )
+    opcion_b = discord.ui.TextInput(
+        label="¿Qué mensaje 2 le pones? (Opción B)", placeholder="Describe la Opción B...",
+        style=discord.TextStyle.long, min_length=1, max_length=300
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        embed = discord.Embed(
+            title=f"📊  {self.titulo.value}",
+            color=0x00B4FF,
+            timestamp=datetime.now()
+        )
+        embed.add_field(
+            name="🅰️  Opción A",
+            value=f">>> {self.opcion_a.value}",
+            inline=False
+        )
+        embed.add_field(
+            name="🅱️  Opción B",
+            value=f">>> {self.opcion_b.value}",
+            inline=False
+        )
+        embed.add_field(
+            name="\u200b",
+            value=(
+                "`📈` Vota pulsando el botón correspondiente.\n"
+                "`🔄` Puedes cambiar tu voto en cualquier momento."
+            ),
+            inline=False
+        )
+        embed.set_footer(
+            text="Nova Agora RP · Feedback para ayudarte a progresar en el rol",
+            icon_url=interaction.guild.icon.url if interaction.guild.icon else None
+        )
+        view = EncuestaView()
+        msg  = await interaction.followup.send(embed=embed, view=view)
+        await db.create_encuesta(msg.id, self.titulo.value, self.opcion_a.value, self.opcion_b.value)
+
+class EncuestaView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🅰️  Votar A", style=discord.ButtonStyle.primary, custom_id="encuesta_voto_a_v2")
+    async def vote_a(self, interaction: discord.Interaction, button: discord.ui.Button):
+        va, vb, _ = await db.vote_encuesta(interaction.message.id, interaction.user.id, "a")
+        total = va + vb
+        pct_a = round((va / total) * 100) if total else 0
+        pct_b = 100 - pct_a if total else 0
+        bar_a = "█" * (pct_a // 10) + "░" * (10 - pct_a // 10)
+        bar_b = "█" * (pct_b // 10) + "░" * (10 - pct_b // 10)
+        enc = await db.get_encuesta(interaction.message.id)
+        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
+        embed.set_field_at(0, name="🅰️  Opción A", value=f">>> {enc['opcion_a']}\n`{bar_a}` **{pct_a}%** ({va} votos)", inline=False)
+        embed.set_field_at(1, name="🅱️  Opción B", value=f">>> {enc['opcion_b']}\n`{bar_b}` **{pct_b}%** ({vb} votos)", inline=False)
+        await interaction.response.edit_message(embed=embed)
+
+    @discord.ui.button(label="🅱️  Votar B", style=discord.ButtonStyle.secondary, custom_id="encuesta_voto_b_v2")
+    async def vote_b(self, interaction: discord.Interaction, button: discord.ui.Button):
+        va, vb, _ = await db.vote_encuesta(interaction.message.id, interaction.user.id, "b")
+        total = va + vb
+        pct_a = round((va / total) * 100) if total else 0
+        pct_b = 100 - pct_a if total else 0
+        bar_a = "█" * (pct_a // 10) + "░" * (10 - pct_a // 10)
+        bar_b = "█" * (pct_b // 10) + "░" * (10 - pct_b // 10)
+        enc = await db.get_encuesta(interaction.message.id)
+        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
+        embed.set_field_at(0, name="🅰️  Opción A", value=f">>> {enc['opcion_a']}\n`{bar_a}` **{pct_a}%** ({va} votos)", inline=False)
+        embed.set_field_at(1, name="🅱️  Opción B", value=f">>> {enc['opcion_b']}\n`{bar_b}` **{pct_b}%** ({vb} votos)", inline=False)
+        await interaction.response.edit_message(embed=embed)
+
+# ── Sorteo: Join/Leave View ──
+class SorteoView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🎉  ¡Participar!", style=discord.ButtonStyle.success, custom_id="sorteo_join_v2")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        msg_id  = interaction.message.id
+        joined, total = await db.sorteo_join(msg_id, interaction.user.id)
+        if joined:
+            # Ya estaba → salir
+            total = await db.sorteo_leave(msg_id, interaction.user.id)
+            # Actualizar embed
+            embed = interaction.message.embeds[0]
+            for i, f in enumerate(embed.fields):
+                if "Entries" in f.name:
+                    embed.set_field_at(i, name=f.name, value=f"`{total}`", inline=f.inline)
+            await interaction.response.edit_message(embed=embed)
+            await interaction.followup.send("❌ Has salido del sorteo.", ephemeral=True)
+        else:
+            # Entró
+            embed = interaction.message.embeds[0]
+            for i, f in enumerate(embed.fields):
+                if "Entries" in f.name:
+                    embed.set_field_at(i, name=f.name, value=f"`{total}`", inline=f.inline)
+            await interaction.response.edit_message(embed=embed)
+            await interaction.followup.send("🎉 ¡Estás participando en el sorteo! Suerte 🤞", ephemeral=True)
+
+# ── Drops: Select Menu ──
+class DropSelectView(discord.ui.View):
+    def __init__(self, autor_id: int):
+        super().__init__(timeout=120)
+        self.autor_id = autor_id
+        options = [
+            discord.SelectOption(
+                label=v["label"],
+                value=k,
+                description=f"{v['desc']} — ${v['precio']:,}",
+                emoji=v["label"].split()[0]
+            )
+            for k, v in KITS_DROP.items()
+        ]
+        select = discord.ui.Select(
+            placeholder="🎒 Elige tu cargamento...",
+            options=options,
+            custom_id="drop_select_kit"
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        if interaction.user.id != self.autor_id:
+            return await interaction.response.send_message(
+                embed=embed_error("Solo quien ejecutó el comando puede elegir el kit."), ephemeral=True)
+        kit_key  = interaction.data["values"][0]
+        kit      = KITS_DROP[kit_key]
+        precio   = kit["precio"]
+        # Verificar saldo
+        saldo = await db.get_balance(interaction.user.id)
+        if saldo < precio:
+            return await interaction.response.send_message(
+                embed=embed_error(f"No tienes suficiente dinero.\n💰 Tienes: `${saldo:,}` | Necesitas: `${precio:,}`"),
+                ephemeral=True
+            )
+        # Descontar dinero + ingresar al banco mafia
+        await db.update_balance(interaction.user.id, -precio)
+        await db.mafia_add(precio)
+        await db.mafia_add_tx(interaction.user.id, interaction.user.display_name, kit["label"], precio, "compra")
+        # Zona aleatoria
+        import random
+        zona = random.choice(DROP_ZONAS)
+        embed = discord.Embed(
+            title="📦 CARGAMENTO CONFIRMADO",
+            description=f">>> Transacción procesada. Dirígete a la zona de entrega.",
+            color=0x1A1A2E,
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="🎒 Kit adquirido",      value=f"`{kit['label']}`",    inline=True)
+        embed.add_field(name="💸 Precio pagado",       value=f"`${precio:,}`",          inline=True)
+        embed.add_field(name="💰 Saldo restante",      value=f"`${saldo - precio:,}`",  inline=True)
+        embed.add_field(name="📍 Zona de entrega",     value=f"**{zona}**",             inline=False)
+        embed.add_field(name="⏰ Tiempo de entrega",   value="Máximo **15 minutos** tras la compra.", inline=False)
+        embed.set_footer(
+            text=f"Comprador: {interaction.user.display_name} · NOVA AGORA",
+            icon_url=interaction.user.display_avatar.url
+        )
+        # Deshabilitar el menú
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="🚨 Notificación enviada",
+                description=(
+                    f"La Mafia ha recibido `${precio:,}` por tu cargamento.\n"
+                    f"**Zona asignada:** {zona}\n\n"
+                    "⚠️ **IMPORTANTE:** Esta información es confidencial. No la compartas."
+                ),
+                color=0xFF4444
+            ),
+            ephemeral=True
+        )
+
+# ── Mafia: Transferir Fondos Modal ──
+class MafiaTransferModal(discord.ui.Modal, title="💸 Transferir Fondos — Banco Mafia"):
+    receptor = discord.ui.TextInput(
+        label="ID o @mención del receptor", placeholder="ej: 123456789 o @NombreDelMiembro",
+        min_length=1, max_length=40
+    )
+    monto = discord.ui.TextInput(
+        label="Monto a transferir ($)", placeholder="ej: 5000",
+        min_length=1, max_length=10
+    )
+    motivo = discord.ui.TextInput(
+        label="Motivo de la transferencia",
+        style=discord.TextStyle.short, max_length=100, required=False
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            monto_int = int(self.monto.value.strip().replace("$","").replace(",","").replace(".",""))
+            if monto_int <= 0: raise ValueError
+        except ValueError:
+            return await interaction.followup.send(
+                embed=embed_error("Monto inválido. Introduce un número positivo."), ephemeral=True)
+        # Resolver receptor
+        receptor_txt = self.receptor.value.strip().strip("<@!>")
+        member = None
+        try:
+            member = interaction.guild.get_member(int(receptor_txt))
+        except ValueError:
+            member = discord.utils.find(
+                lambda m: m.display_name.lower() == receptor_txt.lower(), interaction.guild.members)
+        if not member:
+            return await interaction.followup.send(
+                embed=embed_error(f"No se encontró al miembro `{self.receptor.value}`."), ephemeral=True)
+        # Restar del banco mafia
+        ok = await db.mafia_subtract(monto_int)
+        if not ok:
+            saldo = await db.mafia_get_saldo()
+            return await interaction.followup.send(
+                embed=embed_error(f"Fondos insuficientes. Saldo actual: `${saldo:,}`"), ephemeral=True)
+        # Ingresarlo al receptor en la economía del bot
+        await db.update_balance(member.id, monto_int)
+        await db.mafia_add_tx(
+            member.id, member.display_name,
+            f"Transferencia → {self.motivo.value or 'Sin motivo'}",
+            monto_int, "transferencia"
+        )
+        embed = discord.Embed(
+            title="✅ Transferencia realizada",
+            description=(
+                f"**`${monto_int:,}`** transferidos a {member.mention}.\n"
+                f"Motivo: *{self.motivo.value or 'Sin especificar'}*"
+            ),
+            color=0x00FF88, timestamp=datetime.now()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=False)
+
+class MafiaBancoView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="💸 Transferir Fondos", style=discord.ButtonStyle.danger, emoji="💸")
+    async def transferir(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not any(r.id == ROL_MAFIA_ID for r in interaction.user.roles) and interaction.user.id not in OWNER_IDS:
+            return await interaction.response.send_message(
+                embed=embed_error("Solo la Mafia puede transferir fondos."), ephemeral=True)
+        await interaction.response.send_modal(MafiaTransferModal())
+
+# ═══════════════════════════
+# COG PRINCIPAL
+# ═══════════════════════════
+class EncuestasSorteosMafia(BaseCog):
+    """Cog: Encuestas, Sorteos, Drops ilegales y Banco Mafia."""
+
+    def __init__(self, bot):
+        super().__init__(bot)
+        self._check_sorteos.start()
+
+    def cog_unload(self):
+        self._check_sorteos.cancel()
+
+    # ──────────────────────────────────────────────
+    # ENCUESTA
+    # ──────────────────────────────────────────────
+    @commands.command(name="encuesta")
+    @tiene_rol_equipo_especial()
+    async def encuesta(self, ctx):
+        """Abre el modal para crear una encuesta interactiva de feedback."""
+        # Prefix commands no pueden abrir modales directamente.
+        # Usamos un botón de un mensaje efímero para disparar el modal.
+        view = _EncuestaLaunchView(ctx.author.id)
+        msg  = await ctx.send(
+            embed=discord.Embed(
+                title="📊 Crear Encuesta",
+                description="Pulsa el botón para abrir el formulario de la encuesta.",
+                color=0x00B4FF
+            ),
+            view=view,
+            delete_after=60
+        )
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+    # ──────────────────────────────────────────────
+    # SORTEO
+    # ──────────────────────────────────────────────
+    @app_commands.command(
+        name="sorteo",
+        description="» 🌟 ¡Uffff, con este comando no se espera nada malo, siempre da cosas OP! 🔥 «"
+    )
+    @app_commands.describe(
+        premio   ="🎁 Premio o título del sorteo",
+        duracion ="⏰ Duración: ej. 1d, 2h, 30m",
+        ganadores="🏆 Número de ganadores"
+    )
+    @app_commands.checks.has_any_role(ROL_EQUIPO_ESPECIAL_ID, ROL_INICIADOR_ID)
+    async def sorteo(self, interaction: discord.Interaction,
+                     premio: str, duracion: str, ganadores: int = 1):
+        await interaction.response.defer()
+        secs = _parse_duracion(duracion)
+        if secs <= 0:
+            return await interaction.followup.send(
+                embed=embed_error("Duración inválida. Ejemplos: `1d`, `2h`, `30m`, `45s`"), ephemeral=True)
+        if ganadores < 1:
+            return await interaction.followup.send(
+                embed=embed_error("El número de ganadores debe ser al menos 1."), ephemeral=True)
+
+        ends_ts  = int(datetime.now().timestamp()) + secs
+        ends_rel = f"<t:{ends_ts}:R>"
+        ends_abs = f"<t:{ends_ts}:f>"
+
+        embed = discord.Embed(
+            title=f"🎉  {premio.upper()}",
+            description=(
+                f"Reacciona con 🎉 para participar.\n"
+                f"El ganador será elegido automáticamente al finalizar el sorteo."
+            ),
+            color=0x00B4FF,
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="⏳ Ends",       value=f"{ends_rel}\n({ends_abs})",              inline=False)
+        embed.add_field(name="👤 Hosted by",  value=interaction.user.mention,                  inline=True)
+        embed.add_field(name="🎟️ Entries",   value="`0`",                                     inline=True)
+        embed.add_field(name="🏆 Winners",    value=f"`{ganadores}`",                          inline=True)
+        if interaction.guild.icon:
+            embed.set_thumbnail(url=interaction.guild.icon.url)
+        embed.set_footer(
+            text="Nova Agora RP · ¡Buena suerte a todos! 🍀",
+            icon_url=interaction.guild.icon.url if interaction.guild.icon else None
+        )
+        view = SorteoView()
+        msg  = await interaction.followup.send(embed=embed, view=view)
+        await db.create_sorteo(msg.id, interaction.channel_id, interaction.guild_id,
+                               premio, ends_ts, ganadores, interaction.user.id)
+        await self.log("SORTEO", f"{interaction.user.name} creó sorteo '{premio}' ({duracion}, {ganadores}w)")
+
+    # ── Loop: auto-cierre sorteos ──
+    @tasks.loop(seconds=30)
+    async def _check_sorteos(self):
+        try:
+            now   = int(datetime.now().timestamp())
+            activos = await db.get_active_sorteos()
+            for s in activos:
+                if s["ends_at"] <= now:
+                    await self._finalizar_sorteo(s)
+        except Exception as e:
+            print(f"[SORTEO LOOP] Error: {e}")
+
+    @_check_sorteos.before_loop
+    async def before_check(self):
+        await self.bot.wait_until_ready()
+
+    async def _finalizar_sorteo(self, s: dict):
+        import random
+        await db.close_sorteo(s["msg_id"])
+        guild = self.bot.get_guild(s["guild_id"])
+        if not guild: return
+        canal = guild.get_channel(s["canal_id"])
+        if not canal: return
+        try:
+            msg = await canal.fetch_message(s["msg_id"])
+        except Exception:
+            return
+        partic = s["participantes"]
+        embed  = msg.embeds[0] if msg.embeds else discord.Embed(title="Sorteo")
+        if not partic:
+            embed.color = 0xFF4444
+            embed.add_field(name="⛔ Sin ganador", value="Nadie participó en el sorteo.", inline=False)
+            for item in msg.components:
+                pass  # disable via new view
+            await msg.edit(embed=embed, view=None)
+            await canal.send(embed=discord.Embed(
+                title="⛔ Sorteo finalizado sin participantes",
+                description=f"El sorteo **{s['premio']}** ha finalizado sin participantes.",
+                color=0xFF4444
+            ))
+            return
+        n_win  = min(s["ganadores"], len(partic))
+        ganadores_ids = random.sample(partic, n_win)
+        menciones = " ".join(f"<@{uid}>" for uid in ganadores_ids)
+        embed.color = 0x00FF88
+        embed.add_field(name="🏆 Ganador(es)", value=menciones, inline=False)
+        embed.add_field(name="✅ Estado", value="**FINALIZADO**", inline=True)
+        await msg.edit(embed=embed, view=None)
+        win_embed = discord.Embed(
+            title="🎉 ¡TENEMOS GANADOR!",
+            description=(
+                f"El sorteo **{s['premio']}** ha finalizado.\n\n"
+                f"🏆 **Ganador{'es' if n_win > 1 else ''}:** {menciones}\n\n"
+                "¡Felicidades! Contacta con un admin para reclamar tu premio. 🎊"
+            ),
+            color=0xFFD700,
+            timestamp=datetime.now()
+        )
+        if guild.icon:
+            win_embed.set_thumbnail(url=guild.icon.url)
+        await canal.send(content=menciones, embed=win_embed)
+        await self.log("SORTEO_FIN", f"Sorteo '{s['premio']}' finalizado. Ganadores: {ganadores_ids}")
+
+    # ──────────────────────────────────────────────
+    # DROPS ILEGALES
+    # ──────────────────────────────────────────────
+    @commands.command(name="comprar")
+    @check_ban()
+    @tiene_rol_usuario()
+    async def comprar(self, ctx, subcomando: str = None):
+        """Subcomando: drop — Compra un cargamento ilegal."""
+        if subcomando is None or subcomando.lower() != "drop":
+            return await ctx.send(embed=embed_help(
+                "comprar drop", "Compra un cargamento ilegal del menú.",
+                "-comprar drop", "-comprar drop", "Ciudadano"
+            ))
+        kits_txt = "\n".join(
+            f"{v['label']} — **${v['precio']:,}**" for v in KITS_DROP.values()
+        )
+        embed = discord.Embed(
+            title="📦 CARGAMENTOS DISPONIBLES",
+            description=(
+                "```\n@here\n# CARGAMENTO\n```\n"
+                "Elige tu kit del menú desplegable.\n"
+                "El pago va directamente a la **Mafia** como intermediaria.\n\n"
+                + kits_txt
+            ),
+            color=0x1A1A2E,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Nova Agora RP · Operación confidencial", icon_url=ctx.author.display_avatar.url)
+        view = DropSelectView(ctx.author.id)
+        # Ping @here en el canal para anunciar el cargamento
+        await ctx.send(
+            content="@here\n# 📦 CARGAMENTO",
+            allowed_mentions=discord.AllowedMentions(everyone=True)
+        )
+        await ctx.send(embed=embed, view=view)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+        await self.log("COMPRAR_DROP", f"{ctx.author.name} abrió el menú de cargamentos")
+
+    # ──────────────────────────────────────────────
+    # BANCO MAFIA
+    # ──────────────────────────────────────────────
+    @commands.command(name="mafia")
+    @tiene_rol_mafia()
+    async def mafia_banco(self, ctx):
+        """Muestra el banco de la Mafia (saldo + historial de transacciones)."""
+        saldo = await db.mafia_get_saldo()
+        txs   = await db.mafia_get_txs(10)
+
+        embed = discord.Embed(
+            title="🏦 BANCO DE LA MAFIA",
+            description=f"```\nSaldo Total: ${saldo:,.0f}\n```",
+            color=0x1A1A2E,
+            timestamp=datetime.now()
+        )
+        if txs:
+            historial = "\n".join(
+                f"`{t[0]}` **{t[1]}** → {t[2]} — `${t[3]:,}` ({t[4]})"
+                for t in txs
+            )
+            embed.add_field(name="📋 Últimas transacciones", value=historial[:1024], inline=False)
+        else:
+            embed.add_field(name="📋 Historial", value="Sin transacciones registradas.", inline=False)
+        embed.set_footer(
+            text=f"Consultado por {ctx.author.display_name} · Acceso restringido",
+            icon_url=ctx.author.display_avatar.url
+        )
+        view = MafiaBancoView()
+        await ctx.send(embed=embed, view=view)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+class _EncuestaLaunchView(discord.ui.View):
+    """Vista auxiliar para que un prefix command pueda abrir un Modal."""
+    def __init__(self, autor_id: int):
+        super().__init__(timeout=60)
+        self.autor_id = autor_id
+
+    @discord.ui.button(label="📝 Abrir formulario", style=discord.ButtonStyle.primary, emoji="📊")
+    async def abrir(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.autor_id:
+            return await interaction.response.send_message(
+                embed=embed_error("Solo quien ejecutó el comando puede abrir el formulario."), ephemeral=True)
+        await interaction.response.send_modal(EncuestaModal())
+
 class DNI(BaseCog):
     @app_commands.command(name='dni', description="Crea tu DNI de personaje en NOVA AGORA V2")
     async def dni(self, interaction: discord.Interaction, nombre: str, apellidos: str, edad: int, genero: str, nacionalidad: str, color_ojos: str, altura: str, profesion: str, id_play: str = ""):
@@ -8415,6 +9078,7 @@ async def main():
         await bot.add_cog(Dashboard(bot))
         await bot.add_cog(Alertas(bot))
         await bot.add_cog(Disponibilidad(bot))
+        await bot.add_cog(EncuestasSorteosMafia(bot))
 
         hosting_cog = bot.get_cog("Hosting")
         if hosting_cog:
