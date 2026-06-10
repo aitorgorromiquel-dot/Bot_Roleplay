@@ -6181,7 +6181,7 @@ class NuevaVotacionView(discord.ui.View):
         await interaction.response.send_modal(NuevaVotacionModal())
 
 # ── Lista global de persistent views para registrar al inicio ──
-PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView, EncuestaView, SorteoView]
+PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView]  # EncuestaView/SorteoView se añaden en on_ready
 
 # ==================== COG: Soporte ====================
 class Soporte(BaseCog):
@@ -9015,10 +9015,14 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
 
 @bot.event
 async def on_ready():
-    # Registrar persistent views para que los botones sobrevivan reinicios
-    for view_cls in PERSISTENT_VIEWS:
-        bot.add_view(view_cls())
-    print(f"[VIEWS] {len(PERSISTENT_VIEWS)} persistent views registradas.")
+    # Registrar persistent views (incluyendo las del cog EncuestasSorteosMafia)
+    all_persistent = PERSISTENT_VIEWS + [EncuestaView, SorteoView]
+    for view_cls in all_persistent:
+        try:
+            bot.add_view(view_cls())
+        except Exception as e:
+            print(f"[VIEWS] Error registrando {view_cls.__name__}: {e}")
+    print(f"[VIEWS] {len(all_persistent)} persistent views registradas.")
 
     print(f"✅ Bot conectado como {bot.user}")
     if bot.guilds:
