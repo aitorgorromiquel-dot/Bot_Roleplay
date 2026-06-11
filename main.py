@@ -7523,24 +7523,35 @@ def _parse_duracion(txt: str) -> int:
     n, u = int(m.group(1)), m.group(2)
     return n * {"d": 86400, "h": 3600, "m": 60, "s": 1}[u]
 
-# ── Zonas drop ilegales ──
+# ── Canal de logs drops + LSPD ──
+DROP_LOG_CANAL_ID = 1450592692223610936
+MAPS_DIR = "maps"  # Carpeta con los mapas en el servidor del bot
+
+# ── Zonas drop con mapa asociado (nombre, emoji, descripción, archivo_mapa) ──
 DROP_ZONAS = [
-    "📍 Cualquier parte de la ciudad (Aleatorio)", "🎰 Zona del Casino",
-    "🍦 Zona del Vanilla Unicorn", "🏭 Zona Burro Heights",
-    "⛳ Zona del Club de Golf", "🏜️ Sandy Shores — Lugar 1",
-    "🏜️ Sandy Shores — Lugar 2", "🏜️ Sandy Shores — Lugar 3 (cerca de Paleto Bay)",
-    "🌊 Paleto Cove — Lugar 1", "🌊 Paleto Cove — Lugar 2",
-    "🏟️ Zona Arena War", "🚤 Zona Mar (Lanchas / Embarcadero)",
-    "🌿 Paleto Bay Ríos — Lugar 1", "🌿 Paleto Bay Ríos — Lugar 2",
-    "🌿 Paleto Bay Ríos — Lugar 3",
+    {"zona": "Casino",               "emoji": "🎰", "desc": "Zona del Casino de Los Santos",                    "mapa": "casino.png"},
+    {"zona": "Burro Heights",        "emoji": "🏭", "desc": "Zona industrial Burro Heights",                    "mapa": "burro_heights.png"},
+    {"zona": "Vanilla Unicorn",      "emoji": "🍦", "desc": "Zona del Club Vanilla Unicorn",                    "mapa": "vanilla_unicorn.png"},
+    {"zona": "Sandy Shores 1",       "emoji": "🏜️", "desc": "Sandy Shores — Punto norte, cerca Paleto",        "mapa": "sandy_shores_1.png"},
+    {"zona": "Sandy Shores 2",       "emoji": "🏜️", "desc": "Sandy Shores — Zona industrial/aeropuerto",       "mapa": "sandy_shores_2.png"},
+    {"zona": "Sandy Shores 3",       "emoji": "🏜️", "desc": "Sandy Shores — Extremo norte, ruta montañosa",    "mapa": "sandy_shores_3.png"},
+    {"zona": "Paleto Cove 1",        "emoji": "🌊", "desc": "Paleto Cove — Entrada bahía, dock principal",      "mapa": "paleto_cove_1.png"},
+    {"zona": "Paleto Cove 2",        "emoji": "🌊", "desc": "Paleto Cove — Zona rocosa, islas pequeñas",        "mapa": "paleto_cove_2.png"},
+    {"zona": "Arena War",            "emoji": "🏟️", "desc": "Recinto Arena War, interior del estadio",          "mapa": "arena_war.png"},
+    {"zona": "Mar — Lanchas Dinghy", "emoji": "🚤", "desc": "Zona marítima — Solo Lancha Dinghy",               "mapa": "mar_lanchas.png"},
+    {"zona": "Mar — Lancha Shark",   "emoji": "🦈", "desc": "Zona marítima profunda — Solo Lancha Shark",        "mapa": "mar_lanchas.png"},
+    {"zona": "Paleto Bay Río 1",     "emoji": "🌿", "desc": "Paleto Bay — Tramo río oeste, zona boscosa",        "mapa": "paleto_rio_1.png"},
+    {"zona": "Paleto Bay Río 2",     "emoji": "🌿", "desc": "Paleto Bay — Tramo río central, puente viejo",      "mapa": "paleto_rio_2.png"},
+    {"zona": "Paleto Bay Río 3",     "emoji": "🌿", "desc": "Paleto Bay — Tramo río este, desembocadura",        "mapa": "paleto_rio_3.png"},
 ]
 
+# ── Kits con precios DEFCON 4 (mini evento) ──
 KITS_DROP = {
-    "marihuana":     {"label": "🌿 Kit Marihuana",                  "precio": 300,   "desc": "Hierba de calidad para distribución rápida."},
-    "armas_blancas": {"label": "🔪 Kit Armas Blancas",              "precio": 600,   "desc": "Navajas, machetes y herramientas 'especiales'."},
-    "cortas":        {"label": "🔫 Kit Armas de Fuego Cortas",      "precio": 1500,  "desc": "Pistolas y revólveres compactos."},
-    "medianas":      {"label": "⚙️ Kit Armas de Fuego Medianas",    "precio": 3500,  "desc": "SMGs y rifles ligeros de gama media."},
-    "largas":        {"label": "🪖 Kit Armas de Fuego Largas",      "precio": 8000,  "desc": "Carabina o AK49. Solo para los más serios."},
+    "marihuana":     {"label": "🌿 Kit Marihuana",                  "precio": 50000, "desc": "Hierba premium — evento especial."},
+    "armas_blancas": {"label": "🔪 Kit Armas Blancas",              "precio": 52000, "desc": "Arsenal blanco de alto calibre."},
+    "cortas":        {"label": "🔫 Kit Armas de Fuego Cortas",      "precio": 55000, "desc": "Pistolas y compactos de gama alta."},
+    "medianas":      {"label": "⚙️ Kit Armas de Fuego Medianas",    "precio": 58000, "desc": "SMGs y rifles — calidad evento."},
+    "largas":        {"label": "🪖 Kit Armas de Fuego Largas",      "precio": 65000, "desc": "Carabina / AK49 — armamento pesado."},
 }
 
 # ═══════════════════════════
@@ -7655,24 +7666,163 @@ class SorteoView(discord.ui.View):
             await interaction.response.edit_message(embed=embed)
             await interaction.followup.send("🎉 ¡Estás participando en el sorteo! Suerte 🤞", ephemeral=True)
 
-# ── Drops: Select Menu ──
+# ── Drops: Modal confirmación ──
+class DropConfirmModal(discord.ui.Modal, title="📦 Confirmar Cargamento"):
+    """Abre tras elegir kit. Pregunta si va solo o con banda."""
+    solo_banda = discord.ui.TextInput(
+        label="¿Lo haces solo o con banda?",
+        placeholder="Escribe: Solo  /  Con banda",
+        min_length=4, max_length=20
+    )
+    nombre_banda = discord.ui.TextInput(
+        label="Si es con banda, ¿nombre de la banda?",
+        placeholder="Opcional — deja en blanco si vas solo",
+        required=False, max_length=50
+    )
+
+    def __init__(self, kit_key: str, autor_id: int):
+        super().__init__()
+        self.kit_key  = kit_key
+        self.autor_id = autor_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        import random, os
+        await interaction.response.defer(ephemeral=True)
+
+        kit    = KITS_DROP[self.kit_key]
+        precio = kit["precio"]
+        saldo  = await db.get_balance(interaction.user.id)
+
+        if saldo < precio:
+            return await interaction.followup.send(
+                embed=embed_error(
+                    f"💸 Fondos insuficientes.\n"
+                    f"Tienes: `${saldo:,}` | Necesitas: `${precio:,}`"
+                ), ephemeral=True
+            )
+
+        # Zona aleatoria con mapa
+        zona_data = random.choice(DROP_ZONAS)
+        es_banda  = "banda" in self.solo_banda.value.lower()
+        banda_nom = self.nombre_banda.value.strip() if es_banda else ""
+
+        # Transacción económica
+        await db.update_balance(interaction.user.id, -precio)
+        await db.mafia_add(precio)
+        await db.mafia_add_tx(interaction.user.id, interaction.user.display_name,
+                               kit["label"], precio, "compra")
+
+        # ── Embed principal (privado → comprador) ──
+        embed_priv = discord.Embed(
+            title="⚠️ CARGAMENTO ASIGNADO — DEFCON 4",
+            description=(
+                f">>> **Operación activa.** Tienes **15 minutos** para llegar.\n"
+                f"Esta información es **CONFIDENCIAL**. No la compartas."
+            ),
+            color=0xFF4400,
+            timestamp=datetime.now()
+        )
+        embed_priv.add_field(name="🎒 Kit",          value=f"`{kit['label']}`",      inline=True)
+        embed_priv.add_field(name="💸 Pagado",        value=f"`${precio:,}`",             inline=True)
+        embed_priv.add_field(name="💰 Saldo restante",value=f"`${saldo-precio:,}`",       inline=True)
+        embed_priv.add_field(name=f"{zona_data['emoji']} Zona de entrega",
+                              value=f"**{zona_data['zona']}**\n{zona_data['desc']}",   inline=False)
+        embed_priv.add_field(name="👥 Modalidad",
+                              value=f"`{'Con banda: ' + banda_nom if es_banda else 'Solo'}`", inline=True)
+        embed_priv.add_field(name="⏰ Tiempo límite",  value="**15 minutos**",             inline=True)
+        embed_priv.set_footer(
+            text=f"NOVA AGORA · Operación confidencial",
+            icon_url=interaction.guild.icon.url if interaction.guild.icon else None
+        )
+
+        # Adjuntar mapa si existe
+        mapa_path = os.path.join(MAPS_DIR, zona_data["mapa"])
+        files_priv = []
+        if os.path.exists(mapa_path):
+            f_mapa = discord.File(mapa_path, filename="mapa_zona.png")
+            embed_priv.set_image(url="attachment://mapa_zona.png")
+            files_priv.append(f_mapa)
+
+        await interaction.followup.send(embed=embed_priv, files=files_priv, ephemeral=True)
+
+        # ── Si es con banda → info ticket mafia (también privado) ──
+        if es_banda:
+            embed_banda = discord.Embed(
+                title="🤝 Coordinación con la Mafia",
+                description=(
+                    f">>> Tu banda **{banda_nom or 'desconocida'}** debe coordinar la recogida.\n\n"
+                    "**Pasos:**\n"
+                    "1. Abre un ticket con la Mafia para confirmar el drop.\n"
+                    "2. Reuníos en la zona asignada **a tiempo**.\n"
+                    "3. El incumplimiento supone pérdida del pago."
+                ),
+                color=0xFFAA00
+            )
+            await interaction.followup.send(embed=embed_banda, ephemeral=True)
+
+        # ── Log en canal de staff ──
+        guild     = interaction.guild
+        log_canal = guild.get_channel(DROP_LOG_CANAL_ID)
+        if log_canal:
+            embed_log = discord.Embed(
+                title="📦 LOG — Cargamento Vendido",
+                color=0x1A1A2E, timestamp=datetime.now()
+            )
+            embed_log.add_field(name="👤 Comprador",  value=f"{interaction.user.mention} (`{interaction.user.display_name}`)", inline=False)
+            embed_log.add_field(name="🎒 Kit",         value=kit["label"],              inline=True)
+            embed_log.add_field(name="💸 Monto",       value=f"${precio:,}",            inline=True)
+            embed_log.add_field(name="📍 Zona",        value=zona_data["zona"],          inline=True)
+            embed_log.add_field(name="👥 Modalidad",   value=f"{'Con banda: '+banda_nom if es_banda else 'Solo'}", inline=True)
+            # Mapa en el log también
+            if files_priv:
+                f_log = discord.File(mapa_path, filename="mapa_log.png")
+                embed_log.set_image(url="attachment://mapa_log.png")
+                await log_canal.send(embed=embed_log, file=f_log)
+            else:
+                await log_canal.send(embed=embed_log)
+
+        # ── Alerta DEFCON 4 al LSPD (fuera del embed, mención directa) ──
+        lspd_role = guild.get_role(ROL_LSPD_ID)
+        defcon_embed = discord.Embed(
+            title="🚨 DEFCON 4 — CARGAMENTO ACTIVO",
+            description=(
+                ">>> **Actividad ilegal detectada en el servidor.**\n"
+                f"Zona aproximada: **{zona_data['zona']}**\n\n"
+                "Se ha vendido un cargamento. Patrulla en alerta máxima.\n"
+                "⚡ **Nivel de alerta: DEFCON 4** — Mini Evento"
+            ),
+            color=0xFF0000,
+            timestamp=datetime.now()
+        )
+        defcon_embed.set_footer(
+            text="NOVA AGORA · Alerta automática LSPD",
+            icon_url=guild.icon.url if guild.icon else None
+        )
+        lspd_mention = lspd_role.mention if lspd_role else "<@&1450592202165321759>"
+        await interaction.channel.send(
+            content=lspd_mention,
+            embed=defcon_embed,
+            allowed_mentions=discord.AllowedMentions(roles=True)
+        )
+
+# ── Drops: Select Menu (abre modal en vez de procesar directo) ──
 class DropSelectView(discord.ui.View):
     def __init__(self, autor_id: int):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.autor_id = autor_id
         options = [
             discord.SelectOption(
-                label=v["label"],
+                label=v["label"][:25],
                 value=k,
-                description=f"{v['desc']} — ${v['precio']:,}",
-                emoji=v["label"].split()[0]
+                description=f"${v['precio']:,} — {v['desc'][:50]}",
             )
             for k, v in KITS_DROP.items()
         ]
         select = discord.ui.Select(
             placeholder="🎒 Elige tu cargamento...",
             options=options,
-            custom_id="drop_select_kit"
+            custom_id="drop_select_kit_v2",
+            min_values=1, max_values=1
         )
         select.callback = self._on_select
         self.add_item(select)
@@ -7680,55 +7830,13 @@ class DropSelectView(discord.ui.View):
     async def _on_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.autor_id:
             return await interaction.response.send_message(
-                embed=embed_error("Solo quien ejecutó el comando puede elegir el kit."), ephemeral=True)
-        kit_key  = interaction.data["values"][0]
-        kit      = KITS_DROP[kit_key]
-        precio   = kit["precio"]
-        # Verificar saldo
-        saldo = await db.get_balance(interaction.user.id)
-        if saldo < precio:
-            return await interaction.response.send_message(
-                embed=embed_error(f"No tienes suficiente dinero.\n💰 Tienes: `${saldo:,}` | Necesitas: `${precio:,}`"),
+                embed=embed_error("Solo quien ejecutó el comando puede elegir el kit."),
                 ephemeral=True
             )
-        # Descontar dinero + ingresar al banco mafia
-        await db.update_balance(interaction.user.id, -precio)
-        await db.mafia_add(precio)
-        await db.mafia_add_tx(interaction.user.id, interaction.user.display_name, kit["label"], precio, "compra")
-        # Zona aleatoria
-        import random
-        zona = random.choice(DROP_ZONAS)
-        embed = discord.Embed(
-            title="📦 CARGAMENTO CONFIRMADO",
-            description=f">>> Transacción procesada. Dirígete a la zona de entrega.",
-            color=0x1A1A2E,
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="🎒 Kit adquirido",      value=f"`{kit['label']}`",    inline=True)
-        embed.add_field(name="💸 Precio pagado",       value=f"`${precio:,}`",          inline=True)
-        embed.add_field(name="💰 Saldo restante",      value=f"`${saldo - precio:,}`",  inline=True)
-        embed.add_field(name="📍 Zona de entrega",     value=f"**{zona}**",             inline=False)
-        embed.add_field(name="⏰ Tiempo de entrega",   value="Máximo **15 minutos** tras la compra.", inline=False)
-        embed.set_footer(
-            text=f"Comprador: {interaction.user.display_name} · NOVA AGORA",
-            icon_url=interaction.user.display_avatar.url
-        )
-        # Deshabilitar el menú
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.edit_message(embed=embed, view=self)
-        await interaction.followup.send(
-            embed=discord.Embed(
-                title="🚨 Notificación enviada",
-                description=(
-                    f"La Mafia ha recibido `${precio:,}` por tu cargamento.\n"
-                    f"**Zona asignada:** {zona}\n\n"
-                    "⚠️ **IMPORTANTE:** Esta información es confidencial. No la compartas."
-                ),
-                color=0xFF4444
-            ),
-            ephemeral=True
-        )
+        kit_key = interaction.data["values"][0]
+        # Abrir modal de confirmación (solo/banda)
+        modal = DropConfirmModal(kit_key=kit_key, autor_id=self.autor_id)
+        await interaction.response.send_modal(modal)
 
 # ── Mafia: Transferir Fondos Modal ──
 class MafiaTransferModal(discord.ui.Modal, title="💸 Transferir Fondos — Banco Mafia"):
@@ -7958,46 +8066,57 @@ class EncuestasSorteosMafia(BaseCog):
     @check_ban()
     @tiene_rol_usuario()
     async def comprar(self, ctx, subcomando: str = None):
-        """Compra un cargamento ilegal del menú desplegable. Uso: -drop"""
-        if subcomando is not None and subcomando.lower() not in ("drop","comprar","kit"):
-            return await ctx.send(embed=embed_help(
-                "drop", "Compra un cargamento ilegal del menú.",
-                "-drop", "-drop", "Ciudadano"
-            ))
+        """Abre el menú de cargamentos ilegales (DEFCON 4 — Mini Evento). Uso: -drop"""
         kits_txt = "\n".join(
             f"{v['label']} — **${v['precio']:,}**" for v in KITS_DROP.values()
         )
         embed = discord.Embed(
-            title="📦 CARGAMENTOS DISPONIBLES",
+            title="📦 🚨 CARGAMENTO — DEFCON 4",
             description=(
-                "```\n@here\n# CARGAMENTO\n```\n"
+                ">>> **Mini Evento activo.** Precios de emergencia.\n"
                 "Elige tu kit del menú desplegable.\n"
-                "El pago va directamente a la **Mafia** como intermediaria.\n\n"
+                "El pago va directamente al **Banco de la Mafia**.\n\n"
                 + kits_txt
             ),
-            color=0x1A1A2E,
+            color=0xFF4400,
             timestamp=datetime.now()
         )
-        embed.set_footer(text="Nova Agora RP · Operación confidencial", icon_url=ctx.author.display_avatar.url)
-        view = DropSelectView(ctx.author.id)
-        # Ping @here en el canal para anunciar el cargamento
-        await ctx.send(
-            content="@here\n# 📦 CARGAMENTO",
-            allowed_mentions=discord.AllowedMentions(everyone=True)
+        embed.add_field(
+            name="⚠️ Condiciones del evento",
+            value=(
+                "`⏰` Tienes **15 minutos** desde la compra para llegar.\n"
+                "`🤝` Puedes ir solo o coordinar con tu banda.\n"
+                "`🚔` La **LSPD** será alertada automáticamente."
+            ),
+            inline=False
         )
+        embed.set_footer(
+            text=f"Nova Agora RP · DEFCON 4 · Operación confidencial",
+            icon_url=ctx.author.display_avatar.url
+        )
+        view = DropSelectView(ctx.author.id)
         await ctx.send(embed=embed, view=view)
         try:
             await ctx.message.delete()
         except Exception:
             pass
-        await self.log("COMPRAR_DROP", f"{ctx.author.name} abrió el menú de cargamentos")
+        await self.log("DROP_MENU", f"{ctx.author.name} abrió el menú de cargamentos DEFCON4")
 
     # ──────────────────────────────────────────────
     # BANCO MAFIA
     # ──────────────────────────────────────────────
     @commands.command(name="mafia")
-    @tiene_rol_mafia()
     async def mafia_banco(self, ctx):
+        """Solo accesible para el rol Mafia (ID: 1479210255564013588)."""
+        mafia_role = ctx.guild.get_role(ROL_MAFIA_ID)
+        if not mafia_role or (mafia_role not in ctx.author.roles and ctx.author.id not in OWNER_IDS):
+            return await ctx.send(
+                embed=embed_error(
+                    f"Acceso denegado.\nEste comando es exclusivo para la **Mafia** "
+                    f"(Rol ID: `{ROL_MAFIA_ID}`).\nContacta con un administrador si crees que es un error."
+                ),
+                delete_after=8
+            )
         """Muestra el banco de la Mafia (saldo + historial de transacciones)."""
         saldo = await db.mafia_get_saldo()
         txs   = await db.mafia_get_txs(10)
