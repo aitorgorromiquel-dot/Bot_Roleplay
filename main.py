@@ -1829,9 +1829,27 @@ class Principal(BaseCog):
             cantidad = int(partes[-1])
             texto = " ".join(partes[:-1])
 
+        # Búsqueda exacta primero
         item_data = TIENDA_ITEMS_DICT.get(texto.lower())
+        # Búsqueda parcial si no encuentra exacto (ej: "bate" → "Bate de Béisbol")
         if not item_data:
-            return await ctx.send(embed=embed_error("Artículo no encontrado."))
+            texto_lower = texto.lower()
+            matches = [
+                (name, data) for name, data in TIENDA_ITEMS_DICT.items()
+                if texto_lower in name.lower()
+            ]
+            if len(matches) == 1:
+                item_data = matches[0][1]
+            elif len(matches) > 1:
+                opciones = "\n".join(f"• `{m[1][0]}`" for m in matches[:8])
+                return await ctx.send(embed=embed_error(
+                    f"Varios artículos encontrados para **'{texto}'**:\n{opciones}\n\nEscribe el nombre completo."
+                ))
+        if not item_data:
+            return await ctx.send(embed=embed_error(
+                f"Artículo **'{texto}'** no encontrado.\n"
+                "Usa `-tienda` para ver los artículos disponibles."
+            ))
         item_norm, precio_unitario, emoji, desc = item_data
         if es_precio_infinito(precio_unitario):
             return await ctx.send(embed=embed_error("No se puede comprar un artículo de valor infinito."))
@@ -5830,22 +5848,103 @@ class Roleplay(BaseCog):
     @commands.command(name='entorno')
     @tiene_rol_usuario()
     async def entorno(self, ctx, *, descripcion: str):
+        """
+        Crea una alerta de entorno/narración.
+        Formatos aceptados:
+          -entorno Pelea en la calle | Calle Grove 47
+          -entorno Hay un accidente grave en Mirror Park
+        El bot detecta automáticamente la ubicación si viene tras | o al final.
+        """
         try:
-            rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
-            if rol_lspd:
-                await ctx.send(f"🚨 **NUEVO AVISO CIUDADANO RECIBIDO** 🚨\n{rol_lspd.mention}")
-            partes = descripcion.split("|", 1)
-            desc = partes[0].strip()
-            lugar = partes[1].strip().upper() if len(partes) > 1 else "Desconocida"
-            embed = discord.Embed(title="🌍 ALERTA DE ENTORNO", description=f"**📍 Ubicación:** {lugar}\n**📞 Información:** {desc}\n**🕒 Hora:** {datetime.now().strftime('%H:%M')}\n**🚓 Unidades requeridas:** Todas disponibles", color=0xFF4500, timestamp=datetime.now())
-            embed.set_author(name="Narrador del Entorno", icon_url=ctx.author.display_avatar.url)
+            # Separar por | si existe, sino tomar las últimas palabras como ubicación
+            if "|" in descripcion:
+                partes = descripcion.split("|", 1)
+                accion = partes[0].strip()
+                lugar  = partes[1].strip().upper()
+            else:
+                # Intentar extraer ubicación: últimas 3 palabras si hay más de 4 palabras
+                palabras = descripcion.strip().split()
+                if len(palabras) > 4:
+                    accion = " ".join(palabras[:-3])
+                    lugar  = " ".join(palabras[-3:]).upper()
+                else:
+                    accion = descripcion.strip()
+                    lugar  = "ZONA DESCONOCIDA"
+
+            hora_fmt = datetime.now().strftime("%H:%M")
+            embed = discord.Embed(
+                title="📡 ALERTA CIUDADANA",
+                color=0xFF4500,
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="📍 Ubicación",          value=f"```{lugar}```",                   inline=False)
+            embed.add_field(name="📞 Información",         value=f">>> {accion}",                     inline=False)
+            embed.add_field(name="🕒 Hora del aviso",      value=f"`{hora_fmt} 🇪🇸`",               inline=True)
+            embed.add_field(name="🚓 Unidades requeridas", value="`Todas disponibles`",              inline=True)
+            embed.set_author(
+                name=f"Narrador: {ctx.author.display_name}",
+                icon_url=ctx.author.display_avatar.url
+            )
+            embed.set_footer(text="NOVA AGORA RP · Sistema de Alertas Ciudadanas")
             await ctx.send(embed=embed)
             try:
                 await ctx.message.delete()
-            except:
+            except Exception:
                 pass
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -entorno: {str(e)[:100]}"))
+
+    @commands.command(name='cargar')
+    @tiene_rol_equipo_especial()
+    async def cargar(self, ctx, usuario: discord.Member = None, *, texto: str = None):
+        """
+        Registra o muestra un cargo/mensaje a un usuario.
+        Uso: -cargar @usuario [mensaje/motivo]
+        """
+        if not usuario:
+            return await ctx.send(embed=embed_help(
+                "cargar", "Registra un cargo o mensaje a un usuario.",
+                "-cargar @usuario [mensaje]", "-cargar @Juan Detenido por robo en tienda",
+                "Equipo Especial"
+            ))
+        if not texto:
+            texto = "Sin descripción adicional."
+        embed = discord.Embed(
+            title="📋 CARGO REGISTRADO",
+            color=0xFF6600,
+            timestamp=datetime.now()
+        )
+        embed.add_field(
+            name="👤 Usuario",
+            value=f"{usuario.mention} (`{usuario.display_name}`)",
+            inline=False
+        )
+        embed.add_field(
+            name="📝 Descripción del cargo",
+            value=f">>> {texto}",
+            inline=False
+        )
+        embed.add_field(
+            name="👮 Registrado por",
+            value=f"{ctx.author.mention} (`{ctx.author.display_name}`)",
+            inline=True
+        )
+        embed.add_field(
+            name="🕒 Hora",
+            value=f"`{datetime.now().strftime('%d/%m/%Y %H:%M')} 🇪🇸`",
+            inline=True
+        )
+        embed.set_thumbnail(url=usuario.display_avatar.url)
+        embed.set_footer(
+            text="NOVA AGORA RP · Sistema de Registros",
+            icon_url=ctx.guild.icon.url if ctx.guild.icon else None
+        )
+        await ctx.send(embed=embed)
+        await self.log("CARGAR", f"{ctx.author.name} → {usuario.name}: {texto[:80]}")
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
 
     @commands.command(name='reparar')
     @tiene_profesion("mecánico", "mecanico")
@@ -6214,13 +6313,6 @@ class Soporte(BaseCog):
             view=panel_view,
             allowed_mentions=discord.AllowedMentions(roles=True)
         )
-        tick_emoji = await get_animated_bot_emoji("tick", ctx.guild)
-        cross_emoji = await get_animated_bot_emoji("cross", ctx.guild)
-        for r in [tick_emoji, "🚔", cross_emoji, "😅"]:
-            try:
-                await msg_status.add_reaction(r)
-            except Exception:
-                pass
         await self.log("STATUS", f"{ctx.author.name} — {iniciador} | {ciudadanos}p {policias}pol {soporte}sop")
 
     @commands.command(name='votacion')
@@ -6449,15 +6541,35 @@ class Soporte(BaseCog):
                 msg     = await canal.fetch_message(msg_id)
                 view    = IniciarRolView()
                 await msg.edit(view=view)
-                await canal.send(
-                    embed=discord.Embed(
-                        title="🟢 ¡10 votos alcanzados!",
-                        description=f">>> La votación ha alcanzado **{len(vot['votos_si'])} votos** positivos.\nEl staff puede pulsar **'Iniciar Rol!'** cuando esté listo.",
-                        color=0x00FF00,
-                        timestamp=datetime.now()
-                    ),
-                    delete_after=30
-                )
+                # ── Alerta solo 1 vez por día en canal específico ──
+                ALERTA_CANAL_ID = 1450592738184659034
+                hoy = datetime.now().strftime("%Y-%m-%d")
+                cache_key = f"alerta_10votos_{hoy}"
+                ya_enviada = getattr(self.bot, "_alerta_10v_cache", {})
+                if cache_key not in ya_enviada:
+                    if not hasattr(self.bot, "_alerta_10v_cache"):
+                        self.bot._alerta_10v_cache = {}
+                    self.bot._alerta_10v_cache[cache_key] = True
+                    alerta_canal = guild.get_channel(ALERTA_CANAL_ID)
+                    if alerta_canal:
+                        hora_fmt = datetime.now().strftime("%H:%M")
+                        n_votos  = len(vot["votos_si"])
+                        # Texto ANSI con colores brillantes (Discord renderiza ANSI en bloques ```ansi)
+                        ansi_msg = (
+                            "```ansi\n"
+                            "\u001b[1;33m╔══════════════════════════════════════╗\u001b[0m\n"
+                            f"\u001b[1;32m  🟢 ¡VOTACIÓN SUPERÓ LOS 10 VOTOS!   \u001b[0m\n"
+                            f"\u001b[1;37m  📊 Votos positivos: {n_votos:<5}              \u001b[0m\n"
+                            f"\u001b[1;36m  🕐 Hora: {hora_fmt} 🇪🇸                    \u001b[0m\n"
+                            "\u001b[1;35m  Staff: pulsa Iniciar Rol! en la      \u001b[0m\n"
+                            "\u001b[1;35m  votación cuando estéis listos.        \u001b[0m\n"
+                            "\u001b[1;33m╚══════════════════════════════════════╝\u001b[0m\n"
+                            "```"
+                        )
+                        await alerta_canal.send(
+                            content=ansi_msg,
+                            allowed_mentions=discord.AllowedMentions(everyone=False)
+                        )
                 await self.log("AUTO_INICIO", f"10 votos alcanzados en msg {msg_id}")
             except Exception as e:
                 print(f"[VOTACION] Error auto-botón: {e}")
@@ -7952,12 +8064,21 @@ class EncuestasSorteosMafia(BaseCog):
     )
     @app_commands.describe(
         premio   ="🎁 Premio o título del sorteo",
-        duracion ="⏰ Duración: ej. 1d, 2h, 30m",
-        ganadores="🏆 Número de ganadores"
+        duracion ="⏰ Duración: ej. 1d, 2h, 30m, 45s",
+        ganadores="🏆 Número de ganadores (por defecto: 1)"
     )
-    @app_commands.checks.has_any_role(ROL_EQUIPO_ESPECIAL_ID, ROL_INICIADOR_ID)
     async def sorteo(self, interaction: discord.Interaction,
                      premio: str, duracion: str, ganadores: int = 1):
+        # Verificación de permisos dentro del comando (evita errores de has_any_role)
+        puede = interaction.user.guild_permissions.administrator
+        if not puede:
+            roles_staff = {ROL_EQUIPO_ESPECIAL_ID, ROL_INICIADOR_ID}
+            puede = any(r.id in roles_staff for r in interaction.user.roles)
+        if not puede:
+            return await interaction.response.send_message(
+                embed=embed_error("Solo el **Staff** (Equipo Especial o Iniciador) puede crear sorteos."),
+                ephemeral=True
+            )
         await interaction.response.defer()
         secs = _parse_duracion(duracion)
         if secs <= 0:
@@ -8007,6 +8128,20 @@ class EncuestasSorteosMafia(BaseCog):
                     await self._finalizar_sorteo(s)
         except Exception as e:
             print(f"[SORTEO LOOP] Error: {e}")
+
+    @sorteo.error
+    async def sorteo_error(self, interaction: discord.Interaction, error):
+        """Maneja cualquier error del comando /sorteo."""
+        try:
+            msg = str(error)
+            if "Missing" in msg or "role" in msg.lower():
+                await interaction.response.send_message(
+                    embed=embed_error("Solo el **Staff** puede crear sorteos."), ephemeral=True)
+            else:
+                await interaction.response.send_message(
+                    embed=embed_error(f"Error en /sorteo: {msg[:100]}"), ephemeral=True)
+        except Exception:
+            pass
 
     @_check_sorteos.before_loop
     async def before_check(self):
@@ -8937,9 +9072,7 @@ class Disponibilidad(BaseCog):
             return await ctx.send(embed=embed_error("La cantidad no puede ser negativa."))
         unidad = "unidad" if cantidad == 1 else "unidades"
         if servicio == 'lspd':
-            rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
-            if rol_lspd:
-                await ctx.send(rol_lspd.mention)
+            await ctx.send("@everyone", allowed_mentions=discord.AllowedMentions(everyone=True))
             if cantidad == 0:
                 estado = "🔴 SATURADO"
                 desc = "⚠️ Actualmente no hay unidades disponibles.\n🚨 Todas las patrullas se encuentran atendiendo incidencias."
@@ -8951,16 +9084,12 @@ class Disponibilidad(BaseCog):
                 desc = f"🚓 Actualmente hay **{cantidad} {unidad} disponibles** patrullando la ciudad."
             footer = "⚡ Tiempo de respuesta sujeto a disponibilidad."
         elif servicio == 'lsmd':
-            rol_lsmd = ctx.guild.get_role(ROL_LSMD_ID)
-            if rol_lsmd:
-                await ctx.send(rol_lsmd.mention)
+            await ctx.send("@everyone", allowed_mentions=discord.AllowedMentions(everyone=True))
             estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
             desc = f"🚑 **Unidades disponibles:** {cantidad}\n📞 **Pendientes de avisos del 911:** {random.randint(0,3)}\n❤️ **Personal médico operativo:** {cantidad} {'médico' if cantidad == 1 else 'médicos'}\n🟢 **Estado operativo:** {'Operativo' if cantidad > 0 else 'No disponible'}"
             footer = "Servicio de emergencias médicas de Los Santos."
         else:  # lssd
-            rol_lssd = ctx.guild.get_role(ROL_SHERIFF_ID)
-            if rol_lssd:
-                await ctx.send(rol_lssd.mention)
+            await ctx.send("@everyone", allowed_mentions=discord.AllowedMentions(everyone=True))
             estado = "🟢 ACTIVO" if cantidad > 0 else "🔴 SATURADO"
             desc = f"🌵 **Patrullaje rural activo:** {cantidad} {'unidad' if cantidad == 1 else 'unidades'}\n🚓 **Supervisión de carreteras:** {'Activa' if cantidad > 0 else 'Inactiva'}\n⚠️ **Atención a emergencias fuera de ciudad:** {'Disponible' if cantidad > 0 else 'No disponible'}\n🟢 **Estado operativo:** {'Operativo' if cantidad > 0 else 'No disponible'}"
             footer = "Sheriff's Department - Condado de Blaine"
@@ -9102,18 +9231,23 @@ intents.voice_states = True
 intents.guilds = True
 intents.guild_messages = True
 intents.webhooks = True
-bot = commands.Bot(command_prefix=get_pre, intents=intents, help_command=None)
+bot = commands.Bot(
+    command_prefix=get_pre,
+    intents=intents,
+    help_command=None,
+    # Partials para leer reacciones/mensajes antiguos sin caché
+    chunk_guilds_at_startup=False,
+)
+# Partials: permiten que on_raw_reaction_add funcione en mensajes fuera del caché
+# (necesario para votaciones antiguas y mensajes persistentes)
+for partial in (discord.PartialMessageable, ):
+    pass  # partials are handled via raw events automatically in discord.py v2
 
-@bot.tree.command(name="anuncios", description="Publica un anuncio oficial del servidor (solo Administración/Equipo Especial)")
-@app_commands.describe(mensaje="Mensaje del anuncio")
-async def anuncios(interaction: discord.Interaction, mensaje: str):
-    roles_permitidos = {ROL_ADMIN_ID, ROL_EQUIPO_ESPECIAL_ID}
-    tiene_permiso = any(r.id in roles_permitidos for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
-    if not tiene_permiso:
-        return await interaction.response.send_message(embed=embed_error("No tienes permiso para usar este comando."), ephemeral=True)
+def _build_anuncio_embed(interaction: discord.Interaction, mensaje: str) -> discord.Embed:
+    """Construye el embed de anuncio oficial."""
     icon_url = interaction.guild.icon.url if interaction.guild.icon else None
-    fecha = datetime.now().strftime("%d/%m/%Y")
-    embed = discord.Embed(color=0x2B2D31, timestamp=datetime.now())
+    fecha    = datetime.now().strftime("%d/%m/%Y")
+    embed    = discord.Embed(color=0x1A1A2E, timestamp=datetime.now())
     embed.set_author(name="NOVA DEVELOPERS", icon_url=icon_url)
     embed.add_field(
         name="📣 ANUNCIO ADMINISTRATIVO",
@@ -9129,8 +9263,42 @@ async def anuncios(interaction: discord.Interaction, mensaje: str):
         ),
         inline=False
     )
-    embed.set_footer(text=f"Nova Agora RP • Administración Oficial • {fecha}", icon_url=icon_url)
-    await interaction.response.send_message(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
+    embed.set_footer(
+        text=f"Nova Agora RP • Administración Oficial • {fecha}",
+        icon_url=icon_url
+    )
+    return embed
+
+def _check_anuncio_perms(interaction: discord.Interaction) -> bool:
+    if interaction.user.guild_permissions.administrator:
+        return True
+    roles_ok = {ROL_ADMIN_ID, ROL_EQUIPO_ESPECIAL_ID}
+    return any(r.id in roles_ok for r in interaction.user.roles)
+
+@bot.tree.command(name="anuncio", description="📣 Publica un anuncio oficial del servidor (solo Administración/Staff)")
+@app_commands.describe(mensaje="Mensaje del anuncio", mencionar_everyone="¿Mencionar @everyone? (por defecto: Sí)")
+async def anuncio(interaction: discord.Interaction, mensaje: str, mencionar_everyone: bool = True):
+    if not _check_anuncio_perms(interaction):
+        return await interaction.response.send_message(
+            embed=embed_error("No tienes permiso para publicar anuncios."), ephemeral=True)
+    embed   = _build_anuncio_embed(interaction, mensaje)
+    content = "@everyone" if mencionar_everyone else None
+    await interaction.response.send_message(
+        content=content, embed=embed,
+        allowed_mentions=discord.AllowedMentions(everyone=True)
+    )
+
+@bot.tree.command(name="anuncios", description="📣 Publica un anuncio oficial del servidor (alias de /anuncio)")
+@app_commands.describe(mensaje="Mensaje del anuncio")
+async def anuncios(interaction: discord.Interaction, mensaje: str):
+    if not _check_anuncio_perms(interaction):
+        return await interaction.response.send_message(
+            embed=embed_error("No tienes permiso para publicar anuncios."), ephemeral=True)
+    embed = _build_anuncio_embed(interaction, mensaje)
+    await interaction.response.send_message(
+        content="@everyone", embed=embed,
+        allowed_mentions=discord.AllowedMentions(everyone=True)
+    )
 
 @bot.event
 async def on_ready():
@@ -9150,8 +9318,16 @@ async def on_ready():
             if role_id != 0 and not guild.get_role(role_id):
                 print(f"⚠️ Advertencia: El rol con ID {role_id} no existe. Crea los roles necesarios.")
     try:
+        # Sync global (para que /anuncio, /sorteo aparezcan en todos los servidores)
+        global_synced = await bot.tree.sync()
+        print(f"[SYNC] {len(global_synced)} comandos sincronizados globalmente.")
+        # Sync por servidor (inmediato, sin esperar propagación global)
         for guild in bot.guilds:
-            await bot.tree.sync(guild=discord.Object(id=guild.id))
+            try:
+                guild_synced = await bot.tree.sync(guild=discord.Object(id=guild.id))
+                print(f"[SYNC] Servidor {guild.name}: {len(guild_synced)} comandos")
+            except Exception as e_guild:
+                print(f"[SYNC] Error en {guild.name}: {e_guild}")
             print(f"✅ Slash commands sincronizados en {guild.name}")
         await bot.tree.sync()
         print("✅ Slash commands globales sincronizados.")
