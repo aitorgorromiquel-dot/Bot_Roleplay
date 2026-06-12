@@ -391,77 +391,6 @@ DEFAULT_EMOJIS = {
 
 PRECIO_INFINITO = 10**12  # Representa precio infinito
 
-# ── Abreviaciones para -comprar ─────────────────────────────────────────────
-# Armas de fuego son precio infinito (no se pueden comprar directamente)
-ARMAS_FUEGO_NOMBRES = {
-    "sns", "normal", "vintage", "calibre .50", "pesada", "revólver pesado", "perforante",
-    "mini smg", "micro uzi", "subfusil", "subfusil de asalto", "adp",
-    "mosquete", "escopeta recortada", "miniak47", "escopeta corredera", "ak47", "rifle bullpup",
-}
-
-ITEM_ALIASES: dict[str, str] = {
-    # Puño americano
-    "puño":           "Puño americano",
-    "puno":           "Puño americano",
-    "puño americano": "Puño americano",
-    # Bate
-    "bate":           "Bate",
-    "bate beisbol":   "Bate",
-    "bate béisbol":   "Bate",
-    # Hacha
-    "hacha":          "Hacha",
-    # Machete
-    "machete":        "Machete",
-    # Pistolas (precio infinito — solo se puede tener)
-    "pistola":        "Normal",
-    "sns pistola":    "SNS",
-    "pistola vintage":"Vintage",
-    "pistola pesada": "Pesada",
-    "revolver":       "Revólver Pesado",
-    "revólver":       "Revólver Pesado",
-    "calibre":        "Calibre .50",
-    "perforante":     "Perforante",
-    # Subfusiles
-    "uzi":            "Micro Uzi",
-    "micro uzi":      "Micro Uzi",
-    "mini smg":       "Mini SMG",
-    "smg":            "Mini SMG",
-    "subfusil":       "Subfusil",
-    "subfusil asalto":"Subfusil de asalto",
-    "adp":            "ADP",
-    # Rifles / escopetas
-    "ak":             "Ak47",
-    "ak47":           "Ak47",
-    "miniak":         "MiniAk47",
-    "miniak47":       "MiniAk47",
-    "rifle":          "Rifle bullpup",
-    "rifle bullpup":  "Rifle bullpup",
-    "escopeta":       "Escopeta corredera",
-    "escopeta recortada": "Escopeta recortada",
-    "escopeta corredera": "Escopeta corredera",
-    "mosquete":       "Mosquete",
-    "fusil":          "Rifle bullpup",
-    # Granadas/explosivos
-    "granada":        "Granada",
-    "molotov":        "Coctel molotov",
-    "c4":             "C4",
-    "granada casera": "Granada casera",
-    # Licencias
-    "licencia coche":  "Licencia de vehiculo",
-    "licencia camion": "Licencia de camión",
-    "licencia moto":   "Licencia de moto",
-    "licencia blancas":"Licencia de armas blancas",
-    "licencia cortas": "Licencia de armas cortas",
-}
-
-# Grupos de items ambiguos (cuando se pone una abreviación que puede ser varios items)
-ITEM_ALIAS_GRUPOS: dict[str, list[str]] = {
-    "pistola": ["SNS", "Normal", "Vintage", "Calibre .50", "Pesada", "Revólver Pesado", "Perforante"],
-    "subfusil": ["Mini SMG", "Micro Uzi", "Subfusil", "Subfusil de asalto", "ADP"],
-    "escopeta": ["Escopeta recortada", "Escopeta corredera"],
-    "bate":     ["Bate"],  # solo uno pero se deja para futuro
-}
-
 # ==================== FUNCIONES AUXILIARES ====================
 def embed_error(msg): return discord.Embed(title="❌ Error", description=msg, color=0xFF0000)
 def embed_success(titulo, desc="", color=0x00FF00): return discord.Embed(title=titulo, description=desc, color=color)
@@ -1900,56 +1829,12 @@ class Principal(BaseCog):
             cantidad = int(partes[-1])
             texto = " ".join(partes[:-1])
 
-        texto_lower = texto.lower()
-
-        # --- Resolución de alias ---
-        # 1. Comprobar si es un alias directo
-        nombre_resuelto = ITEM_ALIASES.get(texto_lower)
-
-        # 2. Comprobar si es un alias de grupo (p.ej. "pistola" -> varios)
-        if not nombre_resuelto and texto_lower in ITEM_ALIAS_GRUPOS:
-            opciones = ITEM_ALIAS_GRUPOS[texto_lower]
-            lista = "\n".join(
-                f"**{i+1}.** {nombre} — {formatear_precio(TIENDA_ITEMS_DICT.get(nombre.lower(), (nombre, PRECIO_INFINITO, '', ''))[1])}"
-                for i, nombre in enumerate(opciones)
-            )
-            embed = discord.Embed(
-                title=f"❓ ¿Qué '{texto}' quieres?",
-                description=f"Usa el nombre exacto:\n\n{lista}\n\nEjemplo: `-comprar {opciones[0]}`",
-                color=0xFFD700
-            )
-            return await ctx.send(embed=embed)
-
-        # 3. Búsqueda normal en el diccionario de tienda
-        if not nombre_resuelto:
-            item_data = TIENDA_ITEMS_DICT.get(texto_lower)
-        else:
-            item_data = TIENDA_ITEMS_DICT.get(nombre_resuelto.lower())
-
+        item_data = TIENDA_ITEMS_DICT.get(texto.lower())
         if not item_data:
-            # Sugerencia inteligente: buscar items que contengan el texto
-            sugerencias = [
-                nombre for nombre in TIENDA_ITEMS_DICT
-                if texto_lower in nombre.lower()
-            ][:5]
-            msg_extra = f"\n\nItems similares: {', '.join(sugerencias)}" if sugerencias else ""
-            return await ctx.send(embed=embed_error(f"Artículo **{texto}** no encontrado.{msg_extra}"))
-
+            return await ctx.send(embed=embed_error("Artículo no encontrado."))
         item_norm, precio_unitario, emoji, desc = item_data
-
-        # Armas de fuego = precio infinito, no se pueden comprar
-        if es_precio_infinito(precio_unitario) or item_norm.lower() in ARMAS_FUEGO_NOMBRES:
-            embed = discord.Embed(
-                title="🔫 Arma de fuego — Precio INFINITO",
-                description=(
-                    f"**{item_norm}** no se puede comprar en la tienda normal.\n"
-                    "Las armas de fuego solo se obtienen mediante eventos especiales,\n"
-                    "drops ilegales (`-drop`) o si un admin te las da con `-give-item`."
-                ),
-                color=0xFF4400
-            )
-            return await ctx.send(embed=embed)
-
+        if es_precio_infinito(precio_unitario):
+            return await ctx.send(embed=embed_error("No se puede comprar un artículo de valor infinito."))
         precio = precio_unitario * cantidad
         eco = await db.get_economy(uid)
         use_black = item_norm.lower() in ILLEGAL_TIENDA_ITEMS
@@ -1968,7 +1853,7 @@ class Principal(BaseCog):
         await db.add_item(uid, "personal", item_norm, cantidad)
         embed = discord.Embed(
             title="✅ Compra realizada",
-            description=f"{emoji} **{cantidad}x {item_norm}** por **${precio:,}** ({metodo}).\n*{desc}*",
+            description=f"{cantidad}x {item_norm} por **${precio:,}** ({metodo}).\n*{desc}*",
             color=0x00FF00
         )
         await ctx.send(embed=embed)
@@ -6113,9 +5998,6 @@ class Hosting(BaseCog):
 VOTACIONES_ACTIVAS: dict = {}
 # {msg_id (int): {canal_id, guild_id, autor_id, hora, tema, votos_si: set, votos_no: set, iniciado: bool}}
 
-# Registro de alertas de 10 votos ya enviadas hoy (date → True)
-_ALERTA_VOTOS_HOY: dict = {}  # guild_id -> fecha (str YYYY-MM-DD)
-
 def _vot_can_manage(interaction: discord.Interaction) -> bool:
     """True si el usuario puede gestionar el rol (admin o roles de staff)."""
     if interaction.user.guild_permissions.administrator:
@@ -6313,11 +6195,11 @@ class Soporte(BaseCog):
             return await ctx.send(embed=embed_error("Los números no pueden ser negativos."))
         total = ciudadanos + policias + soporte
         embed = discord.Embed(title="🚨 ESTAMOS EN ROL 🚨", color=discord.Color.red(), timestamp=datetime.now())
-        embed.add_field(name="Iniciador:", value=f"```\n{iniciador}\n```", inline=False)
-        embed.add_field(name="Personas en rol:", value=f"```\n{ciudadanos}\n```", inline=False)
-        embed.add_field(name="Policias en rol:", value=f"```\n{policias}\n```", inline=False)
-        embed.add_field(name="Soporte en rol:", value=f"```\n{soporte}\n```", inline=False)
-        embed.add_field(name="Total en sesion:", value=f"```\n{total}\n```", inline=False)
+        embed.add_field(name="📌 Iniciador:", value=f"```\n{iniciador}\n```", inline=False)
+        embed.add_field(name="🧑 Personas en rol:", value=f"```\n{ciudadanos}\n```", inline=False)
+        embed.add_field(name="🚔 Policías en rol:", value=f"```\n{policias}\n```", inline=False)
+        embed.add_field(name="🛠️ Soporte en rol:", value=f"```\n{soporte}\n```", inline=False)
+        embed.add_field(name="📊 Total en sesión:", value=f"```\n{total}\n```", inline=False)
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
         embed.set_footer(text=f"Soporte: {ctx.author.display_name}  ·  NOVA AGORA", icon_url=ctx.author.display_avatar.url)
         try:
@@ -6559,9 +6441,6 @@ class Soporte(BaseCog):
         else:
             return
         # Verificar umbral de 10 votos positivos
-        CANAL_ALERTA_VOTOS = 1450592738184659034
-        hoy = datetime.now().strftime("%Y-%m-%d")
-        guild_key = payload.guild_id
         if len(vot["votos_si"]) >= 10 and not vot.get("iniciado"):
             vot["iniciado"] = True
             try:
@@ -6570,21 +6449,15 @@ class Soporte(BaseCog):
                 msg     = await canal.fetch_message(msg_id)
                 view    = IniciarRolView()
                 await msg.edit(view=view)
-                # Alerta solo 1 vez por día en el canal específico
-                if _ALERTA_VOTOS_HOY.get(guild_key) != hoy:
-                    _ALERTA_VOTOS_HOY[guild_key] = hoy
-                    canal_alerta = guild.get_channel(CANAL_ALERTA_VOTOS)
-                    if canal_alerta is None:
-                        canal_alerta = canal  # fallback al canal de la votación
-                    texto_alerta = (
-                        "**✨ ═══════════════════════════════ ✨**\n"
-                        f"🟢 **¡ LA VOTACION HA ALCANZADO 10 VOTOS !** 🟢\n"
-                        "**✨ ═══════════════════════════════ ✨**\n\n"
-                        f">>> La votacion ya tiene **{len(vot['votos_si'])} votos** positivos.\n"
-                        "El staff puede pulsar **'Iniciar Rol!'** cuando este listo.\n\n"
-                        "**★彡 NOVA AGORA RP 彡★**"
-                    )
-                    await canal_alerta.send(content=texto_alerta)
+                await canal.send(
+                    embed=discord.Embed(
+                        title="🟢 ¡10 votos alcanzados!",
+                        description=f">>> La votación ha alcanzado **{len(vot['votos_si'])} votos** positivos.\nEl staff puede pulsar **'Iniciar Rol!'** cuando esté listo.",
+                        color=0x00FF00,
+                        timestamp=datetime.now()
+                    ),
+                    delete_after=30
+                )
                 await self.log("AUTO_INICIO", f"10 votos alcanzados en msg {msg_id}")
             except Exception as e:
                 print(f"[VOTACION] Error auto-botón: {e}")
