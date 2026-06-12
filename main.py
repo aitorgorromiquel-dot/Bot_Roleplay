@@ -8070,23 +8070,29 @@ class EncuestasSorteosMafia(BaseCog):
     async def sorteo(self, interaction: discord.Interaction,
                      premio: str, duracion: str, ganadores: int = 1):
         # Verificación de permisos dentro del comando (evita errores de has_any_role)
+        # Verificar permisos ANTES de defer (respuesta instantánea)
         puede = interaction.user.guild_permissions.administrator
         if not puede:
             roles_staff = {ROL_EQUIPO_ESPECIAL_ID, ROL_INICIADOR_ID}
             puede = any(r.id in roles_staff for r in interaction.user.roles)
         if not puede:
             return await interaction.response.send_message(
-                embed=embed_error("Solo el **Staff** (Equipo Especial o Iniciador) puede crear sorteos."),
+                embed=embed_error("Solo el **Staff** puede crear sorteos."),
                 ephemeral=True
             )
-        await interaction.response.defer()
+        # Validar parámetros ANTES de defer
         secs = _parse_duracion(duracion)
         if secs <= 0:
-            return await interaction.followup.send(
-                embed=embed_error("Duración inválida. Ejemplos: `1d`, `2h`, `30m`, `45s`"), ephemeral=True)
+            return await interaction.response.send_message(
+                embed=embed_error(
+                    "⏰ Duración inválida.\n"
+                    "Ejemplos válidos: `1d` (1 día), `2h` (2 horas), `30m` (30 min), `45s` (45 seg)"
+                ), ephemeral=True)
         if ganadores < 1:
-            return await interaction.followup.send(
+            return await interaction.response.send_message(
                 embed=embed_error("El número de ganadores debe ser al menos 1."), ephemeral=True)
+        # defer DESPUÉS de validaciones (responde a Discord en < 3s)
+        await interaction.response.defer()
 
         ends_ts  = int(datetime.now().timestamp()) + secs
         ends_rel = f"<t:{ends_ts}:R>"
@@ -8112,9 +8118,18 @@ class EncuestasSorteosMafia(BaseCog):
             icon_url=interaction.guild.icon.url if interaction.guild.icon else None
         )
         view = SorteoView()
-        msg  = await interaction.followup.send(embed=embed, view=view)
-        await db.create_sorteo(msg.id, interaction.channel_id, interaction.guild_id,
-                               premio, ends_ts, ganadores, interaction.user.id)
+        # followup.send en discord.py 2.3.2 devuelve el mensaje
+        msg = await interaction.followup.send(embed=embed, view=view)
+        # En algunas versiones followup.send no devuelve un objeto message con .id
+        # Por eso lo buscamos del canal si es necesario
+        if not hasattr(msg, "id") or not msg.id:
+            async for m in interaction.channel.history(limit=1):
+                msg = m
+                break
+        await db.create_sorteo(
+            msg.id, interaction.channel_id, interaction.guild_id,
+            premio, ends_ts, ganadores, interaction.user.id
+        )
         await self.log("SORTEO", f"{interaction.user.name} creó sorteo '{premio}' ({duracion}, {ganadores}w)")
 
     # ── Loop: auto-cierre sorteos ──
@@ -9243,6 +9258,32 @@ bot = commands.Bot(
 for partial in (discord.PartialMessageable, ):
     pass  # partials are handled via raw events automatically in discord.py v2
 
+# ── Modal del anuncio (permite mensajes largos hasta 3000 chars) ──
+class AnuncioModal(discord.ui.Modal, title="📣 Crear Anuncio Oficial"):
+    mensaje = discord.ui.TextInput(
+        label="Mensaje del anuncio",
+        style=discord.TextStyle.long,
+        placeholder="Escribe aquí el mensaje del anuncio oficial...",
+        min_length=1,
+        max_length=3000
+    )
+    mencionar = discord.ui.TextInput(
+        label="¿Mencionar @everyone? (escribe si / no)",
+        default="si",
+        max_length=3,
+        required=False
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        embed   = _build_anuncio_embed(interaction, self.mensaje.value)
+        mention = self.mencionar.value.strip().lower() not in ("no", "n", "false", "0")
+        content = "@everyone" if mention else None
+        await interaction.response.send_message(
+            content=content,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(everyone=True)
+        )
+
 def _build_anuncio_embed(interaction: discord.Interaction, mensaje: str) -> discord.Embed:
     """Construye el embed de anuncio oficial."""
     icon_url = interaction.guild.icon.url if interaction.guild.icon else None
@@ -9275,30 +9316,26 @@ def _check_anuncio_perms(interaction: discord.Interaction) -> bool:
     roles_ok = {ROL_ADMIN_ID, ROL_EQUIPO_ESPECIAL_ID}
     return any(r.id in roles_ok for r in interaction.user.roles)
 
-@bot.tree.command(name="anuncio", description="📣 Publica un anuncio oficial del servidor (solo Administración/Staff)")
-@app_commands.describe(mensaje="Mensaje del anuncio", mencionar_everyone="¿Mencionar @everyone? (por defecto: Sí)")
-async def anuncio(interaction: discord.Interaction, mensaje: str, mencionar_everyone: bool = True):
+@bot.tree.command(name="anuncio", description="📣 Publica un anuncio oficial — abre un formulario para mensajes largos")
+async def anuncio(interaction: discord.Interaction):
+    """Abre un modal para escribir el anuncio. Soporta mensajes largos."""
     if not _check_anuncio_perms(interaction):
         return await interaction.response.send_message(
-            embed=embed_error("No tienes permiso para publicar anuncios."), ephemeral=True)
-    embed   = _build_anuncio_embed(interaction, mensaje)
-    content = "@everyone" if mencionar_everyone else None
-    await interaction.response.send_message(
-        content=content, embed=embed,
-        allowed_mentions=discord.AllowedMentions(everyone=True)
-    )
+            embed=embed_error("No tienes permiso para publicar anuncios."),
+            ephemeral=True
+        )
+    # Abrir el modal directamente → respuesta instantánea, sin timeout
+    await interaction.response.send_modal(AnuncioModal())
 
-@bot.tree.command(name="anuncios", description="📣 Publica un anuncio oficial del servidor (alias de /anuncio)")
-@app_commands.describe(mensaje="Mensaje del anuncio")
-async def anuncios(interaction: discord.Interaction, mensaje: str):
+@bot.tree.command(name="anuncios", description="📣 Publica un anuncio oficial — abre un formulario para mensajes largos")
+async def anuncios(interaction: discord.Interaction):
+    """Alias de /anuncio. Abre el mismo modal."""
     if not _check_anuncio_perms(interaction):
         return await interaction.response.send_message(
-            embed=embed_error("No tienes permiso para publicar anuncios."), ephemeral=True)
-    embed = _build_anuncio_embed(interaction, mensaje)
-    await interaction.response.send_message(
-        content="@everyone", embed=embed,
-        allowed_mentions=discord.AllowedMentions(everyone=True)
-    )
+            embed=embed_error("No tienes permiso para publicar anuncios."),
+            ephemeral=True
+        )
+    await interaction.response.send_modal(AnuncioModal())
 
 @bot.event
 async def on_ready():
