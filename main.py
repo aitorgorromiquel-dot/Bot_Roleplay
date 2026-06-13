@@ -71,6 +71,8 @@ ROL_MAFIA_ADMIN_ID = 0  # ⚠️ REEMPLAZAR CON EL ID DEL ROL "MAFIA ADMIN"
 ROL_MINERO_ID = 1450592196351885344
 ROL_AUTOBUSERO_ID = 1450592190089920563
 ROL_CHATARRERO_ID = 1450592178018455738
+ROL_SUGERENCIAS_ADMIN_ID = 1450592121974161577
+CANAL_VOTACIONES_ID = 1450592738184659034
 
 # Precios drogas
 PRECIOS_DROGAS_BASE = {
@@ -118,10 +120,10 @@ TIENDA_ITEMS_BASE = [
     ("Escopeta corredera", PRECIO_INFINITO, "🔫", "Alto poder"),
     ("Ak47", PRECIO_INFINITO, "🔫", "Legendario"),
     ("Rifle bullpup", PRECIO_INFINITO, "🔫", "Preciso"),
-    ("Coctel molotov", 6000, "🔥", "Incendio"),
-    ("Granada casera", 12000, "💣", "Explosión"),
-    ("Granada", 15000, "💣", "Letal"),
-    ("C4", 20000, "🧨", "Demolición"),
+    ("Coctel molotov", 10**12, "🔥", "Incendio"),
+    ("Granada casera", 10**12, "💣", "Explosión"),
+    ("Granada", 10**12, "💣", "Letal"),
+    ("C4", 10**12, "🧨", "Demolición"),
     ("Licencia de camión", 1600, "🚚", "Camiones"),
     ("Licencia de vehiculo", 3000, "🚗", "Coches"),
     ("Licencia de moto", 2500, "🏍️", "Motos"),
@@ -833,6 +835,39 @@ class Database:
                 await db.execute("DROP TABLE heist_prep")
                 print("✅ Datos migrados de heist_prep a heist_preparations")
 
+
+            # DeepWeb anónima (track por message_id)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS dw_mensajes (
+                    track_id TEXT PRIMARY KEY,
+                    user_id INTEGER,
+                    mensaje TEXT,
+                    sent_at TEXT,
+                    guild_id INTEGER
+                )
+            """)
+            # Sugerencias (monitoreo reacciones)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS sugerencias (
+                    message_id INTEGER PRIMARY KEY,
+                    user_id INTEGER,
+                    texto TEXT,
+                    canal_id INTEGER,
+                    notificado BOOLEAN DEFAULT 0,
+                    sent_at TEXT
+                )
+            """)
+            # Negocios
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS negocios (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    nombre TEXT,
+                    ganancia_hora INTEGER DEFAULT 100,
+                    ultimo_cobro TEXT,
+                    activo BOOLEAN DEFAULT 1
+                )
+            """)
             await db.commit()
             print("✅ Base de datos inicializada con todas las tablas e índices.")
 
@@ -3683,6 +3718,82 @@ class Banco(BaseCog):
             await ctx.message.delete()
         except:
             pass
+
+
+    @commands.command(name='pay', aliases=['bizum', 'pagar', 'transferir'])
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def pay(self, ctx, usuario: discord.Member = None, cantidad: str = None):
+        """Transfiere dinero en efectivo a otro usuario. -pay @usuario <cantidad|all>"""
+        if not usuario or not cantidad:
+            return await ctx.send(embed=embed_help(
+                "pay", "Transfiere efectivo a otro usuario.",
+                "-pay @usuario <cantidad|all>",
+                "-pay @Juan 5000  |  -pay @Ana all", ""
+            ))
+        uid, tid = ctx.author.id, usuario.id
+        if uid == tid:
+            return await ctx.send(embed=embed_error("No puedes transferirte dinero a ti mismo."))
+        eco = await db.get_economy(uid)
+        if cantidad.lower() in ("all","todo","todos"):
+            real = eco["cash"]
+        else:
+            try:
+                real = int(cantidad.replace(",","").replace(".","").replace("$",""))
+            except ValueError:
+                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
+        if real <= 0:
+            return await ctx.send(embed=embed_error("Debes transferir al menos $1."))
+        if eco["cash"] < real:
+            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['cash']:,}** en efectivo."))
+        await db.add_cash(uid, -real)
+        await db.add_cash(tid, real)
+        # Notificar al receptor por DM
+        try:
+            dm_embed = discord.Embed(
+                title="💸 Bizum recibido",
+                description=f"**{ctx.author.display_name}** te ha enviado **${real:,}**.",
+                color=0x00FF00,
+                timestamp=datetime.now()
+            )
+            await usuario.send(embed=dm_embed)
+        except Exception:
+            pass
+        await ctx.send(embed=embed_success(
+            "💸 Transferencia realizada",
+            f"Has enviado **${real:,}** a {usuario.mention}."
+        ))
+        await self.log("PAY", f"{ctx.author.name} envió ${real:,} a {usuario.name}")
+        try:
+            await ctx.message.delete()
+        except: pass
+
+    @commands.command(name='bal', aliases=['saldo','balance','dinero'])
+    @check_ban()
+    @tiene_rol_usuario()
+    async def bal(self, ctx, usuario: discord.Member = None):
+        """Muestra el saldo de un usuario."""
+        target = usuario or ctx.author
+        uid    = target.id
+        eco    = await db.get_economy(uid)
+        emoji_money = await get_emoji('money')
+        emoji_bank  = await get_emoji('bank')
+        embed = discord.Embed(
+            title=f"{emoji_money} Balance de {target.display_name}",
+            description=(
+                f"{emoji_money} Efectivo: **${eco['cash']:,}**\n"
+                f"{emoji_bank} Banco:    **${eco['bank']:,}**\n"
+                f"💰 Total:    **${eco['cash'] + eco['bank']:,}**"
+            ),
+            color=0x3498DB,
+            timestamp=datetime.now()
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except: pass
 
 # ==================== COG: Multas ====================
 class Multas(BaseCog):
