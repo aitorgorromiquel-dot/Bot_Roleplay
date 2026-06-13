@@ -57,6 +57,7 @@ OWNER_IDS = [1059183337832468510, 729054497233436775, 1259792008248037442]
 ROL_INICIADOR_ID = 1450592126491558131
 ROL_EQUIPO_ESPECIAL_ID = 1450592064365658134
 ROL_ADMIN_ID = 1450592064365658134  # Mismo que equipo especial o cambia por tu ID de admin
+ROL_DINERO_ADMIN_ID = 1450592135156989993  # Rol autorizado para dar dinero
 ROL_MIEMBRO_BANDA_ID = 1512759486568468621  # 🎭 Rol Miembro Banda
 ROL_WARN_ID = 1450592143122108537           # ⚠️ Rol para poner warns
 ROL_GIVE_TAKE_ID = 1450592140710383658      # 🎁 Rol para give/take item
@@ -96,25 +97,27 @@ TIPOS_MUNICION = {
 TIENDA_ITEMS_BASE = [
     ("Hacha", 750, "🪓", "Arma blanca básica"),
     ("Machete", 1500, "🔪", "Arma cortante"),
+    ("Cuchillo", 800, "🗡️", "Arma blanca compacta y discreta"),
     ("Puño americano", 2225, "👊", "Aumenta daño"),
-    ("SNS", 16000, "🔫", "Pistola compacta"),
-    ("Normal", 18500, "🔫", "Pistola estándar"),
-    ("Vintage", 22000, "🔫", "Pistola de colección"),
-    ("Calibre .50", 25100, "🔫", "Alto poder"),
-    ("Pesada", 28000, "🔫", "Gran retroceso"),
-    ("Revólver Pesado", 34000, "🔫", "Devastador"),
-    ("Perforante", 36850, "🔫", "Anti-chalecos"),
-    ("Mini SMG", 120000, "🔫", "Subfusil ligero"),
-    ("Micro Uzi", 150000, "🔫", "Muy rápido"),
-    ("Subfusil", 180000, "🔫", "Versátil"),
-    ("Subfusil de asalto", 200000, "🔫", "Letal"),
-    ("ADP", 250000, "🔫", "Táctica"),
-    ("Mosquete", 100000, "🔫", "Antiguo"),
-    ("Escopeta recortada", 200000, "🔫", "Cerca"),
-    ("MiniAk47", 220000, "🔫", "Potente"),
-    ("Escopeta corredera", 230000, "🔫", "Alto poder"),
-    ("Ak47", 283000, "🔫", "Legendario"),
-    ("Rifle bullpup", 297110, "🔫", "Preciso"),
+    # ── Armas de fuego → Precio INFINITO (solo obtención legal especial) ──
+    ("SNS", PRECIO_INFINITO, "🔫", "Pistola compacta"),
+    ("Normal", PRECIO_INFINITO, "🔫", "Pistola estándar"),
+    ("Vintage", PRECIO_INFINITO, "🔫", "Pistola de colección"),
+    ("Calibre .50", PRECIO_INFINITO, "🔫", "Alto poder"),
+    ("Pesada", PRECIO_INFINITO, "🔫", "Gran retroceso"),
+    ("Revólver Pesado", PRECIO_INFINITO, "🔫", "Devastador"),
+    ("Perforante", PRECIO_INFINITO, "🔫", "Anti-chalecos"),
+    ("Mini SMG", PRECIO_INFINITO, "🔫", "Subfusil ligero"),
+    ("Micro Uzi", PRECIO_INFINITO, "🔫", "Muy rápido"),
+    ("Subfusil", PRECIO_INFINITO, "🔫", "Versátil"),
+    ("Subfusil de asalto", PRECIO_INFINITO, "🔫", "Letal"),
+    ("ADP", PRECIO_INFINITO, "🔫", "Táctica"),
+    ("Mosquete", PRECIO_INFINITO, "🔫", "Antiguo"),
+    ("Escopeta recortada", PRECIO_INFINITO, "🔫", "Cerca"),
+    ("MiniAk47", PRECIO_INFINITO, "🔫", "Potente"),
+    ("Escopeta corredera", PRECIO_INFINITO, "🔫", "Alto poder"),
+    ("Ak47", PRECIO_INFINITO, "🔫", "Legendario"),
+    ("Rifle bullpup", PRECIO_INFINITO, "🔫", "Preciso"),
     ("Coctel molotov", 6000, "🔥", "Incendio"),
     ("Granada casera", 12000, "💣", "Explosión"),
     ("Granada", 15000, "💣", "Letal"),
@@ -749,6 +752,18 @@ class Database:
                     opcion_b TEXT,
                     votos_a  TEXT DEFAULT '[]',
                     votos_b  TEXT DEFAULT '[]'
+                )
+            """)
+            # ── Negocios ──
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS negocios (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id    INTEGER,
+                    nombre      TEXT,
+                    tipo        TEXT DEFAULT 'comercio',
+                    ganancia    INTEGER DEFAULT 500,
+                    ultimo_cobro TEXT DEFAULT NULL,
+                    activo      INTEGER DEFAULT 1
                 )
             """)
             # ── Banco Mafia ──
@@ -1613,6 +1628,7 @@ def tiene_rol_o_owner(role_id):
 
 def tiene_rol_iniciador(): return tiene_rol_o_owner(ROL_INICIADOR_ID)
 def tiene_rol_equipo_especial(): return tiene_rol_o_owner(ROL_EQUIPO_ESPECIAL_ID)
+def tiene_rol_dinero_admin(): return tiene_rol_o_owner(ROL_DINERO_ADMIN_ID)
 def tiene_rol_dashboard(): return tiene_rol_o_owner(ROL_DASHBOARD_ID)
 def tiene_rol_lspd_operativo(): return tiene_rol_o_owner(ROL_LSPD_OPERATIVO_ID)
 def tiene_rol_mafia(): return tiene_rol_o_owner(ROL_MAFIA_ID)
@@ -3591,33 +3607,55 @@ class Banco(BaseCog):
         except:
             pass
 
-    @banco.command(name='ingresar')
+    @banco.command(name='ingresar', aliases=['dep', 'depositar'])
     @tiene_rol_usuario()
-    async def banco_ingresar(self, ctx, cantidad: int):
-        if cantidad <= 0:
-            return await ctx.send(embed=embed_error("Cantidad mayor a 0."))
+    async def banco_ingresar(self, ctx, cantidad: str = None):
+        """Ingresa dinero al banco. Usa 'all' para ingresar todo tu efectivo."""
+        if not cantidad:
+            return await ctx.send(embed=embed_error("Uso: `-banco ingresar <cantidad|all>`"))
         eco = await db.get_economy(ctx.author.id)
-        if eco['cash'] < cantidad:
-            return await ctx.send(embed=embed_error(f"No tienes **${cantidad:,}** en efectivo."))
-        await db.add_cash(ctx.author.id, -cantidad)
-        await db.add_bank(ctx.author.id, cantidad)
-        await ctx.send(embed=embed_success("🏦 Ingreso", f"Has ingresado **${cantidad:,}**."))
+        if cantidad.lower() in ("all", "todo", "todos"):
+            real = eco["cash"]
+        else:
+            try:
+                real = int(cantidad.replace(",","").replace(".","").replace("$",""))
+            except ValueError:
+                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
+        if real <= 0:
+            return await ctx.send(embed=embed_error("No tienes efectivo para ingresar."))
+        if eco["cash"] < real:
+            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['cash']:,}** en efectivo."))
+        await db.add_cash(ctx.author.id, -real)
+        await db.add_bank(ctx.author.id, real)
+        await ctx.send(embed=embed_success("🏦 Ingreso", f"Has ingresado **${real:,}** al banco."))
         try:
             await ctx.message.delete()
-        except:
-            pass
+        except: pass
 
-    @banco.command(name='retirar')
+    @banco.command(name='retirar', aliases=['ret', 'sacar'])
     @tiene_rol_usuario()
-    async def banco_retirar(self, ctx, cantidad: int):
-        if cantidad <= 0:
-            return await ctx.send(embed=embed_error("Cantidad mayor a 0."))
+    async def banco_retirar(self, ctx, cantidad: str = None):
+        """Retira dinero del banco. Usa 'all' para retirar todo."""
+        if not cantidad:
+            return await ctx.send(embed=embed_error("Uso: `-banco retirar <cantidad|all>`"))
         eco = await db.get_economy(ctx.author.id)
-        if eco['bank'] < cantidad:
-            return await ctx.send(embed=embed_error(f"No tienes **${cantidad:,}** en el banco."))
-        await db.add_bank(ctx.author.id, -cantidad)
-        await db.add_cash(ctx.author.id, cantidad)
-        await ctx.send(embed=embed_success("🏦 Retiro", f"Has retirado **${cantidad:,}**."))
+        if cantidad.lower() in ("all", "todo", "todos"):
+            real = eco["bank"]
+        else:
+            try:
+                real = int(cantidad.replace(",","").replace(".","").replace("$",""))
+            except ValueError:
+                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
+        if real <= 0:
+            return await ctx.send(embed=embed_error("No tienes dinero en el banco."))
+        if eco["bank"] < real:
+            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['bank']:,}** en el banco."))
+        await db.add_bank(ctx.author.id, -real)
+        await db.add_cash(ctx.author.id, real)
+        await ctx.send(embed=embed_success("🏦 Retiro", f"Has retirado **${real:,}** a efectivo."))
+        try:
+            await ctx.message.delete()
+        except: pass
         try:
             await ctx.message.delete()
         except:
@@ -4017,18 +4055,43 @@ class PDA(BaseCog):
 
 # ==================== COG: Móvil ====================
 class Movil(BaseCog):
-    @app_commands.command(name='movil', description="Abre el móvil con NOVA AGORA V2")
+    @app_commands.command(name='movil', description="📱 Abre tu smartphone — Apps, Bizum, Redes Sociales y más")
     async def movil(self, interaction: discord.Interaction):
         uid = interaction.user.id
+        await interaction.response.defer(ephemeral=True)
         user_state = await db.get_user_state(uid)
         if user_state['airplane_mode']:
-            return await interaction.response.send_message(embed=embed_error("Modo avión activado. Desactívalo con `/avion off`"))
-        numero = user_state['phone_number'] or "Sin número"
-        wifi = "📶 Conectado" if user_state['wifi_connected'] else "📶 Desconectado"
-        await interaction.response.send_message("✨ **** ABRE TÚ MÓVIL EN NOVA AGORA V2 ****")
-        embed = discord.Embed(title=f"{await get_emoji('phone')} Móvil de {interaction.user.name}", description=f"📞 Número: `{numero}`\n{wifi}", color=0x00BCD4)
-        view = MovilView(interaction.user.id)
-        await interaction.followup.send(embed=embed, view=view)
+            return await interaction.followup.send(
+                embed=embed_error("✈️ Modo avión activado.\nDesactívalo con `/avion off`"), ephemeral=True)
+        numero = user_state['phone_number'] or "Sin número asignado"
+        wifi_txt = "📶 Conectado" if user_state['wifi_connected'] else "📶 Desconectado"
+        eco = await db.get_economy(uid)
+        embed = discord.Embed(
+            title=f"📱 Smartphone de {interaction.user.display_name}",
+            description=(
+                f"```\n"
+                f"📞 {numero}\n"
+                f"{wifi_txt}\n"
+                f"💰 Efectivo: ${eco['cash']:,}\n"
+                f"🏦 Banco:    ${eco['bank']:,}\n"
+                f"```"
+            ),
+            color=0x00BCD4,
+            timestamp=datetime.now()
+        )
+        embed.add_field(
+            name="📲 Apps disponibles",
+            value=(
+                "`📸 Instagram` · `🐦 Twitter` · `📘 Facebook`\n"
+                "`💬 WhatsApp` · `🕸️ DeepWeb` · `⚙️ Config`\n"
+                "`💸 Bizum` — Envía dinero al instante"
+            ),
+            inline=False
+        )
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="NOVA AGORA RP · Smartphone V2")
+        view = MovilView(uid)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name='avion', description="Modo avión - NOVA AGORA V2")
     async def avion(self, interaction: discord.Interaction, estado: str):
@@ -4205,6 +4268,104 @@ class MovilView(discord.ui.View):
         av = "✈️ ON" if user_state['airplane_mode'] else "✈️ OFF"
         wf = "📶 ON" if user_state['wifi_connected'] else "📶 OFF"
         await interaction.response.send_message(embed=embed_info("⚙️ Configuración", f"📱 {n}\n{av}\n{wf}\n\n`-avion on/off`\n`-wifi conectar/desconectar`\n`-comprar-sim`", 0x95A5A6), ephemeral=True)
+
+    @discord.ui.button(label="💸 Bizum", style=discord.ButtonStyle.success, emoji="💸", row=2)
+    async def btn_bizum(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.uid:
+            return await interaction.response.send_message(embed=embed_error("No es tu móvil."), ephemeral=True)
+        await interaction.response.send_modal(BizumModal())
+
+class BizumModal(discord.ui.Modal, title="💸 Hacer Bizum"):
+    usuario_dest = discord.ui.TextInput(
+        label="Usuario destino (mención @nombre o ID)",
+        placeholder="Ej: @Juan o 123456789012345678",
+        min_length=2, max_length=50
+    )
+    cantidad_txt = discord.ui.TextInput(
+        label="Cantidad a enviar ($)",
+        placeholder="Ej: 1500  — escribe 'all' para enviar todo",
+        min_length=1, max_length=15
+    )
+    nota = discord.ui.TextInput(
+        label="Nota (opcional)",
+        placeholder="Ej: Por la cena de ayer 🍕",
+        required=False, max_length=100
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        # Resolver destinatario
+        dest_raw = self.usuario_dest.value.strip().strip("<@!>").strip()
+        member = None
+        try:
+            member = interaction.guild.get_member(int(dest_raw))
+        except ValueError:
+            member = discord.utils.find(
+                lambda m: m.display_name.lower() == dest_raw.lower() or m.name.lower() == dest_raw.lower(),
+                interaction.guild.members
+            )
+        if not member:
+            return await interaction.followup.send(
+                embed=embed_error(f"No se encontró al usuario `{self.usuario_dest.value}`.\nUsa la mención @nombre o la ID numérica."),
+                ephemeral=True
+            )
+        if member.id == interaction.user.id:
+            return await interaction.followup.send(embed=embed_error("No puedes hacerte un Bizum a ti mismo."), ephemeral=True)
+        # Resolver cantidad
+        eco = await db.get_economy(interaction.user.id)
+        cant_raw = self.cantidad_txt.value.strip().lower()
+        if cant_raw in ("all", "todo", "todos"):
+            real = eco["cash"]
+        else:
+            try:
+                real = int(cant_raw.replace(",","").replace(".","").replace("$",""))
+            except ValueError:
+                return await interaction.followup.send(embed=embed_error("Cantidad inválida. Escribe un número o `all`."), ephemeral=True)
+        if real <= 0:
+            return await interaction.followup.send(embed=embed_error("La cantidad debe ser mayor a $0."), ephemeral=True)
+        if eco["cash"] < real:
+            return await interaction.followup.send(
+                embed=embed_error(f"Fondos insuficientes.\n💰 Tienes: `${eco['cash']:,}` | Envías: `${real:,}`"),
+                ephemeral=True
+            )
+        # Procesar Bizum
+        await db.add_cash(interaction.user.id, -real)
+        await db.add_cash(member.id, real)
+        nota_txt = self.nota.value.strip() if self.nota.value else "Sin nota"
+        # Embed confirmación (privado al emisor)
+        embed_ok = discord.Embed(
+            title="✅ Bizum enviado",
+            description=(
+                f"**A:** {member.mention}\n"
+                f"**Cantidad:** `${real:,}`\n"
+                f"**Nota:** *{nota_txt}*"
+            ),
+            color=0x00FF88, timestamp=datetime.now()
+        )
+        embed_ok.set_footer(text="NOVA AGORA RP · Bizum")
+        await interaction.followup.send(embed=embed_ok, ephemeral=True)
+        # Notificar al receptor
+        embed_recv = discord.Embed(
+            title="💸 Has recibido un Bizum",
+            description=(
+                f"**De:** {interaction.user.mention}\n"
+                f"**Cantidad:** `${real:,}`\n"
+                f"**Nota:** *{nota_txt}*"
+            ),
+            color=0x00FF88, timestamp=datetime.now()
+        )
+        embed_recv.set_footer(text="NOVA AGORA RP · Bizum")
+        try:
+            await member.send(embed=embed_recv)
+        except Exception:
+            pass
+        # También notificar en el canal
+        await interaction.channel.send(
+            embed=discord.Embed(
+                description=f"💸 {interaction.user.mention} → {member.mention} · **${real:,}**",
+                color=0x00FF88
+            )
+        )
 
 # ==================== COG: Redes Sociales ====================
 class Redes(BaseCog):
@@ -4509,6 +4670,40 @@ class Redes(BaseCog):
         await self.dm_user(user.id, dm)
         await interaction.followup.send(embed=embed_success("📨 Mensaje enviado", f"A {user.display_name}"))
 
+    @commands.command(name='dw', aliases=['deep', 'deepweb-anonimo'])
+    @check_ban()
+    @tiene_rol_usuario()
+    async def dw_anonimo(self, ctx, *, mensaje: str = None):
+        """Envía un mensaje anónimo al canal actual desde la DeepWeb.
+        Tu identidad queda oculta. El FBI puede intentar descifrarla.
+        Uso: -dw <mensaje>
+        """
+        if not mensaje:
+            return await ctx.send(embed=embed_help(
+                "dw", "Envía un mensaje anónimo al canal desde la DeepWeb.",
+                "-dw <mensaje>", "-dw Hay una reunión a medianoche en el puerto.", "Ciudadano"
+            ), delete_after=10)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+        # Guardar en DB (para que FBI pueda descifrar por msg_id)
+        msg_id_interno = await db.add_deepweb_message(ctx.author.id, 0, mensaje)
+        embed = discord.Embed(
+            title="🕸️ MENSAJE ANÓNIMO — DEEP WEB",
+            description=f">>> {mensaje}",
+            color=0x0D0D0D,
+            timestamp=datetime.now()
+        )
+        embed.set_author(name="Usuario de la red", icon_url="https://cdn.discordapp.com/embed/avatars/4.png")
+        embed.add_field(name="🔐 Estado", value="`Identidad encriptada`", inline=True)
+        embed.add_field(name="🆔 Track ID", value=f"`{msg_id_interno}`", inline=True)
+        embed.set_footer(text=f"Nova Agora RP V2 · {datetime.now().strftime('%H:%M')} — Solo el FBI puede descifrar")
+        sent = await ctx.send(embed=embed)
+        # Actualizar en DB con el msg_id real de Discord
+        await db.execute("UPDATE deepweb_messages SET discord_msg_id=? WHERE id=?", (sent.id, msg_id_interno))
+        await self.log("DW_ANONIMO", f"[DW msg:{msg_id_interno}] Contenido guardado (anónimo)")
+
     @app_commands.command(name='deepweb', description="Sistema DeepWeb - NOVA AGORA V2")
     async def deepweb(self, interaction: discord.Interaction, target: discord.Member = None, msg: str = None):
         if target is None or msg is None:
@@ -4530,6 +4725,61 @@ class Redes(BaseCog):
         await self.dm_user(target.id, dm)
         await interaction.followup.send(embed=embed_success(f"{await get_emoji('deepweb')} Mensaje enviado", f"Anónimo | ID: `{msg_id}`"))
         await self.log("DEEPWEB", f"{interaction.user.name} → {target.name}: {text[:50]}...")
+
+    @commands.command(name='descifrar')
+    async def descifrar_prefix(self, ctx, mensaje_id: int = None):
+        """[FBI] Intenta descifrar un mensaje anónimo de la DeepWeb (20% de éxito).
+        Uso: -descifrar <track_id>
+        """
+        import random
+        FBI_ROLE_ID = 1450592202165321759
+        fbi_role = ctx.guild.get_role(FBI_ROLE_ID)
+        tiene_fbi = (fbi_role and fbi_role in ctx.author.roles) or ctx.author.id in OWNER_IDS
+        if not tiene_fbi:
+            embed_err = discord.Embed(
+                title="❌ Error",
+                description="Solo agentes del **FBI** pueden usar este comando.",
+                color=0xFF0000
+            )
+            return await ctx.send(embed=embed_err)
+        if not mensaje_id:
+            return await ctx.send(embed=embed_help(
+                "descifrar", "Intenta descifrar la identidad de un mensaje DeepWeb (20% éxito).",
+                "-descifrar <track_id>", "-descifrar 42", "FBI"
+            ))
+        row = await db.fetchone("SELECT user_id, message FROM deepweb_messages WHERE id=?", (mensaje_id,))
+        if not row:
+            return await ctx.send(embed=embed_error(f"No se encontró el mensaje con Track ID `{mensaje_id}`."))
+        if random.random() < 0.20:  # 20% = 1/5
+            sender = ctx.guild.get_member(row[0])
+            nombre = sender.display_name if sender else f"ID:{row[0]}"
+            dni = await db.get_dni(row[0])
+            dni_txt = f"{dni.get('nombre','?')} {dni.get('apellidos','')}" if dni else "Sin DNI"
+            embed = discord.Embed(
+                title="🔓 MENSAJE DESCIFRADO — FBI CLASIFICADO",
+                color=0x00FF00,
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="🕵️ Remitente real",  value=f"{sender.mention if sender else nombre}", inline=True)
+            embed.add_field(name="🆔 ID Discord",       value=f"`{row[0]}`",   inline=True)
+            embed.add_field(name="📋 DNI",              value=f"`{dni_txt}`",  inline=True)
+            embed.add_field(name="📝 Mensaje original", value=f">>> {row[1]}", inline=False)
+            embed.set_footer(text=f"Descifrado por {ctx.author.display_name} · FBI Nova Agora")
+            await ctx.send(embed=embed)
+            await self.log("DESCIFRAR_EXIT", f"{ctx.author.name} descifró DW:{mensaje_id} → {nombre}")
+        else:
+            embed = discord.Embed(
+                title="❌ LÍNEA ENCRIPTADA — RASTREO FALLIDO",
+                description=(
+                    ">>> La identidad del remitente sigue protegida por encriptación asimétrica.\n\n"
+                    "Inténtalo de nuevo. Probabilidad de éxito: **20%** (1 de cada 5)."
+                ),
+                color=0xFF0000,
+                timestamp=datetime.now()
+            )
+            embed.set_footer(text=f"Agente: {ctx.author.display_name} · FBI Nova Agora")
+            await ctx.send(embed=embed)
+            await self.log("DESCIFRAR_FAIL", f"{ctx.author.name} falló DW:{mensaje_id}")
 
     @app_commands.command(name='descifrar', description="Descifra mensajes DeepWeb - FBI NOVA AGORA V2")
     async def descifrar(self, interaction: discord.Interaction, mensaje_id: int = None):
@@ -5894,6 +6144,209 @@ class Roleplay(BaseCog):
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -entorno: {str(e)[:100]}"))
 
+    @commands.group(name='negocio', aliases=['negocios', 'business'], invoke_without_command=True)
+    @check_ban()
+    @tiene_rol_usuario()
+    async def negocio(self, ctx):
+        """Sistema de negocios — Máximo 8 negocios por usuario.
+        Subcomandos:
+          -negocio lista    — Ver tus negocios
+          -negocio reclamar — Cobrar las ganancias acumuladas
+          -negocio info     — Info del sistema
+        """
+        uid = ctx.author.id
+        rows = await db.fetchall("SELECT id,nombre,tipo,ganancia,ultimo_cobro,activo FROM negocios WHERE owner_id=? AND activo=1", (uid,))
+        embed = discord.Embed(
+            title="🏢 TUS NEGOCIOS",
+            description=f"Tienes **{len(rows)}/8** negocios activos.",
+            color=0x00B4FF,
+            timestamp=datetime.now()
+        )
+        if not rows:
+            embed.add_field(name="Sin negocios", value="No tienes negocios registrados.\nContacta con un Admin para registrar uno.", inline=False)
+        else:
+            for r in rows:
+                ult = r[4] or "Nunca"
+                embed.add_field(
+                    name=f"🏪 {r[1]} ({r[2]})",
+                    value=f"💰 Ganancia: `${r[3]:,}/cobro`\n🕒 Último cobro: `{ult}`",
+                    inline=True
+                )
+        embed.set_footer(text=f"NOVA AGORA RP · Negocios · {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+
+    @negocio.command(name='reclamar', aliases=['cobrar', 'claim'])
+    @check_ban()
+    @tiene_rol_usuario()
+    async def negocio_reclamar(self, ctx):
+        """Cobra las ganancias de todos tus negocios.
+        Solo puedes cobrar 1 vez cada 24 horas por negocio.
+        """
+        uid  = ctx.author.id
+        rows = await db.fetchall("SELECT id,nombre,ganancia,ultimo_cobro FROM negocios WHERE owner_id=? AND activo=1", (uid,))
+        if not rows:
+            return await ctx.send(embed=embed_error("No tienes negocios activos para cobrar."))
+        ahora       = datetime.now()
+        total_cobro = 0
+        cobrados    = []
+        pendientes  = []
+        for r in rows:
+            nid, nombre, ganancia, ult = r
+            if ult:
+                try:
+                    ult_dt = datetime.fromisoformat(ult)
+                    diff   = (ahora - ult_dt).total_seconds()
+                    if diff < 86400:  # 24h
+                        horas_rest = int((86400 - diff) / 3600)
+                        pendientes.append(f"🏪 **{nombre}** — espera `{horas_rest}h` más")
+                        continue
+                except Exception:
+                    pass
+            total_cobro += ganancia
+            cobrados.append(f"🏪 **{nombre}** → `+${ganancia:,}`")
+            await db.execute("UPDATE negocios SET ultimo_cobro=? WHERE id=?", (ahora.isoformat(), nid))
+        if total_cobro > 0:
+            await db.add_cash(uid, total_cobro)
+        embed = discord.Embed(
+            title="💰 COBRO DE NEGOCIOS",
+            color=0x00FF88,
+            timestamp=ahora
+        )
+        if cobrados:
+            embed.add_field(name="✅ Cobrado", value="\n".join(cobrados), inline=False)
+            embed.add_field(name="💵 Total cobrado", value=f"`${total_cobro:,}`", inline=True)
+        if pendientes:
+            embed.add_field(name="⏳ Pendientes (24h)", value="\n".join(pendientes), inline=False)
+        if total_cobro == 0:
+            embed.description = "No había ganancias disponibles ahora. Espera al menos **24 horas** desde el último cobro."
+            embed.color = 0xFF6600
+        embed.set_footer(text=f"NOVA AGORA RP · Negocios · {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+        await self.log("NEGOCIO_COBRO", f"{ctx.author.name} cobró ${total_cobro:,}")
+
+    @negocio.command(name='registrar')
+    @tiene_rol_equipo_especial()
+    async def negocio_registrar(self, ctx, usuario: discord.Member = None, ganancia: int = 500, *, nombre: str = "Negocio"):
+        """[Staff] Registra un negocio a un usuario. Máx 8 por usuario.
+        Uso: -negocio registrar @usuario <ganancia> <nombre>
+        """
+        if not usuario:
+            return await ctx.send(embed=embed_error("Uso: `-negocio registrar @usuario <ganancia> <nombre>`"))
+        uid = usuario.id
+        count = await db.fetchone("SELECT COUNT(*) FROM negocios WHERE owner_id=? AND activo=1", (uid,))
+        if count and count[0] >= 8:
+            return await ctx.send(embed=embed_error(f"{usuario.mention} ya tiene el máximo de **8 negocios**."))
+        await db.execute(
+            "INSERT INTO negocios (owner_id, nombre, ganancia) VALUES (?,?,?)",
+            (uid, nombre, ganancia)
+        )
+        embed = discord.Embed(
+            title="✅ Negocio registrado",
+            description=f"**{nombre}** ha sido registrado para {usuario.mention}.\nGanancia por cobro: `${ganancia:,}`",
+            color=0x00FF88
+        )
+        await ctx.send(embed=embed)
+        await self.log("NEGOCIO_REG", f"{ctx.author.name} registró negocio '{nombre}' a {usuario.name} (${ganancia:,})")
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+    @commands.command(name='sugerencia')
+    @check_ban()
+    @tiene_rol_usuario()
+    async def sugerencia(self, ctx, *, texto: str = None):
+        """Publica una sugerencia para el servidor.
+        Al alcanzar 40 reacciones ✅, se notifica a los admins automáticamente.
+        Uso: -sugerencia <tu sugerencia>
+        """
+        if not texto:
+            return await ctx.send(embed=embed_help(
+                "sugerencia", "Publica una sugerencia. Con 40 reacciones se notifica a los admins.",
+                "-sugerencia <texto>", "-sugerencia Añadir un nuevo trabajo de taxista", "Ciudadano"
+            ))
+        if len(texto) < 10:
+            return await ctx.send(embed=embed_error("La sugerencia debe tener al menos 10 caracteres."))
+        embed = discord.Embed(
+            title="💡 SUGERENCIA DE LA COMUNIDAD",
+            description=f">>> {texto}",
+            color=0x00B4FF,
+            timestamp=datetime.now()
+        )
+        embed.set_author(
+            name=f"Propuesto por: {ctx.author.display_name}",
+            icon_url=ctx.author.display_avatar.url
+        )
+        embed.add_field(
+            name="\u200b",
+            value=(
+                "✅ — A favor\n"
+                "❌ — En contra\n\n"
+                "*Si llega a **40 reacciones ✅**, se notificará a los administradores.*"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="NOVA AGORA RP · Buzón de Sugerencias")
+        msg = await ctx.send(embed=embed)
+        await msg.add_reaction("✅")
+        await msg.add_reaction("❌")
+        # Guardar en cache para tracking
+        SUGERENCIAS_ACTIVAS[msg.id] = {
+            "autor_id":   ctx.author.id,
+            "texto":      texto,
+            "canal_id":   ctx.channel.id,
+            "guild_id":   ctx.guild.id,
+            "alerta_env": False
+        }
+        await self.log("SUGERENCIA", f"{ctx.author.name}: {texto[:80]}")
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+    @commands.Cog.listener(name="on_raw_reaction_add")
+    async def _on_sugerencia_reaction(self, payload: discord.RawReactionActionEvent):
+        """Detecta cuando una sugerencia llega a 40 reacciones ✅."""
+        if payload.user_id == self.bot.user.id:
+            return
+        msg_id = payload.message_id
+        if msg_id not in SUGERENCIAS_ACTIVAS:
+            return
+        sug = SUGERENCIAS_ACTIVAS[msg_id]
+        if str(payload.emoji) != "✅":
+            return
+        if sug.get("alerta_env"):
+            return  # Ya se envió la alerta
+        try:
+            guild  = self.bot.get_guild(sug["guild_id"])
+            canal  = guild.get_channel(sug["canal_id"])
+            msg    = await canal.fetch_message(msg_id)
+            for r in msg.reactions:
+                if str(r.emoji) == "✅" and r.count >= 40:
+                    sug["alerta_env"] = True
+                    admin_role = guild.get_role(1450592121974161577)  # ID del rol admin
+                    admin_mention = admin_role.mention if admin_role else "<@&1450592121974161577>"
+                    autor = guild.get_member(sug["autor_id"])
+                    autor_txt = autor.display_name if autor else f"ID:{sug['autor_id']}"
+                    embed_alerta = discord.Embed(
+                        title="🔔 SUGERENCIA DESTACADA — 40+ votos",
+                        description=f">>> {sug['texto']}",
+                        color=0xFFD700,
+                        timestamp=datetime.now()
+                    )
+                    embed_alerta.add_field(name="👤 Propuesta por", value=autor_txt, inline=True)
+                    embed_alerta.add_field(name="✅ Votos a favor", value=f"`{r.count}`", inline=True)
+                    embed_alerta.add_field(name="🔗 Ver sugerencia", value=f"[Clic aquí]({msg.jump_url})", inline=True)
+                    embed_alerta.set_footer(text="NOVA AGORA RP · Sugerencia Destacada")
+                    await canal.send(
+                        content=f"{admin_mention} ¡Una sugerencia ha alcanzado **40 votos**!",
+                        embed=embed_alerta,
+                        allowed_mentions=discord.AllowedMentions(roles=True)
+                    )
+                    break
+        except Exception as e:
+            print(f"[SUGERENCIA] Error: {e}")
+
     @commands.command(name='cargar')
     @tiene_rol_equipo_especial()
     async def cargar(self, ctx, usuario: discord.Member = None, *, texto: str = None):
@@ -6095,6 +6548,7 @@ class Hosting(BaseCog):
 
 # ── Cache en memoria de votaciones activas ──
 VOTACIONES_ACTIVAS: dict = {}
+SUGERENCIAS_ACTIVAS: dict  = {}  # {msg_id: {autor_id, texto, canal_id, guild_id, alerta_env}}
 # {msg_id (int): {canal_id, guild_id, autor_id, hora, tema, votos_si: set, votos_no: set, iniciado: bool}}
 
 def _vot_can_manage(interaction: discord.Interaction) -> bool:
@@ -9039,36 +9493,141 @@ class Alertas(BaseCog):
 
     @commands.command(name='alerta-defcon')
     @tiene_rol_lspd_operativo()
-    async def alerta_defcon(self, ctx, nivel: int = None):
-        if nivel is None or nivel not in range(1, 7):
+    async def alerta_defcon(self, ctx, estado: str = None):
+        """
+        Sistema de alertas de estado de la ciudad — 5 niveles.
+        Uso: -alerta-defcon <verde|amarillo|naranja|rojo|negro>
+        """
+        ESTADOS = {
+            "verde":    {
+                "color": 0x2ECC71, "emoji": "🟢", "nombre": "ESTADO VERDE",
+                "situacion": "Normalidad absoluta en la ciudad.",
+                "efectos": (
+                    "• Operativa policial estándar.\n"
+                    "• Sin restricciones para ciudadanos.\n"
+                    "• Eventos públicos permitidos."
+                ),
+                "anuncio": (
+                    "🚨 **Gobierno de Nova Agora informa:** Estado Verde activo.\n"
+                    "La ciudad opera con total normalidad."
+                ),
+                "instruccion": "Patrullaje rutinario. Sin restricciones."
+            },
+            "amarillo": {
+                "color": 0xF1C40F, "emoji": "🟡", "nombre": "ESTADO AMARILLO",
+                "situacion": "Aumento de actividad criminal o amenaza potencial.",
+                "efectos": (
+                    "• Incremento de patrullas policiales.\n"
+                    "• Controles preventivos.\n"
+                    "• Vigilancia reforzada en zonas sensibles."
+                ),
+                "anuncio": (
+                    "🚨 **Atención ciudadanos.** Se declara Estado Amarillo debido a posibles "
+                    "riesgos para la seguridad pública.\nSe recomienda colaborar con las autoridades."
+                ),
+                "instruccion": "Reforzar patrullaje. Controles preventivos en zonas clave."
+            },
+            "naranja": {
+                "color": 0xE67E22, "emoji": "🟠", "nombre": "ESTADO NARANJA",
+                "situacion": "Amenaza seria para la seguridad ciudadana.",
+                "efectos": (
+                    "• Controles masivos.\n"
+                    "• Restricciones en determinadas zonas.\n"
+                    "• Despliegue de unidades especiales."
+                ),
+                "anuncio": (
+                    "🚨 **Estado Naranja declarado.**\nSe recomienda evitar desplazamientos "
+                    "innecesarios y seguir las indicaciones de las autoridades."
+                ),
+                "instruccion": "Despliegue de unidades especiales. Restricciones de zona activas."
+            },
+            "rojo": {
+                "color": 0xE74C3C, "emoji": "🔴", "nombre": "ESTADO ROJO",
+                "situacion": "Emergencia grave o actividad criminal organizada de gran magnitud.",
+                "efectos": (
+                    "• Máxima alerta policial.\n"
+                    "• Cierre de accesos estratégicos.\n"
+                    "• Suspensión de eventos públicos.\n"
+                    "• Posibles confinamientos de zonas."
+                ),
+                "anuncio": (
+                    "🚨🚨 **Atención Nova Agora. Estado Rojo activado.**\n"
+                    "Permanezcan alejados de las zonas afectadas y sigan "
+                    "todas las instrucciones policiales."
+                ),
+                "instruccion": "Cierre de accesos. Máxima alerta. Suspensión de eventos públicos."
+            },
+            "negro": {
+                "color": 0x1A1A1A, "emoji": "⚫", "nombre": "ESTADO NEGRO",
+                "situacion": "Amenaza extrema para la ciudad. Situación fuera de control.",
+                "efectos": (
+                    "• Movilización total de fuerzas de seguridad.\n"
+                    "• Cierre de la mayoría de accesos.\n"
+                    "• Operaciones tácticas especiales.\n"
+                    "• Prioridad absoluta a la seguridad pública."
+                ),
+                "anuncio": (
+                    "🚨⚫ **Estado Negro declarado.**\n"
+                    "**TODOS A ZONAS SEGURAS O EN SUS CASAS.\n"
+                    "De lo contrario, serán abatidos.**\n"
+                    "Toda la población debe permanecer en zonas seguras hasta nuevo aviso."
+                ),
+                "instruccion": "MOVILIZACIÓN TOTAL. Cierre de accesos. Operaciones tácticas activas."
+            },
+        }
+        # Alias numéricos compatibles con sistema anterior (1-6)
+        ALIAS_NUM = {"1":"negro","2":"rojo","3":"naranja","4":"amarillo","5":"verde","6":"verde"}
+
+        if estado:
+            estado = estado.lower().strip()
+            if estado in ALIAS_NUM:
+                estado = ALIAS_NUM[estado]
+
+        if not estado or estado not in ESTADOS:
             embed = discord.Embed(
-                title="🛡️ SISTEMA DEFCON",
-                description="**Uso:** `-alerta-defcon <nivel>`\n\n**Niveles disponibles:**\n🔵 DEFCON 6 — Paz total\n🟢 DEFCON 5 — Vigilancia normal\n🟡 DEFCON 4 — Alerta elevada\n🟠 DEFCON 3 — Alerta alta\n🔴 DEFCON 2 — Peligro inminente\n🚨 DEFCON 1 — MÁXIMA EMERGENCIA",
+                title="🛡️ SISTEMA DE ALERTAS — NOVA AGORA RP",
+                description=(
+                    "**Uso:** `-alerta-defcon <estado>`\n\n"
+                    "🟢 `verde`    — Normalidad absoluta\n"
+                    "🟡 `amarillo` — Actividad criminal potencial\n"
+                    "🟠 `naranja`  — Amenaza seria confirmada\n"
+                    "🔴 `rojo`     — Emergencia grave\n"
+                    "⚫ `negro`    — Amenaza extrema / TODOS A CASA"
+                ),
                 color=0x3498DB
             )
+            embed.set_footer(text="NOVA AGORA RP · Sistema de Alertas")
             return await ctx.send(embed=embed)
-        defcon_data = {
-            6: {"color": 0x3498DB, "emoji": "🔵", "nombre": "PAZ TOTAL", "desc": "***Situación completamente tranquila. Sin amenazas activas. Patrullaje rutinario.***", "accion": "Patrullaje estándar. Sin alerta activa."},
-            5: {"color": 0x2ECC71, "emoji": "🟢", "nombre": "VIGILANCIA NORMAL", "desc": "***Vigilancia estándar activa. Sin amenazas confirmadas. Estado operativo normal.***", "accion": "Mantener vigilancia. Reportar cualquier actividad sospechosa."},
-            4: {"color": 0xF1C40F, "emoji": "🟡", "nombre": "ALERTA ELEVADA", "desc": "***Actividad sospechosa detectada. Se requiere presencia policial reforzada en zonas clave.***", "accion": "Reforzar patrullaje. Estar alerta ante posibles incidentes."},
-            3: {"color": 0xE67E22, "emoji": "🟠", "nombre": "ALERTA ALTA", "desc": "***Amenaza confirmada en la ciudad. Todas las unidades deben estar en posición.***", "accion": "Todas las unidades en alerta. Coordinación con superiores obligatoria."},
-            2: {"color": 0xE74C3C, "emoji": "🔴", "nombre": "PELIGRO INMINENTE", "desc": "***PELIGRO INMINENTE. Situación crítica activa. Se requiere respuesta inmediata de todas las unidades.***", "accion": "Respuesta inmediata requerida. Evacuar civiles de la zona si es necesario."},
-            1: {"color": 0x8B0000, "emoji": "🚨", "nombre": "MÁXIMA EMERGENCIA", "desc": "***⚠️ DEFCON 1 — MÁXIMA EMERGENCIA. SITUACIÓN FUERA DE CONTROL. TODAS LAS UNIDADES DEBEN ACUDIR DE INMEDIATO. ⚠️***", "accion": "EMERGENCIA TOTAL. Todas las unidades disponibles a sus puestos. Sin excepción."},
-        }
-        d = defcon_data[nivel]
+
+        d = ESTADOS[estado]
+        lspd_role = ctx.guild.get_role(ROL_LSPD_ID)
+        lspd_mention = lspd_role.mention if lspd_role else "<@&1450592202165321759>"
+
         embed = discord.Embed(
-            title=f"{d['emoji']} DEFCON {nivel} — {d['nombre']} {d['emoji']}",
-            description=d['desc'],
-            color=d['color'],
+            title=f"{d['emoji']} {d['nombre']} {d['emoji']}",
+            description=f">>> {d['anuncio']}",
+            color=d["color"],
             timestamp=datetime.now()
         )
-        embed.add_field(name="📋 Acción requerida", value=d['accion'], inline=False)
-        embed.set_footer(text=f"Activado por {ctx.author.display_name} • LSPD Nova Agora RP")
-        await ctx.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
-        await self.log("ALERTA_DEFCON", f"{ctx.author.name} activó DEFCON {nivel}")
+        embed.add_field(name="📋 Situación",     value=d["situacion"],    inline=False)
+        embed.add_field(name="⚙️ Efectos",       value=d["efectos"],      inline=False)
+        embed.add_field(name="🚔 LSPD — Acción", value=f"`{d['instruccion']}`", inline=False)
+        embed.set_footer(
+            text=f"Activado por {ctx.author.display_name} • NOVA AGORA RP",
+            icon_url=ctx.author.display_avatar.url
+        )
+        if ctx.guild.icon:
+            embed.set_thumbnail(url=ctx.guild.icon.url)
+
+        await ctx.send(
+            content=f"@everyone {lspd_mention}",
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(everyone=True, roles=True)
+        )
+        await self.log("ALERTA_DEFCON", f"{ctx.author.name} activó {d['nombre']}")
         try:
             await ctx.message.delete()
-        except:
+        except Exception:
             pass
 
 # ==================== COG: Disponibilidad ====================
