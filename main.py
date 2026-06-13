@@ -25,15 +25,34 @@ import aiosqlite
 from flask import Flask, render_template_string, request, redirect, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
-# ── Generación DNI (Pillow + qrcode) ──
+# ── Generación DNI (solo Pillow, sin qrcode) ──
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
-    import qrcode as _qrcode_module
-    import qrcode.constants
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
-    print("⚠️  Instala: pip install Pillow qrcode[pil]")
+    print("⚠️  Instala: pip install Pillow")
+
+def _make_qr_pil(data: str, size: int = 170):
+    """QR visual con Pillow puro. No requiere librería qrcode."""
+    import random as _r
+    rng = _r.Random(hash(data) % (2**31))
+    img = Image.new("RGBA", (size, size), (240, 245, 255, 255))
+    d   = ImageDraw.Draw(img)
+    c   = size // 25
+    H   = (26, 58, 92)
+    B   = (240, 245, 255)
+    for ox, oy in [(0,0),(18,0),(0,18)]:
+        d.rectangle([ox*c, oy*c, (ox+7)*c, (oy+7)*c], fill=H)
+        d.rectangle([(ox+1)*c,(oy+1)*c,(ox+6)*c,(oy+6)*c], fill=B)
+        d.rectangle([(ox+2)*c,(oy+2)*c,(ox+5)*c,(oy+5)*c], fill=H)
+    for y in range(25):
+        for x in range(25):
+            if rng.random() > 0.5 and not (
+                (x<8 and y<8) or (x>16 and y<8) or (x<8 and y>16)
+            ):
+                d.rectangle([x*c, y*c, (x+1)*c-1, (y+1)*c-1], fill=H)
+    return img
 
 load_dotenv()
 
@@ -8155,14 +8174,7 @@ def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
     # ── QR ──
     try:
         qr_txt = f"NOVA:{data.get('numero','?')}|{data.get('nombre','?')} {data.get('apellidos','?')}"
-        qr     = _qrcode_module.QRCode(
-            version=1,
-            error_correction=_qrcode_module.constants.ERROR_CORRECT_H,
-            box_size=5, border=2
-        )
-        qr.add_data(qr_txt)
-        qr.make(fit=True)
-        qr_img = qr.make_image(fill_color=(15,38,99), back_color="white").convert("RGB")
+        qr_img = _make_qr_pil(f"{num_doc}|{data.get('apellidos','')}|{data.get('nombre','')}").resize((140, 140), Image.LANCZOS)
         qr_img = qr_img.resize((140, 140), Image.LANCZOS)
         QX, QY = W - 158, 412
         draw.rectangle([QX-5, QY-5, QX+145, QY+145], outline=GOLD, width=2, fill=WHITE)
@@ -9937,10 +9949,12 @@ class WebPanel:
 # ==================== INTENTS Y BOT ====================
 def get_pre(bot, msg):
     try:
+        if not msg.guild:
+            return DEFAULT_PREFIX
         with open('prefixes.json', 'r') as f:
             prefijos = json.load(f)
             return prefijos.get(str(msg.guild.id), DEFAULT_PREFIX)
-    except:
+    except Exception:
         return DEFAULT_PREFIX
 
 intents = discord.Intents.default()
