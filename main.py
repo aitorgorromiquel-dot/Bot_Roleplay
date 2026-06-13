@@ -46,6 +46,7 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", secrets.token_urlsafe(16))
 print(f"🔐 Panel web token: {ADMIN_TOKEN}")
 
 DEFAULT_PREFIX = '-'
+PRECIO_INFINITO = 10**12  # Precio inaccesible — armas de fuego NO comprables
 CANAL_LOGS = 0
 CANAL_PERIODICO = 0
 CANAL_VOICE_CATEGORY = 0
@@ -120,10 +121,10 @@ TIENDA_ITEMS_BASE = [
     ("Escopeta corredera", PRECIO_INFINITO, "🔫", "Alto poder"),
     ("Ak47", PRECIO_INFINITO, "🔫", "Legendario"),
     ("Rifle bullpup", PRECIO_INFINITO, "🔫", "Preciso"),
-    ("Coctel molotov", 10**12, "🔥", "Incendio"),
-    ("Granada casera", 10**12, "💣", "Explosión"),
-    ("Granada", 10**12, "💣", "Letal"),
-    ("C4", 10**12, "🧨", "Demolición"),
+    ("Coctel molotov", PRECIO_INFINITO, "🔥", "Incendio"),
+    ("Granada casera", PRECIO_INFINITO, "💣", "Explosión"),
+    ("Granada", PRECIO_INFINITO, "💣", "Letal"),
+    ("C4", PRECIO_INFINITO, "🧨", "Demolición"),
     ("Licencia de camión", 1600, "🚚", "Camiones"),
     ("Licencia de vehiculo", 3000, "🚗", "Coches"),
     ("Licencia de moto", 2500, "🏍️", "Motos"),
@@ -394,7 +395,6 @@ DEFAULT_EMOJIS = {
     "ciudadano":"👤",  # Emoji de ciudadano en el nickname. Cámbialo con -set-emoji ciudadano <emoji>
 }
 
-PRECIO_INFINITO = 10**12  # Representa precio infinito
 
 # ==================== FUNCIONES AUXILIARES ====================
 def embed_error(msg): return discord.Embed(title="❌ Error", description=msg, color=0xFF0000)
@@ -4092,7 +4092,7 @@ class PDA(BaseCog):
         user_state = await db.get_user_state(usuario.id)
         if user_state.get('placa'):
             return await ctx.send(embed=embed_error(f"{usuario.display_name} ya tiene una placa asignada: {user_state['placa']}. Usa `-pda quitar-placa` si quieres cambiarla."))
-        await db.update_user_state(usuario.id, placa=placa_completa)
+        await db.update_user_state(usuario.id, placa=placa_completa.zfill(5))
         embed = discord.Embed(title="✅ PLACA ASIGNADA", description=f"Se ha asignado la placa **{placa_completa}** a {usuario.mention}.", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("CREAR_PLACA", f"{ctx.author.name} asignó placa {placa_completa} a {usuario.name}")
@@ -4155,7 +4155,7 @@ class PDA(BaseCog):
         user_state = await db.get_user_state(ctx.author.id)
         if not user_state.get('placa'):
             return await ctx.send(embed=embed_error("No tienes una placa asignada."))
-        await db.update_user_state(ctx.author.id, placa=None)
+        await db.update_user_state(ctx.author.id, placa=None.zfill(5))
         embed = discord.Embed(title="🗑️ PLACA ELIMINADA", description="Tu placa policial ha sido eliminada.", color=0xFF6600)
         await ctx.send(embed=embed)
         await self.log("QUITAR_PLACA", f"{ctx.author.name} eliminó su placa")
@@ -6541,6 +6541,42 @@ class Roleplay(BaseCog):
                 pass
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -curar: {str(e)[:100]}"))
+
+    @commands.Cog.listener()
+    async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User):
+        """Monitorea reacciones en sugerencias. Al llegar a 40 ✅, notifica a la admin."""
+        if user.bot:
+            return
+        msg = reaction.message
+        row = await db.fetchone(
+            "SELECT user_id, texto, notificado FROM sugerencias WHERE message_id = ?",
+            (msg.id,)
+        )
+        if not row:
+            return
+        if row[2]:  # ya notificado
+            return
+        if str(reaction.emoji) != "✅":
+            return
+        count = reaction.count
+        if count >= 40:
+            await db.execute(
+                "UPDATE sugerencias SET notificado = 1 WHERE message_id = ?",
+                (msg.id,)
+            )
+            embed = discord.Embed(
+                title="🌟 ¡Sugerencia muy votada!",
+                description=(
+                    f"La sugerencia ha alcanzado **{count} votos positivos** ✅\n\n"
+                    f"**Sugerencia:** {row[1]}\n\n"
+                    f"<@&1450592121974161577> — *¿Algo más queréis chicos?*"
+                ),
+                color=0xFFD700,
+                timestamp=datetime.now()
+            )
+            embed.set_footer(text="NOVA AGORA RP · Sistema de Sugerencias")
+            await msg.channel.send(embed=embed)
+
 
 # ==================== COG: Hosting ====================
 class Hosting(BaseCog):
