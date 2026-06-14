@@ -703,6 +703,11 @@ class Database:
                     last_level_up TEXT
                 )
             """)
+            # Migración: añadir columna last_level_up si no existe (DBs antiguas)
+            try:
+                await db.execute("ALTER TABLE niveles ADD COLUMN last_level_up TEXT")
+            except Exception:
+                pass  # Ya existe, ignorar
             # Blacklist y antiraid
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS blacklist (
@@ -1752,7 +1757,10 @@ class BaseCog(commands.Cog):
 
     async def _del(self, ctx):
         """Borra el mensaje del comando de forma segura (ignora errores)."""
-        await self._del(ctx)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
 
     async def obtener_nombre_dni(self, uid):
         try:
@@ -3349,15 +3357,12 @@ class Atracos(BaseCog):
                 await db.add_item(uid, 'personal', droga, gramos)
                 items_bonus.append(f"{gramos}g {droga}")
             await db.add_black(uid, dinero)
-            xp_ganado = random.randint(50, 150)
-            await db.add_xp(uid, xp_ganado, "heist")
             await db.inc_estadistica('robos_totales')
             await db.add_heist_log(uid, heist_name, "success", dinero, dinero, json.dumps(items_bonus))
             await db.reset_heist_preparations(uid, heist_name)
             descripcion = f"✅ **¡ATRACO EXITOSO!**\n\n💶 **+${dinero:,}** en dinero negro"
             if items_bonus:
                 descripcion += f"\n📦 **Botín adicional:** {', '.join(items_bonus)}"
-            descripcion += f"\n⭐ +{xp_ganado} XP"
             embed = discord.Embed(title=f"🏆 {heist['nombre']} — EXITOSO", description=descripcion, color=0x00FF00)
             await msg.edit(embed=embed)
             await self.log("ROB_SUCCESS", f"{ctx.author.name} completó {heist_name}: +${dinero}")
@@ -3479,12 +3484,10 @@ class Preparatorias(BaseCog):
         await asyncio.sleep(random.randint(5, 10))
 
         await db.complete_preparation(uid, heist_id, numero)
-        xp_reward = 50 + (numero * 10)
-        await db.add_xp(uid, xp_reward, "heist")
 
         embed_complete = discord.Embed(
             title=f"✅ PREPARATORIA {numero} COMPLETADA — {heist['nombre']}",
-            description=f"**Objetivo completado:** {descripcion}\n\n⭐ +{xp_reward} XP\n📋 Progreso: {numero}/{total_preps}",
+            description=f"**Objetivo completado:** {descripcion}\n\n📋 Progreso: {numero}/{total_preps}",
             color=0x00FF00,
             timestamp=datetime.now()
         )
@@ -5131,19 +5134,14 @@ class Admin(BaseCog):
         if cantidad is None:
             start = await db.get_start_money()
             estado = f"**${start:,}**" if start > 0 else "**Desactivado**"
-            return await ctx.send(embed=embed_help(
-                "set-economy",
-                "Configura el dinero inicial que reciben los nuevos miembros al unirse al servidor.",
-                "-set-economy <cantidad>",
-                "-set-economy 500",
-                "Equipo Especial"
-            ) if False else discord.Embed(
+            embed = discord.Embed(
                 title="⚙️ Economía Inicial",
                 description=f"Los nuevos miembros reciben: {estado}\n\n"
                             f"Usa `-set-economy <cantidad>` para cambiarlo.\n"
                             f"Usa `-set-economy 0` para desactivarlo.",
                 color=0x3498DB
-            ))
+            )
+            return await ctx.send(embed=embed)
         if cantidad < 0:
             return await ctx.send(embed=embed_error("La cantidad no puede ser negativa."))
         await db.set_start_money(cantidad)
@@ -6439,31 +6437,35 @@ PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView]  # Encu
 class Soporte(BaseCog):
     @commands.command(name='status')
     @tiene_rol_iniciador()
-    async def status(self, ctx, iniciador: str = None, ciudadanos: int = None, policias: int = None, soporte: int = 0):
-        if iniciador is None or ciudadanos is None or policias is None:
-            embed = embed_help("status", "Publica el estado de la sesión de rol en el canal actual.", "-status <iniciador> <ciudadanos> <policías> [soporte]", "-status Juan 10 5 2", "Iniciador de rol")
+    async def status(self, ctx, id_sesion: str = None, iniciador: discord.Member = None, ciudadanos: int = None, polis: int = None, admins: int = 0):
+        if id_sesion is None or iniciador is None or ciudadanos is None or polis is None:
+            embed = embed_help(
+                "status",
+                "Publica el estado de la sesión de rol en el canal actual.",
+                "-status <id_sesion> <@iniciador> <ciudadanos> <polis> [admins]",
+                "-status #001 @Not3Aithor_ 10 5 2",
+                "Iniciador de rol"
+            )
             return await ctx.send(embed=embed)
-        if any(x < 0 for x in [ciudadanos, policias, soporte]):
+        if any(x < 0 for x in [ciudadanos, polis, admins]):
             return await ctx.send(embed=embed_error("Los números no pueden ser negativos."))
-        total = ciudadanos + policias + soporte
+        total = ciudadanos + polis + admins
         embed = discord.Embed(title="🚨 ESTAMOS EN ROL 🚨", color=discord.Color.red(), timestamp=datetime.now())
-        embed.add_field(name="📌 Iniciador:", value=f"```\n{iniciador}\n```", inline=False)
-        embed.add_field(name="🧑 Personas en rol:", value=f"```\n{ciudadanos}\n```", inline=False)
-        embed.add_field(name="🚔 Policías en rol:", value=f"```\n{policias}\n```", inline=False)
-        embed.add_field(name="🛠️ Soporte en rol:", value=f"```\n{soporte}\n```", inline=False)
-        embed.add_field(name="📊 Total en sesión:", value=f"```\n{total}\n```", inline=False)
+        embed.add_field(name="🆔 ID Sesión:",        value=f"```\n{id_sesion}\n```",              inline=False)
+        embed.add_field(name="📌 Iniciador:",         value=f"```\n{iniciador.display_name}\n```", inline=False)
+        embed.add_field(name="🧑 Ciudadanos en rol:", value=f"```\n{ciudadanos}\n```",             inline=False)
+        embed.add_field(name="🚔 Policías en rol:",   value=f"```\n{polis}\n```",                  inline=False)
+        embed.add_field(name="🛡️ Admins en rol:",    value=f"```\n{admins}\n```",                 inline=False)
+        embed.add_field(name="📊 Total en sesión:",   value=f"```\n{total}\n```",                  inline=False)
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
-        embed.set_footer(text=f"Soporte: {ctx.author.display_name}  ·  NOVA AGORA", icon_url=ctx.author.display_avatar.url)
+        embed.set_footer(text=f"Publicado por {ctx.author.display_name}  ·  NOVA AGORA", icon_url=ctx.author.display_avatar.url)
         await self._del(ctx)
-        # ── Mismo mensaje de siempre + botones PanelControl adjuntos ──
-        panel_view = PanelControlView()
-        msg_status = await ctx.send(
-            content=f"<@&{ROL_USUARIO_ID}>",
+        await ctx.send(
+            content=f"<@&1450592126491558131>",
             embed=embed,
-            view=panel_view,
             allowed_mentions=discord.AllowedMentions(roles=True)
         )
-        await self.log("STATUS", f"{ctx.author.name} — {iniciador} | {ciudadanos}p {policias}pol {soporte}sop")
+        await self.log("STATUS", f"{ctx.author.name} — ID:{id_sesion} | {iniciador.display_name} | {ciudadanos}p {polis}pol {admins}adm")
 
     @commands.command(name='votacion')
     @tiene_rol_iniciador()
@@ -6972,7 +6974,7 @@ class Niveles(BaseCog):
             await db.execute("INSERT OR IGNORE INTO niveles (user_id, mensajes, last_message_time, last_message_content) VALUES (?, ?, ?, ?)", (uid, 0, None, None))
         await db.execute("UPDATE niveles SET mensajes = ?, last_message_time = ?, last_message_content = ? WHERE user_id = ?", (new_messages, now.isoformat(), message.content[:100], uid))
         if new_level > old_level and new_level > 0:
-            nivel_data = await db.get_nivel(uid)
+            nivel_data = {"xp": 0, "nivel": 0, "last_level_up": None}  # niveles desactivados
             last_level_up = nivel_data.get('last_level_up')
             puede_subir = True
             if last_level_up:
@@ -7012,7 +7014,7 @@ class Niveles(BaseCog):
                     if (datetime.now() - last).total_seconds() < 300:
                         continue
                 xp = XP_POR_TIEMPO
-                nuevo_nivel = await db.add_xp(member.id, xp, "time")
+                nuevo_nivel =
                 if nuevo_nivel:
                     nivel_data = await db.get_nivel(member.id)
                     last_level_up = nivel_data.get('last_level_up')
