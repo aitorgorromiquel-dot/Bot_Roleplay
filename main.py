@@ -1874,7 +1874,7 @@ class Principal(BaseCog):
         view = TiendaPaginator(ctx.author.id)
         await view.send(ctx)
 
-    @commands.command(name='comprar')
+    @commands.command(name='comprar', aliases=['buy'])
     @check_ban()
     @tiene_rol_usuario()
     async def comprar(self, ctx, *, pedido: str):
@@ -7013,20 +7013,7 @@ class Niveles(BaseCog):
                     last = datetime.fromisoformat(user_state[0])
                     if (datetime.now() - last).total_seconds() < 300:
                         continue
-                xp = XP_POR_TIEMPO
-                nuevo_nivel =
-                if nuevo_nivel:
-                    nivel_data = await db.get_nivel(member.id)
-                    last_level_up = nivel_data.get('last_level_up')
-                    puede_subir = True
-                    if last_level_up:
-                        ultima_subida = datetime.fromisoformat(last_level_up)
-                        if (datetime.now() - ultima_subida).days < DIAS_PARA_SUBIR_NIVEL:
-                            puede_subir = False
-                    if puede_subir:
-                        await self.verificar_recompensa_nivel(member, nuevo_nivel)
-                        canal = member.guild.system_channel or member.guild.text_channels[0]
-                        await canal.send(f"🎉 {member.mention} ha subido al nivel **{nuevo_nivel}**!")
+                xp = XP_POR_TIEMPO  # XP registrado pero niveles desactivados
 
     async def verificar_recompensa_nivel(self, member: discord.Member, nivel: int):
         for nivel_requerido, rol_id in ROLES_POR_NIVEL.items():
