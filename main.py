@@ -414,7 +414,6 @@ DEFAULT_EMOJIS = {
     "ciudadano":"👤",  # Emoji de ciudadano en el nickname. Cámbialo con -set-emoji ciudadano <emoji>
 }
 
-
 # ==================== FUNCIONES AUXILIARES ====================
 def embed_error(msg): return discord.Embed(title="❌ Error", description=msg, color=0xFF0000)
 def embed_success(titulo, desc="", color=0x00FF00): return discord.Embed(title=titulo, description=desc, color=color)
@@ -854,7 +853,6 @@ class Database:
                 await db.execute("DROP TABLE heist_prep")
                 print("✅ Datos migrados de heist_prep a heist_preparations")
 
-
             # DeepWeb anónima (track por message_id)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS dw_mensajes (
@@ -874,17 +872,6 @@ class Database:
                     canal_id INTEGER,
                     notificado BOOLEAN DEFAULT 0,
                     sent_at TEXT
-                )
-            """)
-            # Negocios
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS negocios (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    nombre TEXT,
-                    ganancia_hora INTEGER DEFAULT 100,
-                    ultimo_cobro TEXT,
-                    activo BOOLEAN DEFAULT 1
                 )
             """)
             await db.commit()
@@ -1763,6 +1750,10 @@ class BaseCog(commands.Cog):
                 pass
         return False
 
+    async def _del(self, ctx):
+        """Borra el mensaje del comando de forma segura (ignora errores)."""
+        await self._del(ctx)
+
     async def obtener_nombre_dni(self, uid):
         try:
             dni = await db.get_dni(uid)
@@ -1824,10 +1815,7 @@ class Principal(BaseCog):
         emoji_bank = await get_emoji('bank')
         embed.set_footer(text=f"{emoji_money} Saldo: **${economy['cash']:,}** | {emoji_bank} Banco: **${economy['bank']:,}**")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='balance-top')
     @tiene_rol_usuario()
@@ -1869,10 +1857,7 @@ class Principal(BaseCog):
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
         embed.set_footer(text=f"Página {pagina}/{total_pags}  ·  {len(totales)} usuarios  ·  NOVA AGORA")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.hybrid_command(name='tienda', description="Abrir tienda")
     @check_ban()
@@ -1946,10 +1931,7 @@ class Principal(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("COMPRA", f"{ctx.author.name} compró {cantidad}x {item_norm} por ${precio:,} ({metodo})")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='comprar-licencia')
     @check_ban()
@@ -2016,10 +1998,7 @@ class Principal(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("COMPRA_LICENCIA", f"{ctx.author.name} compró {cantidad}x {item_name} por ${precio_total:,}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='licencia')
     @check_ban()
@@ -2055,10 +2034,7 @@ class Principal(BaseCog):
         embed.add_field(name="🔪 Licencias de armas", value=txt_armas, inline=False)
         embed.set_footer(text="Usa -comprar-licencia <tipo> [cantidad] para comprar una licencia directamente")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='use')
     @check_ban()
@@ -2138,10 +2114,7 @@ class Principal(BaseCog):
         embed.set_author(name="🎮 Acción de Item", icon_url=ctx.author.display_avatar.url)
         await ctx.send(embed=embed)
         await self.log("USE_ITEM", f"{ctx.author.name} usó {item_real}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='blanquear', aliases=['lavar'])
     @check_ban()
@@ -2210,10 +2183,7 @@ class Principal(BaseCog):
 
         await ctx.send(embed=embed)
         await self.log("TIENDA_ILEGAL", f"{ctx.author.name} abrió la tienda ilegal")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='dar')
     @check_ban()
@@ -2248,10 +2218,7 @@ class Principal(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("DAR", f"{ctx.author.name} dio {cantidad}x {item_real} a {usuario.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='mover')
     @check_ban()
@@ -2269,10 +2236,7 @@ class Principal(BaseCog):
         await db.remove_item(uid, o, item, cantidad)
         await db.add_item(uid, d, item, cantidad)
         await ctx.send(embed=embed_success("✅ Movido", f"{cantidad}x {item} de {o} a {d}."))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='trabajo')
     @check_encarcelado()
@@ -2285,10 +2249,7 @@ class Principal(BaseCog):
         )
         view = TrabajoView()
         await ctx.send(embed=embed, view=view)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     # ── Bienvenida y dinero inicial automático ──────────────────────────
     @commands.Cog.listener()
@@ -2517,10 +2478,7 @@ class Drogas(BaseCog):
             )
         embed.set_footer(text="Precios dinámicos según oferta/demanda")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @droga.command(name='comprar')
     @check_ban()
@@ -2543,10 +2501,7 @@ class Drogas(BaseCog):
         embed = discord.Embed(title="✅ Compra realizada", description=f"{cantidad}x {tipo_norm} por **${costo:,}**", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("COMPRA_DROGA", f"{ctx.author.name}: {cantidad}x {tipo_norm} -> -${costo:,}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @droga.command(name='vender')
     @check_ban()
@@ -2605,10 +2560,7 @@ class Drogas(BaseCog):
             embed.set_footer(text="NOVA AGORA · Sistema de Vigilancia Ciudadana")
             await ctx.send(embed=embed)
             await self.log("VENTA_DROGA_FALLIDA", f"{ctx.author.name} intentó vender {tipo_norm} y activó alerta policial")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Vehiculos ====================
 class Vehiculos(BaseCog):
@@ -2631,10 +2583,7 @@ class Vehiculos(BaseCog):
                 inline=False
             )
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @vehiculo.command(name='conducir')
     @check_ban()
@@ -2660,10 +2609,7 @@ class Vehiculos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("VEHICULO_CONDUCIR", f"{ctx.author.name}: {info['modelo']} ({matricula}), gas: {nuevo_comb}%")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @vehiculo.command(name='repostar')
     @check_ban()
@@ -2694,10 +2640,7 @@ class Vehiculos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("VEHICULO_REPOSTAR", f"{ctx.author.name}: {info['modelo']}, +{necesarios}%, ${costo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @vehiculo.command(name='itv')
     @check_ban()
@@ -2722,10 +2665,7 @@ class Vehiculos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("VEHICULO_ITV", f"{ctx.author.name}: {matricula}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Armas ====================
 class Armas(BaseCog):
@@ -2744,10 +2684,7 @@ class Armas(BaseCog):
         embed.add_field(name="🔫 Armas equipadas:", value=txt_armas, inline=False)
         embed.add_field(name="Comandos:", value="`-arma equipar <tipo>`\n`-arma disparar`\n`-arma recargar <tipo> <cantidad>`", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @arma.command(name='equipar')
     @check_ban()
@@ -2782,10 +2719,7 @@ class Armas(BaseCog):
         embed = discord.Embed(title="🔫 ARMA EQUIPADA", description=f"**{tipo}** equipada.", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("ARMA_EQUIPAR", f"{ctx.author.name}: {tipo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @arma.command(name='disparar')
     @check_ban()
@@ -2808,10 +2742,7 @@ class Armas(BaseCog):
         embed = discord.Embed(title="💥 ¡DISPARO!", description=f"**{ctx.author.display_name}** dispara con **{arma}**\nMunición restante: {nueva_municion}\nDurabilidad: {nueva_durabilidad}%", color=0xFFA500)
         await ctx.send(embed=embed)
         await self.log("ARMA_DISPARAR", f"{ctx.author.name}: {arma}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @arma.command(name='recargar')
     @check_ban()
@@ -2833,10 +2764,7 @@ class Armas(BaseCog):
         embed = discord.Embed(title="🔫 ARMA RECARGADA", description=f"{tipo} recargada con {cantidad} balas.\nCosto: **${costo:,}**", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("ARMA_RECARGAR", f"{ctx.author.name}: {tipo}, +{cantidad} balas")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Mercado ====================
 class Mercado(BaseCog):
@@ -2860,10 +2788,7 @@ class Mercado(BaseCog):
             )
         embed.set_footer(text="Usa -mercado comprar <id> para comprar")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @mercado.command(name='publicar')
     @check_ban()
@@ -2894,10 +2819,7 @@ class Mercado(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("MERCADO_PUBLICAR", f"{ctx.author.name}: {item_real} por {precio_int}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @mercado.command(name='comprar')
     @check_ban()
@@ -2922,10 +2844,7 @@ class Mercado(BaseCog):
         embed = discord.Embed(title="✅ Compra realizada", description=f"Has comprado {item} por **${precio:,}**", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("MERCADO_COMPRA", f"{ctx.author.name} compró {item} a {vendedor} por ${precio:,}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @mercado.command(name='mispub')
     @check_ban()
@@ -2939,10 +2858,7 @@ class Mercado(BaseCog):
             precio_str = formatear_precio(r[2])
             embed.add_field(name=f"📦 ID: `{r[0]}` — {r[1]}", value=f"💵 **{precio_str}**\n📝 {r[3][:30]}...", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @mercado.command(name='cancelar')
     @check_ban()
@@ -2957,10 +2873,7 @@ class Mercado(BaseCog):
         await db.remove_mercado(pub_id)
         embed = discord.Embed(title="✅ Publicación cancelada", description=f"Recuperaste {pub[1]}.", color=0x00FF00)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Casino ====================
 class Casino(BaseCog):
@@ -3004,10 +2917,7 @@ class Casino(BaseCog):
         eco = await db.get_economy(ctx.author.id)
         embed.set_footer(text=f"💰 Saldo: **${eco['cash']:,}**  ·  NOVA AGORA")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @casino.command(name='ruleta-info')
     @tiene_rol_usuario()
@@ -3024,10 +2934,7 @@ class Casino(BaseCog):
             color=discord.Color.gold()
         )
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @casino.command(name='racha')
     @tiene_rol_usuario()
@@ -3044,10 +2951,7 @@ class Casino(BaseCog):
             color=color
         )
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @casino.command(name='slots')
     @tiene_rol_usuario()
@@ -3113,10 +3017,7 @@ class Casino(BaseCog):
         )
         await msg.edit(content=None, embed=embed)
         await self.log("CASINO_SLOTS", f"{ctx.author.name}: ${apuesta} → {disp}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @casino.command(name='ruleta')
     @tiene_rol_usuario()
@@ -3198,10 +3099,7 @@ class Casino(BaseCog):
         )
         await msg.edit(content=None, embed=embed)
         await self.log("CASINO_RULETA", f"{ctx.author.name}: ${apuesta} → {num_display} {'WIN' if gano else 'LOSS'}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @casino.command(name='dados')
     @tiene_rol_usuario()
@@ -3246,10 +3144,7 @@ class Casino(BaseCog):
         )
         await msg.edit(content=None, embed=embed)
         await self.log("CASINO_DADOS", f"{ctx.author.name}: ${apuesta} → {d1}+{d2}={total}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='bj')
     @tiene_rol_usuario()
@@ -3301,10 +3196,7 @@ class Casino(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("CASINO_BJ", f"{ctx.author.name}: ${apuesta} → J:{jugador} C:{casa}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Atracos ====================
 class Atracos(BaseCog):
@@ -3330,10 +3222,7 @@ class Atracos(BaseCog):
             )
         embed.set_footer(text="Usa -rob <nombre> para iniciar | Requiere items en inventario y preparatorias completadas")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @rob.command(name='status')
     @tiene_rol_usuario()
@@ -3356,10 +3245,7 @@ class Atracos(BaseCog):
                 prep_text += f"**{HEIST_DEFINITIONS[heist_id]['nombre']}:** {completadas}/{total}\n"
             embed.add_field(name="📋 Progreso de Preparatorias", value=prep_text or "Ninguna", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     async def _mostrar_info_atraco(self, ctx, heist_name: str) -> bool:
         heist = HEIST_DEFINITIONS[heist_name]
@@ -3482,10 +3368,7 @@ class Atracos(BaseCog):
         if ctx.author.id not in OWNER_IDS:
             for item in heist.get('items', []):
                 await db.remove_item(uid, 'personal', item, 1)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @rob.command(name='badu')
     async def rob_badu(self, ctx): await self.execute_heist(ctx, 'badu')
@@ -3528,10 +3411,7 @@ class Preparatorias(BaseCog):
             )
         embed.set_footer(text="Usa -preparacion <atraco> <número> para comenzar una preparatoria")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @preparacion.command(name='badu')
     async def prep_badu(self, ctx, numero: int):
@@ -3615,10 +3495,7 @@ class Preparatorias(BaseCog):
         if numero == total_preps and await db.are_all_preparations_completed(uid, heist_id, total_preps):
             await ctx.send(embed=embed_success(f"🏆 {heist['nombre']} LISTO", f"Has completado todas las preparatorias. Ya puedes realizar el atraco con `-rob {heist_id}`."))
 
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Banco ====================
 class Banco(BaseCog):
@@ -3656,10 +3533,7 @@ class Banco(BaseCog):
             inline=False
         )
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @banco.command(name='ingresar', aliases=['dep', 'depositar'])
     @tiene_rol_usuario()
@@ -3710,10 +3584,7 @@ class Banco(BaseCog):
         try:
             await ctx.message.delete()
         except: pass
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @banco.command(name='transferir')
     @tiene_rol_usuario()
@@ -3733,11 +3604,7 @@ class Banco(BaseCog):
             f"Has transferido **${cantidad:,}** a {usuario.mention}."
         ))
         await self.log("BANCO_TRANSFERENCIA", f"{ctx.author.name} transfirió ${cantidad} a {usuario.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
+        await self._del(ctx)
 
     @commands.command(name='pay', aliases=['bizum', 'pagar', 'transferir'])
     @check_ban()
@@ -3840,10 +3707,7 @@ class Multas(BaseCog):
         embed.add_field(name="Total pendiente", value=f"**${total:,}**", inline=False)
         embed.set_footer(text="Usa -multa pagar <número> para pagar una multa")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @multa.command(name='pagar')
     @tiene_rol_usuario()
@@ -3876,10 +3740,7 @@ class Multas(BaseCog):
                 f"Has pagado **${m['cantidad']:,}** por: {m['motivo']}."
             ))
             await self.log("MULTA_PAGAR", f"{ctx.author.name} pagó multa #{numero}: ${m['cantidad']}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: PDA ====================
 class PDA(BaseCog):
@@ -3927,10 +3788,7 @@ class PDA(BaseCog):
             inline=False
         )
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='detener')
     async def pda_detener(self, ctx, usuario: discord.Member, *, motivo: str):
@@ -3939,10 +3797,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="🚨 DETENCIÓN", description=f"{nombre_ag} ha detenido a {nombre_det}. Motivo: {motivo}", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_DETENER", f"{nombre_ag} detuvo a {nombre_det}: {motivo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='encarcelar')
     async def pda_encarcelar(self, ctx, usuario: discord.Member, minutos: int, *, motivo: str):
@@ -3957,10 +3812,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="🔒 ENCARCELAMIENTO", description=f"{nombre_ag} ha encarcelado a {nombre_det} por {minutos} minutos.\nMotivo: {motivo}", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_ENCARCELAR", f"{nombre_ag} encarceló a {nombre_det} por {minutos}min: {motivo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='multar')
     async def pda_multar(self, ctx, usuario: discord.Member, cantidad: int, *, motivo: str):
@@ -3974,10 +3826,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="📄 MULTA", description=f"{nombre_ag} ha multado a {usuario.mention} con **${cantidad:,}**.\nMotivo: {motivo}", color=0xFFA500)
         await ctx.send(embed=embed)
         await self.log("PDA_MULTAR", f"{nombre_ag} multó a {usuario.name}: ${cantidad} - {motivo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='requisar')
     async def pda_requisar(self, ctx, usuario: discord.Member, *, arma: str):
@@ -3990,10 +3839,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="🔫 ARMA REQUISADA", description=f"{nombre_ag} requisó {arma_real} a {usuario.mention}.", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_REQUISAR", f"{nombre_ag} requisó {arma_real} a {usuario.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='guardar')
     async def pda_guardar(self, ctx, usuario: discord.Member, *, item: str):
@@ -4019,10 +3865,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="📦 EVIDENCIA GUARDADA", description=f"{nombre_ag} guardó **{item_real}** de {nombre_target}.", color=0x3498DB)
         await ctx.send(embed=embed)
         await self.log("PDA_GUARDAR", f"{nombre_ag} guardó {item_real} de {usuario.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='evidencia')
     async def pda_evidencia(self, ctx, usuario: Optional[discord.Member] = None):
@@ -4039,10 +3882,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title=f"📦 Evidencia de {usuario.display_name}", description=descripcion, color=0x3498DB)
         embed.set_footer(text="Usa -pda guardar @usuario <item> para agregar evidencia")
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='licencia')
     async def pda_licencia(self, ctx, usuario: discord.Member, tipo_licencia: str, accion: str = "dar"):
@@ -4056,10 +3896,7 @@ class PDA(BaseCog):
             embed = discord.Embed(title="📋 LICENCIA REVOCADA", description=f"{nombre_ag} revocó {licencia} a {usuario.mention}.", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("PDA_LICENCIA", f"{nombre_ag} {accion} {licencia} a {usuario.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='quitar-multa')
     @tiene_rol_lspd_operativo()
@@ -4075,10 +3912,7 @@ class PDA(BaseCog):
         embed.set_footer(text=f"Agente: {nombre_ag}")
         await ctx.send(embed=embed)
         await self.log("PDA_QUITAR_MULTA", f"{nombre_ag} quitó multas a {nombre_u} (${total:,})")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='buscar')
     async def pda_buscar(self, ctx, *, nombre: str):
@@ -4091,10 +3925,7 @@ class PDA(BaseCog):
             nombre_completo = f"{nombre} {apellidos}".strip()
             embed.add_field(name=nombre_completo, value=f"ID: {uid}\nUsuario: {user.mention if user else uid}", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='crear-placa')
     async def crear_placa(self, ctx, usuario: discord.Member, numero: str):
@@ -4115,10 +3946,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="✅ PLACA ASIGNADA", description=f"Se ha asignado la placa **{placa_completa}** a {usuario.mention}.", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("CREAR_PLACA", f"{ctx.author.name} asignó placa {placa_completa} a {usuario.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='multas')
     async def multas(self, ctx):
@@ -4133,10 +3961,7 @@ class PDA(BaseCog):
             total += m['cantidad']
         embed.add_field(name="Total pendiente", value=f"**${total:,}**", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='esposar')
     @tiene_rol_lspd_operativo()
@@ -4152,10 +3977,7 @@ class PDA(BaseCog):
         embed.set_footer(text="LSPD — Nova Agora RP")
         await ctx.send(embed=embed)
         await self.log("ESPOSAR", f"{nombre_ag} esposó a {nombre_det}: {motivo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='des-esposar')
     async def des_esposar(self, ctx, usuario: discord.Member, *, motivo: str):
@@ -4164,10 +3986,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="🔓 DES-ESPOSADO", description=f"{nombre_ag} ha des-esposado a {nombre_det}. Motivo: {motivo}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("PDA_DES-ESPOSAR", f"{nombre_ag} des-esposó a {nombre_det}: {motivo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @pda.command(name='quitar-placa')
     async def pda_quitar_placa(self, ctx):
@@ -4178,10 +3997,7 @@ class PDA(BaseCog):
         embed = discord.Embed(title="🗑️ PLACA ELIMINADA", description="Tu placa policial ha sido eliminada.", color=0xFF6600)
         await ctx.send(embed=embed)
         await self.log("QUITAR_PLACA", f"{ctx.author.name} eliminó su placa")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Móvil ====================
 class Movil(BaseCog):
@@ -4267,94 +4083,6 @@ class Movil(BaseCog):
         await interaction.followup.send(embed=embed_success(f"{await get_emoji('phone')} SIM comprada", f"Número: `{numero}`\nCosto: $500"))
         await self.log("COMPRA_SIM", f"{interaction.user.name} compró SIM: {numero}")
 
-    @commands.command(name='movil', aliases=['tel', 'telefono', 'celular'])
-    @check_ban()
-    @check_encarcelado()
-    @tiene_rol_usuario()
-    async def movil_prefix(self, ctx):
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        uid = ctx.author.id
-        user_state = await db.get_user_state(uid)
-        if user_state['airplane_mode']:
-            return await ctx.send(embed=embed_error("Modo avión activado. Desactívalo con `-avion off`"))
-        numero = user_state['phone_number'] or "Sin número"
-        wifi = "📶 Conectado" if user_state['wifi_connected'] else "📶 Desconectado"
-        await ctx.send("✨ **** ABRE TÚ MÓVIL EN NOVA AGORA V2 ****")
-        embed = discord.Embed(title=f"{await get_emoji('phone')} Móvil de {ctx.author.name}", description=f"📞 Número: `{numero}`\n{wifi}", color=0x00BCD4)
-        view = MovilView(ctx.author.id)
-        await ctx.send(embed=embed, view=view)
-        await self.log("MOVIL_PREFIX", f"{ctx.author.name} abrió el móvil con -movil")
-
-    @commands.command(name='avion', aliases=['airplane', 'avionmode'])
-    @check_ban()
-    @check_encarcelado()
-    @tiene_rol_usuario()
-    async def avion_prefix(self, ctx, estado: str = None):
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        if not estado or estado.lower() not in ['on', 'off']:
-            return await ctx.send(embed=embed_error("Usa `-avion on` o `-avion off`"))
-        uid = ctx.author.id
-        on = estado.lower() == 'on'
-        await db.update_user_state(uid, airplane_mode=on)
-        await ctx.send("✨ **** MODO AVIÓN " + ("ACTIVADO" if on else "DESACTIVADO") + " EN NOVA AGORA V2 ****")
-        await ctx.send(embed=embed_success("✈️ Modo avión", f"{'Activado' if on else 'Desactivado'}"))
-        await self.log("AVION_PREFIX", f"{ctx.author.name} cambió modo avión a {estado}")
-
-    @commands.command(name='wifi', aliases=['redwifi', 'internet'])
-    @check_ban()
-    @check_encarcelado()
-    @tiene_rol_usuario()
-    async def wifi_prefix(self, ctx, accion: str = None):
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        uid = ctx.author.id
-        user_state = await db.get_user_state(uid)
-        if not accion:
-            return await ctx.send(embed=embed_info("📶 WiFi", f"Estado: {'Conectado' if user_state['wifi_connected'] else 'Desconectado'}\nUsa `-wifi conectar` o `-wifi desconectar`"))
-        if accion.lower() == 'conectar':
-            if user_state['wifi_connected']:
-                return await ctx.send(embed=embed_error("Ya estás conectado."))
-            await db.update_user_state(uid, wifi_connected=True)
-            await ctx.send("✨ **** CONECTADO A WIFI EN NOVA AGORA V2 ****")
-            await ctx.send(embed=embed_success("📶 WiFi", "Conectado a la red."))
-        elif accion.lower() == 'desconectar':
-            if not user_state['wifi_connected']:
-                return await ctx.send(embed=embed_error("Ya estás desconectado."))
-            await db.update_user_state(uid, wifi_connected=False)
-            await ctx.send("✨ **** DESCONECTADO DEL WIFI EN NOVA AGORA V2 ****")
-            await ctx.send(embed=embed_success("📶 WiFi", "Desconectado de la red.", color=0xFFA500))
-        else:
-            await ctx.send(embed=embed_error("Usa `-wifi conectar` o `-wifi desconectar`"))
-        await self.log("WIFI_PREFIX", f"{ctx.author.name} cambió estado de wifi a {accion}")
-
-    @commands.command(name='comprar-sim', aliases=['comprar_sim', 'buysim', 'sim'])
-    @check_ban()
-    @check_encarcelado()
-    @tiene_rol_usuario()
-    async def comprar_sim_prefix(self, ctx):
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        uid = ctx.author.id
-        eco = await db.get_economy(uid)
-        if eco['cash'] < 500:
-            return await ctx.send(embed=embed_error("Necesitas $500."))
-        numero = f"+34 6{random.randint(10,99)} {random.randint(100,999)} {random.randint(100,999)}"
-        await db.add_cash(uid, -500)
-        await db.update_user_state(uid, phone_number=numero)
-        await ctx.send("✨ **** COMPRA SIM EN NOVA AGORA V2 ****")
-        await ctx.send(embed=embed_success(f"{await get_emoji('phone')} SIM comprada", f"Número: `{numero}`\nCosto: $500"))
-        await self.log("COMPRA_SIM_PREFIX", f"{ctx.author.name} compró SIM: {numero}")
-
 class MovilView(discord.ui.View):
     def __init__(self, uid):
         super().__init__(timeout=120)
@@ -4389,7 +4117,7 @@ class MovilView(discord.ui.View):
     @discord.ui.button(label="DeepWeb", style=discord.ButtonStyle.danger, row=1)
     async def btn_dw(self, interaction, button):
         emoji = await get_emoji('deepweb')
-        await interaction.response.send_message(embed=embed_info(f"{emoji} DeepWeb", "Anónimo.\n`-deepweb @user mensaje`", 0x2C2F33), ephemeral=True)
+        await interaction.response.send_message(embed=embed_info(f"{emoji} DeepWeb", "Anónimo.\n`-dw <mensaje>` — Envía al canal actual de forma anónima.", 0x2C2F33), ephemeral=True)
 
     @discord.ui.button(label="Config", style=discord.ButtonStyle.secondary, row=2)
     async def btn_cfg(self, interaction, button):
@@ -4397,7 +4125,7 @@ class MovilView(discord.ui.View):
         n = user_state['phone_number'] or "❌ Sin número"
         av = "✈️ ON" if user_state['airplane_mode'] else "✈️ OFF"
         wf = "📶 ON" if user_state['wifi_connected'] else "📶 OFF"
-        await interaction.response.send_message(embed=embed_info("⚙️ Configuración", f"📱 {n}\n{av}\n{wf}\n\n`-avion on/off`\n`-wifi conectar/desconectar`\n`-comprar-sim`", 0x95A5A6), ephemeral=True)
+        await interaction.response.send_message(embed=embed_info("⚙️ Configuración", f"📱 {n}\n{av}\n{wf}\n\n`/avion`\n`/wifi`\n`/comprar-sim`", 0x95A5A6), ephemeral=True)
 
     @discord.ui.button(label="💸 Bizum", style=discord.ButtonStyle.success, emoji="💸", row=2)
     async def btn_bizum(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -4538,8 +4266,7 @@ class Redes(BaseCog):
         embed.add_field(name="📝 Bio", value=user_state.get('ig_bio') or "Sin bio", inline=False)
         embed.set_thumbnail(url=objetivo.display_avatar.url)
         await ctx.send(embed=embed)
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @ig.command(name='post')
     @check_ban()
@@ -4559,8 +4286,7 @@ class Redes(BaseCog):
         embed.set_footer(text="Usa -ig like <id> para dar like")
         await ctx.send(embed=embed)
         await self.log("IG_POST", f"{ctx.author.name} publicó en IG: {texto[:50]}")
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @ig.command(name='like')
     @check_ban()
@@ -4573,8 +4299,7 @@ class Redes(BaseCog):
             await self.log("IG_LIKE", f"{ctx.author.name} dio like al post {post_id}")
         else:
             await ctx.send(embed=embed_error("Post no encontrado o ya le diste like."))
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @ig.command(name='seguir')
     @check_ban()
@@ -4597,8 +4322,7 @@ class Redes(BaseCog):
                 color=0xE4405F
             ))
         await self.log("IG_SEGUIR", f"{ctx.author.name} siguió/dejó de seguir a {usuario.name}")
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @ig.command(name='trending')
     @tiene_rol_usuario()
@@ -4623,8 +4347,7 @@ class Redes(BaseCog):
                 inline=False
             )
         await ctx.send(embed=embed)
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @ig.command(name='priv')
     @check_ban()
@@ -4646,8 +4369,7 @@ class Redes(BaseCog):
         else:
             await ctx.send(embed=embed_error(f"No se pudo enviar DM a {user.display_name} (DMs cerrados)."))
         await self.log("IG_PRIV", f"{ctx.author.name} → {user.name}: {msg[:50]}")
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @commands.group(name='tw', invoke_without_command=True)
     @check_ban()
@@ -4682,8 +4404,7 @@ class Redes(BaseCog):
         embed.add_field(name="🐦 Tweets", value=f"**{len(posts)}**", inline=True)
         embed.set_thumbnail(url=objetivo.display_avatar.url)
         await ctx.send(embed=embed)
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @tw.command(name='tweet')
     @check_ban()
@@ -4702,8 +4423,7 @@ class Redes(BaseCog):
         embed.set_author(name=f"@{ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
         await ctx.send(embed=embed)
         await self.log("TW_TWEET", f"{ctx.author.name}: {texto[:50]}")
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @tw.command(name='seguir')
     @check_ban()
@@ -4726,8 +4446,7 @@ class Redes(BaseCog):
                 color=0x1DA1F2
             ))
         await self.log("TW_SEGUIR", f"{ctx.author.name} seguir/dejar {usuario.name}")
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @tw.command(name='priv')
     @check_ban()
@@ -4749,8 +4468,7 @@ class Redes(BaseCog):
         else:
             await ctx.send(embed=embed_error(f"No se pudo enviar DM a {user.display_name} (DMs cerrados)."))
         await self.log("TW_PRIV", f"{ctx.author.name} → {user.name}: {msg[:50]}")
-        try: await ctx.message.delete()
-        except: pass
+        await self._del(ctx)
 
     @commands.command(name='x')
     @check_ban()
@@ -4770,10 +4488,7 @@ class Redes(BaseCog):
         await self.dm_user(usuario.id, embed_notif)
         await ctx.send(embed=embed_success("✅ Mensaje enviado", f"Tu mensaje ha sido enviado a {usuario.display_name} por Twitter DM."))
         await self.log("TWITTER_DM", f"{ctx.author.name} -> {usuario.name}: {mensaje}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     fb = app_commands.Group(name='fb', description='Facebook - NOVA AGORA V2')
 
@@ -4813,11 +4528,8 @@ class Redes(BaseCog):
                 "dw", "Envía un mensaje anónimo al canal desde la DeepWeb.",
                 "-dw <mensaje>", "-dw Hay una reunión a medianoche en el puerto.", "Ciudadano"
             ), delete_after=10)
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
-        # Guardar en DB (para que FBI pueda descifrar por msg_id)
+        await self._del(ctx)
+        # Guardar en DB (tabla 'deepweb') — el FBI podrá descifrarlo por Track ID
         msg_id_interno = await db.add_deepweb_message(ctx.author.id, 0, mensaje)
         embed = discord.Embed(
             title="🕸️ MENSAJE ANÓNIMO — DEEP WEB",
@@ -4829,32 +4541,8 @@ class Redes(BaseCog):
         embed.add_field(name="🔐 Estado", value="`Identidad encriptada`", inline=True)
         embed.add_field(name="🆔 Track ID", value=f"`{msg_id_interno}`", inline=True)
         embed.set_footer(text=f"Nova Agora RP V2 · {datetime.now().strftime('%H:%M')} — Solo el FBI puede descifrar")
-        sent = await ctx.send(embed=embed)
-        # Actualizar en DB con el msg_id real de Discord
-        await db.execute("UPDATE deepweb_messages SET discord_msg_id=? WHERE id=?", (sent.id, msg_id_interno))
+        await ctx.send(embed=embed)
         await self.log("DW_ANONIMO", f"[DW msg:{msg_id_interno}] Contenido guardado (anónimo)")
-
-    @app_commands.command(name='deepweb', description="Sistema DeepWeb - NOVA AGORA V2")
-    async def deepweb(self, interaction: discord.Interaction, target: discord.Member = None, msg: str = None):
-        if target is None or msg is None:
-            embed = discord.Embed(title=f"{await get_emoji('deepweb')} DEEPWEB — Sistema Anónimo", description="Envía un mensaje anónimo seguro usando el formato correcto.", color=0x2C2F33)
-            embed.add_field(name="📨 **/deepweb @usuario <mensaje>**", value="Envía un mensaje anónimo encriptado directamente a un usuario.", inline=False)
-            embed.add_field(name="🔓 **/descifrar <id>** 🔒 **(FBI)**", value="Intenta descifrar un mensaje (1/10 éxito).", inline=False)
-            embed.add_field(name="ℹ️ Características", value="✅ Identidad anónima\n✅ ID de seguimiento\n✅ Encriptación asimétrica\n✅ FBI puede descifrar (1/10)", inline=False)
-            embed.set_footer(text="Uso responsable requerido • NOVA AGORA")
-            return await interaction.response.send_message(embed=embed)
-        if target.id == interaction.user.id:
-            return await interaction.response.send_message(embed=embed_error("No puedes enviarte un mensaje a ti mismo."))
-        text = msg.strip()
-        if not text:
-            return await interaction.response.send_message(embed=embed_error("Debes escribir un mensaje después de mencionar al usuario."))
-        msg_id = await db.add_deepweb_message(interaction.user.id, target.id, text)
-        await interaction.response.send_message(f"{await get_emoji('deepweb')} **** ENVÍA MENSAJE DEEPWEB EN NOVA AGORA V2 ****")
-        dm = discord.Embed(title=f"{await get_emoji('deepweb')} Mensaje Anónimo — DeepWeb", description=text, color=0x2C2F33, timestamp=datetime.now())
-        dm.set_footer(text=f"ID: {msg_id} — Identidad oculta")
-        await self.dm_user(target.id, dm)
-        await interaction.followup.send(embed=embed_success(f"{await get_emoji('deepweb')} Mensaje enviado", f"Anónimo | ID: `{msg_id}`"))
-        await self.log("DEEPWEB", f"{interaction.user.name} → {target.name}: {text[:50]}...")
 
     @commands.command(name='descifrar')
     async def descifrar_prefix(self, ctx, mensaje_id: int = None):
@@ -4877,7 +4565,7 @@ class Redes(BaseCog):
                 "descifrar", "Intenta descifrar la identidad de un mensaje DeepWeb (20% éxito).",
                 "-descifrar <track_id>", "-descifrar 42", "FBI"
             ))
-        row = await db.fetchone("SELECT user_id, message FROM deepweb_messages WHERE id=?", (mensaje_id,))
+        row = await db.fetchone("SELECT sender, message FROM deepweb WHERE id=?", (mensaje_id,))
         if not row:
             return await ctx.send(embed=embed_error(f"No se encontró el mensaje con Track ID `{mensaje_id}`."))
         if random.random() < 0.20:  # 20% = 1/5
@@ -4910,36 +4598,6 @@ class Redes(BaseCog):
             embed.set_footer(text=f"Agente: {ctx.author.display_name} · FBI Nova Agora")
             await ctx.send(embed=embed)
             await self.log("DESCIFRAR_FAIL", f"{ctx.author.name} falló DW:{mensaje_id}")
-
-    @app_commands.command(name='descifrar', description="Descifra mensajes DeepWeb - FBI NOVA AGORA V2")
-    async def descifrar(self, interaction: discord.Interaction, mensaje_id: int = None):
-        fbi_role = discord.utils.get(interaction.guild.roles, name="FBI")
-        if not fbi_role or fbi_role not in interaction.user.roles:
-            return await interaction.response.send_message(embed=embed_error("Solo agentes del FBI pueden usar este comando."))
-        if mensaje_id is None:
-            embed = discord.Embed(title="🔐 DESCIFRADOR DeepWeb — FBI Confidencial", description="Sistema de inteligencia para descifrar mensajes DeepWeb anónimos.", color=0x3498DB)
-            embed.add_field(name="📋 Uso", value="`/descifrar <id_del_mensaje>`", inline=False)
-            embed.add_field(name="📊 Probabilidad de Éxito", value="**1/10** (10%) de descifrar la identidad del remitente", inline=False)
-            embed.add_field(name="🔍 Cómo obtener IDs", value="Los IDs se proporcionan cuando se envían mensajes DeepWeb:\n`ID: 12345` (en el mensaje anónimo)", inline=False)
-            embed.add_field(name="✅ Éxito", value="Se revela el nombre del remitente\n📝 Se registra en logs del FBI", inline=False)
-            embed.add_field(name="❌ Fallo", value="La identidad permanece oculta\n🔄 Puedes intentar nuevamente más tarde", inline=False)
-            embed.set_footer(text="Información Clasificada • FBI NOVA AGORA")
-            return await interaction.response.send_message(embed=embed)
-        decode_result = await db.decode_deepweb_message(mensaje_id, interaction.user.id)
-        if not decode_result:
-            return await interaction.response.send_message(embed=embed_error("Mensaje DeepWeb no encontrado."))
-        if decode_result['decoded']:
-            autor = interaction.guild.get_member(decode_result['sender'])
-            nombre = autor.display_name if autor else f"Usuario {decode_result['sender']}"
-            await interaction.response.send_message(f"{await get_emoji('deepweb')} **** DESCIFRA MENSAJE DEEPWEB EN NOVA AGORA V2 ****")
-            embed = discord.Embed(title="🔓 MENSAJE DESCIFRADO", description=f"**Remitente Identificado:** {nombre}\n\n{decode_result['message']}", color=0x3498DB, timestamp=datetime.now())
-            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-            embed.set_footer(text=f"Descifrado exitoso • ID: {mensaje_id}")
-            await interaction.followup.send(embed=embed)
-            await self.log("DESCIFRAR_EXIT", f"{interaction.user.name} descifró mensaje {mensaje_id} de {nombre}")
-        else:
-            await interaction.response.send_message(embed=discord.Embed(title="❌ DESCIFRADO FALLIDO", description="La identidad del remitente sigue protegida por encriptación.\nIntenta nuevamente más tarde con otro mensaje.", color=0xFF0000, timestamp=datetime.now()))
-            await self.log("DESCIFRAR_FAIL", f"{interaction.user.name} falló en descifrar mensaje {mensaje_id}")
 
 class WhatsApp(BaseCog):
     wa = app_commands.Group(name='wa', description='WhatsApp - NOVA AGORA V2')
@@ -5039,10 +4697,7 @@ class Periodico(BaseCog):
         await canal.send(embed=embed)
         await self.log("PERIODICO", f"{ctx.author.name} publicó una edición del periódico")
         await ctx.send(embed=embed_success("✅ Periódico publicado", "La edición ha sido publicada."))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Admin ====================
 class Admin(BaseCog):
@@ -5052,10 +4707,7 @@ class Admin(BaseCog):
         if not mensaje:
             return await ctx.send(embed=embed_help("say", "Repite el mensaje en negrita.", "-say <mensaje>", "-say Hola a todos", "Equipo Especial"))
         await ctx.send(f"**{mensaje}**")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='kick')
     @tiene_rol_equipo_especial()
@@ -5069,10 +4721,7 @@ class Admin(BaseCog):
         await miembro.kick(reason=f"{razon} - Expulsado por {ctx.author}")
         await self.registrar_log_moderacion(ctx, "KICK", miembro, razon)
         await ctx.send(embed=embed_success("👢 Usuario expulsado", f"{miembro.mention} ha sido expulsado.\nRazón: {razon}", 0xFF6600))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.group(name='ban', invoke_without_command=True)
     @tiene_rol_equipo_especial()
@@ -5097,10 +4746,7 @@ class Admin(BaseCog):
         embed = discord.Embed(title="🔨 BANEO DEFINITIVO EJECUTADO", description=f"Usuario: {miembro.mention}\nRazón: {razon}\n{discord_ban}\n🖤 Añadido a la blacklist global.", color=0xFF0000)
         await ctx.send(embed=embed)
         await self.log("BAN_DEFINITIVO", f"{ctx.author.name} baneó permanentemente a {miembro.name}: {razon}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='unban')
     @tiene_rol_equipo_especial()
@@ -5120,10 +4766,7 @@ class Admin(BaseCog):
         embed = discord.Embed(title="✅ DESBANEO EJECUTADO", description=f"Usuario: {user.mention if 'user' in locals() else uid}\n{discord_unban}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("UNBAN", f"{ctx.author.name} desbaneó ID: {uid} (eliminado de blacklist)")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='money')
     @tiene_rol_equipo_especial()
@@ -5164,10 +4807,7 @@ class Admin(BaseCog):
             await self.log("MONEY_REMOVE", f"{ctx.author.name} quitó ${cantidad:,} ({tipo}) a {miembro.name}")
         else:
             await ctx.send(embed=embed_error("Acción debe ser `add` o `remove`."))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='setprefix')
     @tiene_rol_equipo_especial()
@@ -5180,10 +4820,7 @@ class Admin(BaseCog):
             json.dump({str(ctx.guild.id): p}, f)
         await ctx.send(embed=embed_success("✅ Prefijo cambiado", f"Nuevo prefijo: `{p}`"))
         await self.log("SETPREFIX", f"{ctx.author.name} cambió prefijo a '{p}'")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='add-inv')
     @tiene_rol_equipo_especial()
@@ -5196,10 +4833,7 @@ class Admin(BaseCog):
         await db.add_item(miembro.id, t, item, cantidad)
         await ctx.send(embed=embed_success("✅ Item añadido", f"{cantidad}x {item} a {miembro.mention} ({t})"))
         await self.log("ADD_INV", f"{ctx.author.name} añadió {cantidad}x {item} ({t}) a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='rem-inv')
     @tiene_rol_equipo_especial()
@@ -5214,10 +4848,7 @@ class Admin(BaseCog):
             return await ctx.send(embed=embed_error(f"{miembro.name} no tiene {item} en {t}."))
         await ctx.send(embed=embed_success("🗑️ Item eliminado", f"{eliminado}x {item} de {miembro.mention} ({t})", 0xFF6600))
         await self.log("REM_INV", f"{ctx.author.name} eliminó {eliminado}x {item} ({t}) de {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='add-coche')
     @tiene_rol_equipo_especial()
@@ -5229,10 +4860,7 @@ class Admin(BaseCog):
         embed = discord.Embed(title="✅ VEHÍCULO REGISTRADO", description=f"Modelo: {modelo}\nMatrícula: {matricula}\nPropietario: {miembro.mention}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("ADD_COCHE", f"{ctx.author.name} añadió {modelo} ({matricula}) a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='remove-coche')
     @tiene_rol_equipo_especial()
@@ -5242,10 +4870,7 @@ class Admin(BaseCog):
         await db.execute("DELETE FROM vehiculos WHERE user_id = ? AND matricula = ?", (miembro.id, matricula))
         await ctx.send(embed=embed_success("🗑️ Vehículo eliminado", f"Matrícula {matricula} de {miembro.mention}", 0xFF6600))
         await self.log("REM_COCHE", f"{ctx.author.name} quitó {matricula} a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='add-droga')
     @tiene_rol_equipo_especial()
@@ -5258,10 +4883,7 @@ class Admin(BaseCog):
         await db.add_item(miembro.id, "personal", tipo_norm, cantidad)
         await ctx.send(embed=embed_success("✅ Droga añadida", f"{cantidad}x {tipo_norm} a {miembro.mention}"))
         await self.log("ADD_DROGA", f"{ctx.author.name} añadió {cantidad}x {tipo_norm} a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='add-licencia')
     @tiene_rol_equipo_especial()
@@ -5270,10 +4892,7 @@ class Admin(BaseCog):
             return await ctx.send(embed=embed_help("add-licencia", "Otorga una licencia de armas.", "-add-licencia @usuario <tipo_licencia>", "-add-licencia @Juan licencia_pistola", "Equipo Especial"))
         await db.dar_licencia(miembro.id, licencia.lower())
         await ctx.send(embed=embed_success("✅ Licencia otorgada", f"{licencia} a {miembro.mention}"))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='rem-licencia')
     @tiene_rol_equipo_especial()
@@ -5282,10 +4901,7 @@ class Admin(BaseCog):
             return await ctx.send(embed=embed_help("rem-licencia", "Revoca una licencia de armas.", "-rem-licencia @usuario <tipo_licencia>", "-rem-licencia @Juan licencia_pistola", "Equipo Especial"))
         await db.quitar_licencia(miembro.id, licencia.lower())
         await ctx.send(embed=embed_success("🗑️ Licencia revocada", f"{licencia} a {miembro.mention}", 0xFF6600))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='quitar-warn')
     @tiene_rol_equipo_especial()
@@ -5298,10 +4914,7 @@ class Admin(BaseCog):
         await db.execute("DELETE FROM warnings WHERE id = ?", (id_warn,))
         await self.registrar_log_moderacion(ctx, f"WARN #{id_warn} ELIMINADA", miembro, "Eliminada por administrador")
         await ctx.send(embed=embed_success("🗑️ Advertencia eliminada", f"Se eliminó la advertencia #{id_warn} de {miembro.mention}.", 0xFF6600))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='economy-reset')
     @tiene_rol_equipo_especial()
@@ -5337,10 +4950,7 @@ class Admin(BaseCog):
         except commands.BadArgument:
             pass
         await ctx.send(embed=embed_error("No se encontró un usuario o rol con ese nombre. Usa @usuario o @rol."))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='reset-user')
     @tiene_rol_equipo_especial()
@@ -5364,10 +4974,7 @@ class Admin(BaseCog):
             await self.log("RESET_USER", f"{ctx.author.name} reseteó {miembro.name}")
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error: {str(e)[:100]}"))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='create-item')
     @tiene_rol_equipo_especial()
@@ -5400,10 +5007,7 @@ class Admin(BaseCog):
         embed = discord.Embed(title=f"{await get_emoji('shop')} Item creado", description=f"**{nombre}** agregado a la tienda con precio {formatear_precio(precio)} {emoji}\nDescripción: {descripcion if descripcion else 'Sin descripción'}", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("CREATE_ITEM", f"{ctx.author.name} creó item '{nombre}' ({formatear_precio(precio)})")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='delete-item')
     @tiene_rol_equipo_especial()
@@ -5436,10 +5040,7 @@ class Admin(BaseCog):
         embed = discord.Embed(title="✅ Item eliminado", description=f"**{nombre_real}** ({tipo}) ha sido eliminado de la tienda.", color=0xFF6600)
         await ctx.send(embed=embed)
         await self.log("DELETE_ITEM", f"{ctx.author.name} eliminó item '{nombre_real}' ({tipo})")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='give-item')
     @tiene_rol_give_take()
@@ -5450,10 +5051,7 @@ class Admin(BaseCog):
         embed = discord.Embed(title="✅ Item regalado", description=f"{cantidad}x **{item}** entregado a {miembro.mention}.", color=0x00FF00)
         await ctx.send(embed=embed)
         await self.log("GIVE_ITEM", f"{ctx.author.name} dio {cantidad}x {item} a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='take-item')
     @tiene_rol_give_take()
@@ -5466,10 +5064,7 @@ class Admin(BaseCog):
         embed = discord.Embed(title="🗑️ Item quitado", description=f"{eliminado}x **{item}** quitado a {miembro.mention}.", color=0xFF6600)
         await ctx.send(embed=embed)
         await self.log("TAKE_ITEM", f"{ctx.author.name} quitó {eliminado}x {item} a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='poner')
     @tiene_rol_give_take()
@@ -5498,10 +5093,7 @@ class Admin(BaseCog):
         embed.set_footer(text=f"Ejecutado por {ctx.author.display_name}")
         await ctx.send(embed=embed)
         await self.log("PONER", f"{ctx.author.name} puso {cantidad}x {item_nombre} en inv de {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='mass-economy')
     @tiene_rol_equipo_especial()
@@ -5531,10 +5123,7 @@ class Admin(BaseCog):
         embed = discord.Embed(description=desc, color=0x00FF00)
         await msg.edit(embed=embed)
         await self.log("MASS_ECONOMY", f"{ctx.author.name} dio ${cantidad:,} a {exitosos} miembros con rol {rol.name} ({errores} errores)")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='set-economy')
     @tiene_rol_equipo_especial()
@@ -5573,10 +5162,7 @@ class Admin(BaseCog):
         embed.set_footer(text=f"Configurado por {ctx.author.display_name}")
         await ctx.send(embed=embed)
         await self.log("SET_ECONOMY", f"{ctx.author.name} configuró economía inicial a ${cantidad:,}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='purge')
     @tiene_rol_equipo_especial()
@@ -5622,10 +5208,7 @@ class Admin(BaseCog):
         embed.set_footer(text=f"Creado por {ctx.author.display_name}")
         await ctx.send(embed=embed)
         await self.log("CREAR_DROGA", f"{ctx.author.name} creó droga '{nombre_cap}' (compra:{compra}, venta:{venta})")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='eliminar-droga')
     @tiene_rol_equipo_especial()
@@ -5666,10 +5249,7 @@ class Admin(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("ELIMINAR_DROGA", f"{ctx.author.name} eliminó droga '{nombre_cap}' ({tipo})")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='editar-droga')
     @tiene_rol_equipo_especial()
@@ -5699,10 +5279,7 @@ class Admin(BaseCog):
         view = EditarDrogaView(ctx.author.id, nombre_cap, data)
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     # ─── Gestión de Roles ───────────────────────────────────────────────────
 
@@ -5732,10 +5309,7 @@ class Admin(BaseCog):
         embed.set_footer(text=f"Por {ctx.author.display_name}")
         await ctx.send(embed=embed)
         await self.log("AGREGAR_ROL", f"{ctx.author.name} dio rol '{rol.name}' a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='eliminar-rol')
     @tiene_rol_give_take()
@@ -5763,10 +5337,7 @@ class Admin(BaseCog):
         embed.set_footer(text=f"Por {ctx.author.display_name}")
         await ctx.send(embed=embed)
         await self.log("ELIMINAR_ROL", f"{ctx.author.name} quitó rol '{rol.name}' a {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='emoji-animado')
     @tiene_rol_equipo_especial()
@@ -5814,10 +5385,7 @@ class Admin(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("EMOJI_ANIMADO", f"{ctx.author.name} registró emoji '{nombre}' ID:{emoji_id_int}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='editar-item')
     @tiene_rol_equipo_especial()
@@ -5831,10 +5399,7 @@ class Admin(BaseCog):
         view = EditarItemView(ctx.author.id, item_data[0], list(item_data))
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 class EditarItemView(discord.ui.View):
     def __init__(self, user_id, item_name, item_data, message=None):
@@ -6203,10 +5768,7 @@ class Roleplay(BaseCog):
             embed = discord.Embed(description=f"✦ **{nombre}** {accion.strip()}", color=discord.Color.purple(), timestamp=datetime.now())
             embed.set_author(name="⚔️ Acción", icon_url=ctx.author.display_avatar.url)
             await ctx.send(embed=embed)
-            try:
-                await ctx.message.delete()
-            except:
-                pass
+            await self._del(ctx)
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -me: {str(e)[:100]}"))
 
@@ -6218,10 +5780,7 @@ class Roleplay(BaseCog):
             embed = discord.Embed(description=f"💭 *{nombre} piensa: \"{pensamiento.strip()}\"*", color=0x1ABC9C, timestamp=datetime.now())
             embed.set_author(name="💭 Pensamiento", icon_url=ctx.author.display_avatar.url)
             await ctx.send(embed=embed)
-            try:
-                await ctx.message.delete()
-            except:
-                pass
+            await self._del(ctx)
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -do: {str(e)[:100]}"))
 
@@ -6267,10 +5826,7 @@ class Roleplay(BaseCog):
             )
             embed.set_footer(text="NOVA AGORA RP · Sistema de Alertas Ciudadanas")
             await ctx.send(embed=embed)
-            try:
-                await ctx.message.delete()
-            except Exception:
-                pass
+            await self._del(ctx)
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -entorno: {str(e)[:100]}"))
 
@@ -6377,10 +5933,7 @@ class Roleplay(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("NEGOCIO_REG", f"{ctx.author.name} registró negocio '{nombre}' a {usuario.name} (${ganancia:,})")
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='sugerencia')
     @check_ban()
@@ -6429,10 +5982,7 @@ class Roleplay(BaseCog):
             "alerta_env": False
         }
         await self.log("SUGERENCIA", f"{ctx.author.name}: {texto[:80]}")
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
     @commands.Cog.listener(name="on_raw_reaction_add")
     async def _on_sugerencia_reaction(self, payload: discord.RawReactionActionEvent):
@@ -6524,10 +6074,7 @@ class Roleplay(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("CARGAR", f"{ctx.author.name} → {usuario.name}: {texto[:80]}")
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='reparar')
     @tiene_profesion("mecánico", "mecanico")
@@ -6538,10 +6085,7 @@ class Roleplay(BaseCog):
             nombre_obj = await self.obtener_nombre_dni(objetivo.id) or objetivo.display_name
             embed = discord.Embed(title="🔧 REPARACIÓN COMPLETADA", description=f"**{nombre_mec}** ha reparado el vehículo de **{nombre_obj}**.\n\n*{descripcion.strip()}*", color=0xE67E22, timestamp=datetime.now())
             await ctx.send(embed=embed)
-            try:
-                await ctx.message.delete()
-            except:
-                pass
+            await self._del(ctx)
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -reparar: {str(e)[:100]}"))
 
@@ -6554,10 +6098,7 @@ class Roleplay(BaseCog):
             nombre_obj = await self.obtener_nombre_dni(objetivo.id) or objetivo.display_name
             embed = discord.Embed(title="🏥 CURACIÓN COMPLETADA", description=f"**{nombre_med}** ha atendido a **{nombre_obj}**.\n\n*{descripcion.strip()}*", color=0x2ECC71, timestamp=datetime.now())
             await ctx.send(embed=embed)
-            try:
-                await ctx.message.delete()
-            except:
-                pass
+            await self._del(ctx)
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -curar: {str(e)[:100]}"))
 
@@ -6595,7 +6136,6 @@ class Roleplay(BaseCog):
             )
             embed.set_footer(text="NOVA AGORA RP · Sistema de Sugerencias")
             await msg.channel.send(embed=embed)
-
 
 # ==================== COG: Hosting ====================
 class Hosting(BaseCog):
@@ -6638,10 +6178,7 @@ class Hosting(BaseCog):
                     timestamp=datetime.now()
                 )
             await ctx.send(embed=embed)
-            try:
-                await ctx.message.delete()
-            except:
-                pass
+            await self._del(ctx)
             return
         if dias < 1:
             return await ctx.send(embed=embed_error("❌ Debes especificar al menos 1 día."))
@@ -6661,10 +6198,7 @@ class Hosting(BaseCog):
         embed.set_footer(text="Para detener: Cierra la terminal manualmente")
         await ctx.send(embed=embed)
         await self.log("HOSTING", f"{ctx.author.name} activó el bot por {dias} días. Expira: {nueva_expiry}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='bot-off', aliases=['Bot-off', 'botoff', 'botStop', 'botstop'])
     @is_owner()
@@ -6705,7 +6239,6 @@ class Hosting(BaseCog):
             self.bot_active = False
             if expiry:
                 print(f"❌ Bot ha expirado - Última expiración fue: {expiry}")
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # SISTEMA AVANZADO DE VOTACIONES Y ROL — NOVA AGORA V2
@@ -6921,10 +6454,7 @@ class Soporte(BaseCog):
         embed.add_field(name="📊 Total en sesión:", value=f"```\n{total}\n```", inline=False)
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
         embed.set_footer(text=f"Soporte: {ctx.author.display_name}  ·  NOVA AGORA", icon_url=ctx.author.display_avatar.url)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
         # ── Mismo mensaje de siempre + botones PanelControl adjuntos ──
         panel_view = PanelControlView()
         msg_status = await ctx.send(
@@ -6959,10 +6489,7 @@ class Soporte(BaseCog):
             return await ctx.send(embed=embed_error("Hora inválida. Formato: HH:MM (ej: 16:00)"))
         if "🇪🇸" not in hora_txt:
             hora_txt = f"{hora_txt} 🇪🇸"
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
         await self._publicar_votacion(ctx.channel, ctx.author, {"hora": hora_txt, "tema": tema})
 
     @commands.command(name='forzar-inicio')
@@ -7053,10 +6580,7 @@ class Soporte(BaseCog):
         )
         await ctx.send(embed=embed_ok, delete_after=15)
         await self.log("FORZAR_INICIO", f"{ctx.author.name} inyectó botón en msg {msg_id} (canal: {canal_encontrado.name})")
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
     async def _publicar_votacion(self, canal, autor, datos):
         """Publica la votación con diseño estilo imagen de referencia + 6 reacciones."""
@@ -7240,10 +6764,7 @@ class Soporte(BaseCog):
             nueva_embed.set_thumbnail(url=ctx.guild.icon.url)
         await ctx.send(embed=nueva_embed, view=nueva_view)
 
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
         await self.log("CIERRE_ROL", f"{ctx.author.display_name if ctx.author else 'Desconocido'} cerró el rol")
 
 # ==================== COG: Ayuda ====================
@@ -7342,10 +6863,7 @@ class Moderacion(BaseCog):
         await db.execute("INSERT INTO mutes (user_id, razon, fecha_inicio, fecha_fin, agente_id, agente_nombre, activo) VALUES (?, ?, ?, ?, ?, ?, 1)", (miembro.id, razon, datetime.now().isoformat(), fecha_fin, ctx.author.id, str(ctx.author)))
         await self.registrar_log_moderacion(ctx, "MUTE", miembro, razon, "30 días")
         await ctx.send(embed=embed_success("✅ Mute aplicado", f"{miembro.mention} ha sido muteado.\nRazón: {razon}"))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='unmute')
     @commands.has_permissions(manage_roles=True)
@@ -7359,10 +6877,7 @@ class Moderacion(BaseCog):
         await db.execute("UPDATE mutes SET activo = 0 WHERE user_id = ? AND activo = 1", (miembro.id,))
         await self.registrar_log_moderacion(ctx, "UNMUTE", miembro, "Levantado por moderador")
         await ctx.send(embed=embed_success("✅ Unmute aplicado", f"{miembro.mention} ya puede hablar."))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='warn')
     @tiene_rol_warn()
@@ -7374,10 +6889,7 @@ class Moderacion(BaseCog):
         num_warns = len(warns)
         await self.registrar_log_moderacion(ctx, f"WARN #{num_warns}", miembro, razon)
         await ctx.send(embed=embed_success("⚠️ Advertencia registrada", f"{miembro.mention} ha recibido una advertencia.\nRazón: {razon}\nTotal: {num_warns} advertencias.", 0xFFA500))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='delwarn')
     @tiene_rol_warn()
@@ -7390,10 +6902,7 @@ class Moderacion(BaseCog):
         await db.execute("DELETE FROM warnings WHERE id = ?", (id_warn,))
         await ctx.send(embed=embed_success("🗑️ Advertencia eliminada", f"Se eliminó la advertencia **#{id_warn}** de {miembro.mention}.", 0xFF6600))
         await self.log("DELWARN", f"{ctx.author.name} eliminó warn #{id_warn} de {miembro.name}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='history')
     @tiene_rol_usuario()
@@ -7415,10 +6924,7 @@ class Moderacion(BaseCog):
         else:
             embed.add_field(name="🔇 Mutes", value="*Ninguna*", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='warnings')
     @tiene_rol_usuario()
@@ -7433,10 +6939,7 @@ class Moderacion(BaseCog):
             warn_id, razon, fecha, agente = w[0], w[1], w[2], w[3]
             embed.add_field(name=f"#{warn_id}", value=f"**Razón:** {razon}\n**Por:** {agente or 'Desconocido'}\n**Fecha:** {datetime.fromisoformat(fecha).strftime('%d/%m/%Y %H:%M')}", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Niveles ====================
 class Niveles(BaseCog):
@@ -7551,10 +7054,7 @@ class Niveles(BaseCog):
         else:
             embed.add_field(name="✅ Cooldown", value="Sin restricciones, sube de nivel cuando alcances el XP.", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='ranking')
     @tiene_rol_usuario()
@@ -7568,10 +7068,7 @@ class Niveles(BaseCog):
             desc += f"**#{i}** {nombre} - Nivel {nivel} ({xp} XP)\n"
         embed.description = desc
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     def construir_server_embed(self, guild: discord.Guild) -> discord.Embed:
         owner_text = "\n".join([f"<@{oid}> (`{oid}`)" for oid in OWNER_IDS]) if OWNER_IDS else "No configurados"
@@ -7600,10 +7097,7 @@ class Niveles(BaseCog):
     async def server_info(self, ctx):
         embed = self.construir_server_embed(ctx.guild)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @app_commands.command(name='info', description='Información premium del servidor Nova Agora V2')
     async def server_slash(self, interaction: discord.Interaction):
@@ -7702,10 +7196,7 @@ class TicketSystem(BaseCog):
         embed.set_footer(text="NOVA AGORA ROLEPLAY")
         view = TicketPanelView(self.bot, self.CATEGORIAS)
         await ctx.send(embed=embed, view=view)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 class TicketPanelView(discord.ui.View):
     def __init__(self, bot, categorias):
@@ -7882,10 +7373,7 @@ class TabletPolicial(BaseCog):
         view = TabletView(ctx.author.id)
         embed = discord.Embed(title=f"{await get_emoji('pda')} Tablet Policial - Nova Agora", description="Selecciona una acción desde el menú.", color=0x3498DB)
         await ctx.send(embed=embed, view=view)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 class TabletView(discord.ui.View):
     def __init__(self, user_id):
@@ -8173,8 +7661,8 @@ def _generar_dni_sync(data: dict, avatar_bytes: bytes = None) -> bytes:
 
     # ── QR ──
     try:
-        qr_txt = f"NOVA:{data.get('numero','?')}|{data.get('nombre','?')} {data.get('apellidos','?')}"
-        qr_img = _make_qr_pil(f"{num_doc}|{data.get('apellidos','')}|{data.get('nombre','')}").resize((140, 140), Image.LANCZOS)
+        _num_doc = str(data.get("numero", "00000000X"))
+        qr_img = _make_qr_pil(f"{_num_doc}|{data.get('apellidos','')}|{data.get('nombre','')}")
         qr_img = qr_img.resize((140, 140), Image.LANCZOS)
         QX, QY = W - 158, 412
         draw.rectangle([QX-5, QY-5, QX+145, QY+145], outline=GOLD, width=2, fill=WHITE)
@@ -8232,7 +7720,6 @@ async def generar_imagen_dni(data: dict, avatar_url: str = None) -> io.BytesIO:
     buf = io.BytesIO(img_bytes)
     buf.seek(0)
     return buf
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # SISTEMA ENCUESTAS + SORTEOS + DROPS + MAFIA — NOVA AGORA V2
@@ -8663,10 +8150,7 @@ class EncuestasSorteosMafia(BaseCog):
             view=view,
             delete_after=60
         )
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
     # ──────────────────────────────────────────────
     # SORTEO
@@ -8859,10 +8343,7 @@ class EncuestasSorteosMafia(BaseCog):
         )
         view = DropSelectView(ctx.author.id)
         await ctx.send(embed=embed, view=view)
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
         await self.log("DROP_MENU", f"{ctx.author.name} abrió el menú de cargamentos DEFCON4")
 
     # ──────────────────────────────────────────────
@@ -8904,10 +8385,7 @@ class EncuestasSorteosMafia(BaseCog):
         )
         view = MafiaBancoView()
         await ctx.send(embed=embed, view=view)
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
 class _EncuestaLaunchView(discord.ui.View):
     """Vista auxiliar para que un prefix command pueda abrir un Modal."""
@@ -9097,10 +8575,7 @@ class DNI(BaseCog):
             await loading_msg.edit(content=f"❌ Error inesperado al generar DNI: {e}")
             import traceback; traceback.print_exc()
 
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
     @app_commands.command(name='borrardni', description="[Admin] Elimina el DNI de un usuario del sistema")
     @app_commands.checks.has_permissions(administrator=True)
@@ -9265,10 +8740,7 @@ class Trabajos(BaseCog):
         )
         await msg.edit(content=None, embed=embed)
         await self.log("MINAR", f"{ctx.author.name} extrajo {cantidad}x {mineral_encontrado}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='bus')
     @check_ban()
@@ -9287,10 +8759,7 @@ class Trabajos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("BUS", f"{ctx.author.name} comenzó ruta de autobús")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='chatarrero')
     @check_ban()
@@ -9309,10 +8778,7 @@ class Trabajos(BaseCog):
         )
         await ctx.send(embed=embed)
         await self.log("CHATARRERO", f"{ctx.author.name} comenzó recolección de chatarra")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='terminar-trabajo')
     @check_ban()
@@ -9344,10 +8810,7 @@ class Trabajos(BaseCog):
             await ctx.send(embed=embed)
         del self.trabajos_activos[uid]
         await self.log("TERMINAR_TRABAJO", f"{ctx.author.name} finalizó trabajo de {tipo}")
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Kits ====================
 class Kits(BaseCog):
@@ -9359,10 +8822,7 @@ class Kits(BaseCog):
     @tiene_rol_usuario()
     async def kit_policial(self, ctx):
         await self._reclamar_kit(ctx, "LSPD", "Kit policial", [("Placa Policial", 1), ("Linterna", 1), ("Radio", 1), ("Esposas", 1), ("Guantes", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='mecanico')
     @check_ban()
@@ -9370,10 +8830,7 @@ class Kits(BaseCog):
     @tiene_rol_usuario()
     async def kit_mecanico(self, ctx):
         await self._reclamar_kit(ctx, "Mecánico", "Kit mecánico", [("Llave Inglesa", 1), ("Herramientas", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='ems')
     @check_ban()
@@ -9381,10 +8838,7 @@ class Kits(BaseCog):
     @tiene_rol_usuario()
     async def kit_ems(self, ctx):
         await self._reclamar_kit(ctx, "EMS", "Kit EMS", [("Botiquin", 1), ("Desfibrilador", 1), ("Kit Médico", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @commands.command(name='bomberos')
     @check_ban()
@@ -9392,10 +8846,7 @@ class Kits(BaseCog):
     @tiene_rol_usuario()
     async def kit_bomberos(self, ctx):
         await self._reclamar_kit(ctx, "Bomberos", "Kit bomberos", [("Traje Ignifugo", 1), ("Hacha", 1), ("Manguera", 1), ("Botiquin", 1)])
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     async def _reclamar_kit(self, ctx, rol_requerido, nombre_kit, items):
         user = ctx.author
@@ -9457,10 +8908,7 @@ class OwnerMenu(BaseCog):
         embed.add_field(name="`-owner menu`", value="Abre un menú interactivo para gestionar emojis.", inline=False)
         embed.add_field(name="🌐 Panel web", value=f"Accede a `/owner/emojis` en el navegador con el token `{ADMIN_TOKEN}` para gestionar emojis globales.", inline=False)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @owner.command(name='add-emoji')
     @is_owner()
@@ -9489,10 +8937,7 @@ class OwnerMenu(BaseCog):
             await self.log("ADD_EMOJI", f"{ctx.author.name} añadió emoji {nombre} (ID: {new_emoji.id})")
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al añadir emoji: {str(e)[:100]}"))
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     def _download_image(self, url):
         import requests
@@ -9509,10 +8954,7 @@ class OwnerMenu(BaseCog):
         desc = "\n".join([f"`:{e['name']}:` (<:{e['name']}:{e['emoji_id']}>)" for e in emojis])
         embed = discord.Embed(title="📋 Emojis personalizados", description=desc, color=0x00FF00)
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
     @owner.command(name='menu')
     @is_owner()
@@ -9520,10 +8962,7 @@ class OwnerMenu(BaseCog):
         view = OwnerMenuView()
         embed = discord.Embed(title="🔧 Menú de Owner", description="Selecciona una opción para gestionar el bot y los emojis animados.\n\nTambién puedes usar el panel web: `/owner/emojis`", color=0x00FF00)
         await ctx.send(embed=embed, view=view)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
 
 class OwnerMenuView(discord.ui.View):
     def __init__(self):
@@ -9644,10 +9083,7 @@ class Alertas(BaseCog):
             f"{emoji_animado} **CÓDIGO ROJO - ACCIÓN INMEDIATA** {emoji_animado}"
         )
         await ctx.send(content=mensaje)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
         await self.log("ALERTA_ROBO", f"{ctx.author.name} activó la alerta de robo")
 
     @commands.command(name='alerta-defcon')
@@ -9784,10 +9220,7 @@ class Alertas(BaseCog):
             allowed_mentions=discord.AllowedMentions(everyone=True, roles=True)
         )
         await self.log("ALERTA_DEFCON", f"{ctx.author.name} activó {d['nombre']}")
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._del(ctx)
 
 # ==================== COG: Disponibilidad ====================
 class Disponibilidad(BaseCog):
@@ -9832,10 +9265,7 @@ class Disponibilidad(BaseCog):
             color=0x00A8FF
         )
         await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+        await self._del(ctx)
         await self.log("DISPO", f"{ctx.author.name} consultó disponibilidad {servicio.upper()}: {cantidad}")
 
 # ==================== SERVIDOR WEB ====================
@@ -9959,24 +9389,18 @@ def get_pre(bot, msg):
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members          = True
-intents.reactions        = True   # Para tracking de reacciones en votaciones (incluidas antiguas)
-intents.guilds           = True
-intents.voice_states = True
-intents.guilds = True
-intents.guild_messages = True
-intents.webhooks = True
+intents.members         = True
+intents.reactions       = True   # Tracking de reacciones en votaciones/sugerencias
+intents.guilds          = True
+intents.voice_states    = True
+intents.guild_messages  = True
+intents.webhooks        = True
 bot = commands.Bot(
     command_prefix=get_pre,
     intents=intents,
     help_command=None,
-    # Partials para leer reacciones/mensajes antiguos sin caché
     chunk_guilds_at_startup=False,
 )
-# Partials: permiten que on_raw_reaction_add funcione en mensajes fuera del caché
-# (necesario para votaciones antiguas y mensajes persistentes)
-for partial in (discord.PartialMessageable, ):
-    pass  # partials are handled via raw events automatically in discord.py v2
 
 # ── Modal del anuncio (permite mensajes largos hasta 3000 chars) ──
 class AnuncioModal(discord.ui.Modal, title="📣 Crear Anuncio Oficial"):
