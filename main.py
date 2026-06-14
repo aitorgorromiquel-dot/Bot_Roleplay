@@ -1690,9 +1690,20 @@ def tiene_rol_usuario():
         if ctx.author.id in OWNER_IDS:
             return True
         role = ctx.guild.get_role(ROL_USUARIO_ID)
-        if role:
-            return role in ctx.author.roles
-        return True
+        if role is None:
+            # Rol no encontrado en el servidor → acceso libre para no bloquear
+            return True
+        if role in ctx.author.roles:
+            return True
+        # ── Rol encontrado pero el usuario no lo tiene ──
+        await ctx.send(
+            embed=embed_error(
+                "🚫 Necesitas el rol de **Ciudadano** para usar este comando.\n"
+                "Si ya eres ciudadano y ves este error, contacta con un administrador."
+            ),
+            delete_after=10
+        )
+        return False
     return commands.check(predicate)
 
 def es_owner_o_mafia():
@@ -4936,6 +4947,9 @@ class Admin(BaseCog):
             pass
         try:
             role = await commands.RoleConverter().convert(ctx, target)
+            # ── Asegurar caché completo de miembros antes de filtrar por rol ──
+            if not ctx.guild.chunked:
+                await ctx.guild.chunk(cache=True)
             members = [m for m in ctx.guild.members if role in m.roles and not m.bot]
             if not members:
                 return await ctx.send(embed=embed_error(f"No hay miembros con el rol {role.mention}."))
@@ -5105,9 +5119,27 @@ class Admin(BaseCog):
             return await ctx.send(embed=embed_help("mass-economy", "Da dinero a todos los miembros de un rol.", "-mass-economy @Rol <cantidad>", "-mass-economy @Ciudadanos 1000", "Equipo Especial"))
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
+        # ── Asegurar que TODOS los miembros del servidor estén en caché ──
+        # (necesario porque chunk_guilds_at_startup=False)
+        if not ctx.guild.chunked:
+            aviso = await ctx.send(embed=discord.Embed(
+                title="⏳ Cargando miembros...",
+                description="Sincronizando la lista de miembros del servidor. Un momento...",
+                color=0x3498DB
+            ))
+            await ctx.guild.chunk(cache=True)
+        else:
+            aviso = None
         miembros = [m for m in ctx.guild.members if rol in m.roles and not m.bot]
         if not miembros:
-            return await ctx.send(embed=embed_error(f"No hay miembros con el rol {rol.mention}."))
+            if aviso:
+                await aviso.delete()
+            return await ctx.send(embed=embed_error(
+                f"No hay miembros con el rol {rol.mention}.\n"
+                f"Verifica que el rol esté asignado correctamente en el servidor."
+            ))
+        if aviso:
+            await aviso.delete()
         msg = await ctx.send(embed=discord.Embed(
             title="⏳ Procesando...",
             description=f"Dando **${cantidad:,}** a **{len(miembros)}** miembros con el rol {rol.mention}...",
