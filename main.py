@@ -3769,7 +3769,7 @@ class Preparatorias(BaseCog):
 
 # ==================== COG: Banco ====================
 class Banco(BaseCog):
-    @commands.group(name='banco', aliases=['bal', 'balance', 'saldo', 'dinero'], invoke_without_command=True)
+    @commands.group(name='banco', invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
@@ -3777,18 +3777,16 @@ class Banco(BaseCog):
         uid = ctx.author.id
         eco = await db.get_economy(uid)
         emoji_money = await get_emoji('money')
-        emoji_bank  = await get_emoji('bank')
+        emoji_bank = await get_emoji('bank')
         embed = discord.Embed(
-            title=f"{emoji_bank} BANCO CENTRAL — {ctx.author.display_name}",
+            title=f"{emoji_bank} BANCO CENTRAL",
             description=(
-                f"{emoji_money} **Efectivo:** `${eco['cash']:,}`\n"
-                f"{emoji_bank} **En banco:** `${eco['bank']:,}`\n"
-                f"💰 **Total:**    `${eco['cash'] + eco['bank']:,}`"
+                f"{emoji_money} Efectivo: **${eco['cash']:,}**\n"
+                f"{emoji_bank} En banco: **${eco['bank']:,}**\n"
+                f"💰 Total:    **${eco['cash'] + eco['bank']:,}**"
             ),
-            color=0x3498DB,
-            timestamp=datetime.now()
+            color=0x3498DB
         )
-        embed.set_thumbnail(url=ctx.author.display_avatar.url)
         if eco['black_money'] > 0:
             embed.add_field(
                 name=f"{await get_emoji('black_money')} Dinero negro",
@@ -3796,17 +3794,14 @@ class Banco(BaseCog):
                 inline=False
             )
         embed.add_field(
-            name="📌 Comandos rápidos",
+            name="Comandos",
             value=(
-                "`-dep <cantidad|all>` — Depositar al banco\n"
-                "`-with <cantidad|all>` — Retirar del banco\n"
-                "`-banco transferir @usuario <cantidad>` — Transferir\n"
-                "`-banco ingresar <cantidad|all>` — Alias depositar\n"
-                "`-banco retirar <cantidad|all>` — Alias retirar"
+                "`-banco ingresar <cantidad>`\n"
+                "`-banco retirar <cantidad>`\n"
+                "`-banco transferir @usuario <cantidad>`"
             ),
             inline=False
         )
-        embed.set_footer(text="Nova Agora RP · Banco Central")
         await ctx.send(embed=embed)
         await self._del(ctx)
 
@@ -3880,96 +3875,6 @@ class Banco(BaseCog):
         ))
         await self.log("BANCO_TRANSFERENCIA", f"{ctx.author.name} transfirió ${cantidad} a {usuario.name}")
         await self._del(ctx)
-
-    # ── Atajos rápidos de nivel superior: -dep y -with ─────────────────────
-    @commands.command(name='dep', aliases=['depositar', 'ingresar'])
-    @check_ban()
-    @check_encarcelado()
-    @tiene_rol_usuario()
-    async def dep(self, ctx, cantidad: str = None):
-        """Deposita dinero al banco. Uso: -dep <cantidad|all>"""
-        if not cantidad:
-            return await ctx.send(embed=embed_help(
-                "dep", "Deposita efectivo en el banco.",
-                "-dep <cantidad|all>",
-                "-dep 5000  |  -dep all", "Ciudadano"
-            ))
-        eco = await db.get_economy(ctx.author.id)
-        if cantidad.lower() in ("all", "todo", "todos"):
-            real = eco["cash"]
-        else:
-            try:
-                real = int(cantidad.replace(",", "").replace(".", "").replace("$", ""))
-            except ValueError:
-                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
-        if real <= 0:
-            return await ctx.send(embed=embed_error("No tienes efectivo para depositar."))
-        if eco["cash"] < real:
-            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['cash']:,}** en efectivo."))
-        await db.add_cash(ctx.author.id, -real)
-        await db.add_bank(ctx.author.id, real)
-        eco_new = await db.get_economy(ctx.author.id)
-        embed = discord.Embed(
-            title="🏦 Depósito realizado",
-            description=(
-                f"💵 Depositado: **${real:,}**\n"
-                f"💰 Efectivo restante: `${eco_new['cash']:,}`\n"
-                f"🏦 Saldo en banco:   `${eco_new['bank']:,}`"
-            ),
-            color=0x00FF88,
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text="Nova Agora RP · Banco Central")
-        await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
-
-    @commands.command(name='with', aliases=['retirar', 'sacar', 'withdraw'])
-    @check_ban()
-    @check_encarcelado()
-    @tiene_rol_usuario()
-    async def with_(self, ctx, cantidad: str = None):
-        """Retira dinero del banco. Uso: -with <cantidad|all>"""
-        if not cantidad:
-            return await ctx.send(embed=embed_help(
-                "with", "Retira dinero del banco a efectivo.",
-                "-with <cantidad|all>",
-                "-with 5000  |  -with all", "Ciudadano"
-            ))
-        eco = await db.get_economy(ctx.author.id)
-        if cantidad.lower() in ("all", "todo", "todos"):
-            real = eco["bank"]
-        else:
-            try:
-                real = int(cantidad.replace(",", "").replace(".", "").replace("$", ""))
-            except ValueError:
-                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
-        if real <= 0:
-            return await ctx.send(embed=embed_error("No tienes dinero en el banco para retirar."))
-        if eco["bank"] < real:
-            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['bank']:,}** en el banco."))
-        await db.add_bank(ctx.author.id, -real)
-        await db.add_cash(ctx.author.id, real)
-        eco_new = await db.get_economy(ctx.author.id)
-        embed = discord.Embed(
-            title="💵 Retiro realizado",
-            description=(
-                f"💵 Retirado: **${real:,}**\n"
-                f"💰 Efectivo actual:  `${eco_new['cash']:,}`\n"
-                f"🏦 Saldo en banco:  `${eco_new['bank']:,}`"
-            ),
-            color=0x00AAFF,
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text="Nova Agora RP · Banco Central")
-        await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
-    # ───────────────────────────────────────────────────────────────────────
 
     @commands.command(name='pay', aliases=['bizum', 'pagar', 'transferir'])
     @check_ban()
