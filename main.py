@@ -2216,36 +2216,170 @@ class Principal(BaseCog):
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
-    async def dar(self, ctx, usuario: discord.Member = None, item: str = None, cantidad: int = None):
-        if not usuario or not item or not cantidad:
+    async def dar(self, ctx, usuario: discord.Member = None, *, args: str = None):
+        """Da un ítem de tu inventario a otro jugador. Soporta búsqueda inteligente por nombre parcial."""
+        if not usuario or not args:
             return await ctx.send(embed=embed_help(
-                "dar",
-                "Da un item de tu inventario a otro jugador.",
+                "dar", "Da un ítem a otro jugador. Soporta nombres parciales.",
                 "-dar @usuario <item> <cantidad>",
-                "-dar @Juan Pistola 1",
-                ""
+                "-dar @Juan Bolsas 1  /  -dar @Ana Pistola 2", ""
             ))
         uid, tid = ctx.author.id, usuario.id
         if uid == tid:
-            return await ctx.send(embed=embed_error("No puedes darte items a ti mismo."))
+            return await ctx.send(embed=embed_error("No puedes darte ítems a ti mismo."))
+
+        # ── Parsear args: último token = cantidad, resto = nombre item ──
+        tokens = args.strip().split()
+        try:
+            cantidad = int(tokens[-1])
+            item_query = " ".join(tokens[:-1]).strip()
+        except (ValueError, IndexError):
+            cantidad = 1
+            item_query = args.strip()
+
         if cantidad <= 0:
             return await ctx.send(embed=embed_error("La cantidad debe ser mayor a 0."))
+        if not item_query:
+            return await ctx.send(embed=embed_error("Debes especificar el nombre del ítem."))
+
         inv = await db.get_inventory(uid, "personal")
-        item_real = next((k for k in inv if k.lower() == item.lower()), None)
+        if not inv:
+            return await ctx.send(embed=embed_error("Tu inventario personal está vacío."))
+
+        # ── 1. Coincidencia exacta (case-insensitive) ──
+        item_real = next((k for k in inv if k.lower() == item_query.lower()), None)
+
+        # ── 2. Coincidencia parcial si no hay exacta ──
         if not item_real:
-            return await ctx.send(embed=embed_error(f"No tienes **{item}** en tu inventario."))
+            parciales = [k for k in inv if item_query.lower() in k.lower()]
+            if len(parciales) == 1:
+                item_real = parciales[0]          # única opción → usar directamente
+            elif len(parciales) > 1:
+                # Mostrar menú de selección con las opciones encontradas
+                opciones_txt = "\n".join(
+                    f"`{i+1}.` {k} (**{inv[k]}** disponibles)"
+                    for i, k in enumerate(parciales)
+                )
+                embed_busq = discord.Embed(
+                    title="🔍 Ítem no encontrado — Resultados similares",
+                    description=(
+                        f"No existe **{item_query}** exacto en tu inventario.\n"
+                        "Elige una de las opciones encontradas:"
+                    ),
+                    color=0xFFA500,
+                    timestamp=datetime.now()
+                )
+                embed_busq.add_field(name="📦 Coincidencias", value=opciones_txt, inline=False)
+                embed_busq.set_footer(text="Usa el menú desplegable para seleccionar el ítem correcto.")
+
+                view = DarBuscadorView(ctx.author.id, usuario, parciales, inv, cantidad)
+                await ctx.send(embed=embed_busq, view=view)
+                await self._del(ctx)
+                return
+
+        # ── 3. Sin ninguna coincidencia → error descriptivo ──
+        if not item_real:
+            # Sugerir ítems disponibles
+            disponibles = ", ".join(f"`{k}`" for k in list(inv.keys())[:8])
+            extra = f"…y {len(inv)-8} más" if len(inv) > 8 else ""
+            return await ctx.send(embed=embed_error(
+                f"No tienes **{item_query}** en tu inventario.\n\n"
+                f"📦 Tienes: {disponibles} {extra}\n"
+                f"Prueba a escribir parte del nombre para búsqueda automática."
+            ))
+
+        # ── 4. Transferencia directa ──
         if inv[item_real] < cantidad:
-            return await ctx.send(embed=embed_error(f"Solo tienes **{inv[item_real]}x {item_real}**."))
+            return await ctx.send(embed=embed_error(
+                f"Solo tienes **{inv[item_real]}x {item_real}** disponibles."
+            ))
         await db.remove_item(uid, "personal", item_real, cantidad)
         await db.add_item(tid, "personal", item_real, cantidad)
         embed = discord.Embed(
-            title="🎁 Item Entregado",
-            description=f"{ctx.author.mention} ha dado **{cantidad}x {item_real}** a {usuario.mention}.",
-            color=0x3498DB
+            title="🎁 Ítem Entregado",
+            description=(
+                f"{ctx.author.mention} ha dado **{cantidad}x {item_real}** a {usuario.mention}.\n"
+                f"📦 Te quedan: `{inv[item_real] - cantidad}x {item_real}`"
+            ),
+            color=0x00FF88,
+            timestamp=datetime.now()
         )
+        embed.set_footer(text="Nova Agora RP · Sistema de Inventario")
         await ctx.send(embed=embed)
         await self.log("DAR", f"{ctx.author.name} dio {cantidad}x {item_real} a {usuario.name}")
         await self._del(ctx)
+
+
+class DarBuscadorView(discord.ui.View):
+    """Select Menu que aparece cuando -dar no encuentra el ítem exacto."""
+    def __init__(self, autor_id: int, destinatario: discord.Member,
+                 opciones: list[str], inv: dict, cantidad: int):
+        super().__init__(timeout=60)
+        self.autor_id     = autor_id
+        self.destinatario = destinatario
+        self.cantidad     = cantidad
+        self.inv          = inv
+
+        select = discord.ui.Select(
+            placeholder="🔍 Selecciona el ítem correcto…",
+            options=[
+                discord.SelectOption(
+                    label=f"{k[:50]}",
+                    description=f"{inv[k]} disponibles",
+                    value=k
+                )
+                for k in opciones[:25]       # Discord limit: 25 opciones
+            ]
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+        cancel_btn = discord.ui.Button(label="❌ Cancelar", style=discord.ButtonStyle.secondary)
+        cancel_btn.callback = self._on_cancel
+        self.add_item(cancel_btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.autor_id:
+            await interaction.response.send_message("Solo el autor puede usar este menú.", ephemeral=True)
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        item_real = interaction.data["values"][0]
+        cantidad  = self.cantidad
+        inv       = self.inv
+
+        if inv.get(item_real, 0) < cantidad:
+            return await interaction.response.send_message(
+                embed=embed_error(f"Solo tienes **{inv.get(item_real,0)}x {item_real}**."),
+                ephemeral=True
+            )
+        await db.remove_item(self.autor_id, "personal", item_real, cantidad)
+        await db.add_item(self.destinatario.id, "personal", item_real, cantidad)
+
+        embed = discord.Embed(
+            title="🎁 Ítem Entregado",
+            description=(
+                f"<@{self.autor_id}> ha dado **{cantidad}x {item_real}** "
+                f"a {self.destinatario.mention}.\n"
+                f"📦 Te quedan: `{inv[item_real] - cantidad}x {item_real}`"
+            ),
+            color=0x00FF88,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Nova Agora RP · Sistema de Inventario")
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    async def _on_cancel(self, interaction: discord.Interaction):
+        embed_cancel = discord.Embed(
+            description="❌ Transferencia cancelada.", color=0xFF0000)
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed_cancel, view=self)
+        self.stop()
 
     @commands.command(name='mover')
     @check_ban()
@@ -3769,7 +3903,7 @@ class Preparatorias(BaseCog):
 
 # ==================== COG: Banco ====================
 class Banco(BaseCog):
-    @commands.group(name='banco', invoke_without_command=True)
+    @commands.group(name='banco', aliases=['bal', 'balance', 'saldo', 'dinero'], invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
@@ -3777,16 +3911,18 @@ class Banco(BaseCog):
         uid = ctx.author.id
         eco = await db.get_economy(uid)
         emoji_money = await get_emoji('money')
-        emoji_bank = await get_emoji('bank')
+        emoji_bank  = await get_emoji('bank')
         embed = discord.Embed(
-            title=f"{emoji_bank} BANCO CENTRAL",
+            title=f"{emoji_bank} BANCO CENTRAL — {ctx.author.display_name}",
             description=(
-                f"{emoji_money} Efectivo: **${eco['cash']:,}**\n"
-                f"{emoji_bank} En banco: **${eco['bank']:,}**\n"
-                f"💰 Total:    **${eco['cash'] + eco['bank']:,}**"
+                f"{emoji_money} **Efectivo:** `${eco['cash']:,}`\n"
+                f"{emoji_bank} **En banco:** `${eco['bank']:,}`\n"
+                f"💰 **Total:**    `${eco['cash'] + eco['bank']:,}`"
             ),
-            color=0x3498DB
+            color=0x3498DB,
+            timestamp=datetime.now()
         )
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
         if eco['black_money'] > 0:
             embed.add_field(
                 name=f"{await get_emoji('black_money')} Dinero negro",
@@ -3794,14 +3930,17 @@ class Banco(BaseCog):
                 inline=False
             )
         embed.add_field(
-            name="Comandos",
+            name="📌 Comandos rápidos",
             value=(
-                "`-banco ingresar <cantidad>`\n"
-                "`-banco retirar <cantidad>`\n"
-                "`-banco transferir @usuario <cantidad>`"
+                "`-dep <cantidad|all>` — Depositar al banco\n"
+                "`-with <cantidad|all>` — Retirar del banco\n"
+                "`-banco transferir @usuario <cantidad>` — Transferir\n"
+                "`-banco ingresar <cantidad|all>` — Alias depositar\n"
+                "`-banco retirar <cantidad|all>` — Alias retirar"
             ),
             inline=False
         )
+        embed.set_footer(text="Nova Agora RP · Banco Central")
         await ctx.send(embed=embed)
         await self._del(ctx)
 
@@ -3875,6 +4014,96 @@ class Banco(BaseCog):
         ))
         await self.log("BANCO_TRANSFERENCIA", f"{ctx.author.name} transfirió ${cantidad} a {usuario.name}")
         await self._del(ctx)
+
+    # ── Atajos rápidos de nivel superior: -dep y -with ─────────────────────
+    @commands.command(name='dep', aliases=['depositar', 'ingresar'])
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def dep(self, ctx, cantidad: str = None):
+        """Deposita dinero al banco. Uso: -dep <cantidad|all>"""
+        if not cantidad:
+            return await ctx.send(embed=embed_help(
+                "dep", "Deposita efectivo en el banco.",
+                "-dep <cantidad|all>",
+                "-dep 5000  |  -dep all", "Ciudadano"
+            ))
+        eco = await db.get_economy(ctx.author.id)
+        if cantidad.lower() in ("all", "todo", "todos"):
+            real = eco["cash"]
+        else:
+            try:
+                real = int(cantidad.replace(",", "").replace(".", "").replace("$", ""))
+            except ValueError:
+                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
+        if real <= 0:
+            return await ctx.send(embed=embed_error("No tienes efectivo para depositar."))
+        if eco["cash"] < real:
+            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['cash']:,}** en efectivo."))
+        await db.add_cash(ctx.author.id, -real)
+        await db.add_bank(ctx.author.id, real)
+        eco_new = await db.get_economy(ctx.author.id)
+        embed = discord.Embed(
+            title="🏦 Depósito realizado",
+            description=(
+                f"💵 Depositado: **${real:,}**\n"
+                f"💰 Efectivo restante: `${eco_new['cash']:,}`\n"
+                f"🏦 Saldo en banco:   `${eco_new['bank']:,}`"
+            ),
+            color=0x00FF88,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Nova Agora RP · Banco Central")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+    @commands.command(name='with', aliases=['retirar', 'sacar', 'withdraw'])
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def with_(self, ctx, cantidad: str = None):
+        """Retira dinero del banco. Uso: -with <cantidad|all>"""
+        if not cantidad:
+            return await ctx.send(embed=embed_help(
+                "with", "Retira dinero del banco a efectivo.",
+                "-with <cantidad|all>",
+                "-with 5000  |  -with all", "Ciudadano"
+            ))
+        eco = await db.get_economy(ctx.author.id)
+        if cantidad.lower() in ("all", "todo", "todos"):
+            real = eco["bank"]
+        else:
+            try:
+                real = int(cantidad.replace(",", "").replace(".", "").replace("$", ""))
+            except ValueError:
+                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
+        if real <= 0:
+            return await ctx.send(embed=embed_error("No tienes dinero en el banco para retirar."))
+        if eco["bank"] < real:
+            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['bank']:,}** en el banco."))
+        await db.add_bank(ctx.author.id, -real)
+        await db.add_cash(ctx.author.id, real)
+        eco_new = await db.get_economy(ctx.author.id)
+        embed = discord.Embed(
+            title="💵 Retiro realizado",
+            description=(
+                f"💵 Retirado: **${real:,}**\n"
+                f"💰 Efectivo actual:  `${eco_new['cash']:,}`\n"
+                f"🏦 Saldo en banco:  `${eco_new['bank']:,}`"
+            ),
+            color=0x00AAFF,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Nova Agora RP · Banco Central")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+    # ───────────────────────────────────────────────────────────────────────
 
     @commands.command(name='pay', aliases=['bizum', 'pagar', 'transferir'])
     @check_ban()
@@ -6570,9 +6799,14 @@ class Hosting(BaseCog):
 # ════════════════════════════════════════════════════════════════════════════
 
 # ── Cache en memoria de votaciones activas ──
-VOTACIONES_ACTIVAS: dict = {}
-SUGERENCIAS_ACTIVAS: dict  = {}  # {msg_id: {autor_id, texto, canal_id, guild_id, alerta_env}}
-# {msg_id (int): {canal_id, guild_id, autor_id, hora, tema, votos_si: set, votos_no: set, iniciado: bool}}
+CANAL_AVISOS_ROL_ID = 1450592845000872029   # Canal donde se publica "ESTAMOS EN ROL"
+
+def _solo_iniciador(interaction: discord.Interaction) -> bool:
+    """True si el usuario tiene el rol Iniciador o es administrador/owner."""
+    if interaction.user.guild_permissions.administrator:
+        return True
+    r = interaction.guild.get_role(ROL_INICIADOR_ID)
+    return bool(r and r in interaction.user.roles)
 
 def _vot_can_manage(interaction: discord.Interaction) -> bool:
     """True si el usuario puede gestionar el rol (admin o roles de staff)."""
@@ -6584,78 +6818,140 @@ def _vot_can_manage(interaction: discord.Interaction) -> bool:
             return True
     return False
 
+def _build_status_embed(ini: str, ciu: int, pol: int, admins: int,
+                         guild: discord.Guild, autor: discord.Member) -> discord.Embed:
+    """Construye el embed premium de ESTAMOS EN ROL, idéntico a la imagen de referencia."""
+    total = ciu + pol + admins
+    embed = discord.Embed(
+        title="🚨 ESTAMOS EN ROL 🚨",
+        description=f"Sesión iniciada a las {datetime.now().strftime('%H:%M')} 🇪🇸",
+        color=0xE74C3C,
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="📌 Iniciador",    value=f"```\n{ini}\n```",    inline=False)
+    embed.add_field(name="👥 Ciudadanos",   value=f"```\n{ciu}\n```",    inline=True)
+    embed.add_field(name="🚔 LSPD",        value=f"```\n{pol}\n```",    inline=True)
+    embed.add_field(name="🏥 EMS",         value=f"```\n{admins}\n```", inline=True)
+    embed.add_field(name="📊 Total Sesión",value=f"```\n{total}\n```",  inline=True)
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.set_footer(
+        text=f"Publicado por {autor.display_name} · NOVA AGORA · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        icon_url=autor.display_avatar.url
+    )
+    return embed
+
 # ────────────────────────────────────────────────────────────────
-# MODAL: Iniciar Rol
+# MODAL: Actualizar Status (botón 🔄 del PanelControlView)
+# ────────────────────────────────────────────────────────────────
+class ActualizarStatusModal(discord.ui.Modal, title="🔄 Actualizar Panel de Rol"):
+    iniciador  = discord.ui.TextInput(
+        label="👤 ID del Iniciador (nombre IC)",
+        placeholder="ej: Pablo Gómez / Almiron_44",
+        min_length=1, max_length=40
+    )
+    ciudadanos = discord.ui.TextInput(
+        label="👥 Número de Ciudadanos en rol",
+        placeholder="ej: 7", min_length=1, max_length=4
+    )
+    polis = discord.ui.TextInput(
+        label="🚔 Número de Polis (LSPD) en rol",
+        placeholder="ej: 6", min_length=1, max_length=4
+    )
+    admins = discord.ui.TextInput(
+        label="🏥 Número de Admins / EMS en rol",
+        placeholder="ej: 1", required=False, max_length=4
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            ciu  = int(self.ciudadanos.value.strip() or 0)
+            pol  = int(self.polis.value.strip()      or 0)
+            adm  = int(self.admins.value.strip()     or 0)
+            ini  = self.iniciador.value.strip()
+        except ValueError:
+            return await interaction.response.send_message(
+                embed=embed_error("Los campos numéricos deben ser números enteros."), ephemeral=True
+            )
+        nuevo_embed = _build_status_embed(ini, ciu, pol, adm, interaction.guild, interaction.user)
+        # Editar el mensaje actual (el panel) con los datos actualizados
+        await interaction.response.edit_message(embed=nuevo_embed, view=PanelControlView())
+
+# ────────────────────────────────────────────────────────────────
+# MODAL: Iniciar Rol (al pulsar el botón verde de la votación)
 # ────────────────────────────────────────────────────────────────
 class IniciarRolModal(discord.ui.Modal, title="🎮 Iniciar Sesión de Rol"):
     iniciador  = discord.ui.TextInput(
-        label="👤 Iniciador IC", placeholder="ej: Pablo Gómez", min_length=1, max_length=30)
+        label="👤 ID del Iniciador (nombre IC)", placeholder="ej: Almiron_44",
+        min_length=1, max_length=40)
     ciudadanos = discord.ui.TextInput(
-        label="👥 Ciudadanos conectados", placeholder="ej: 45", min_length=1, max_length=5)
+        label="👥 Ciudadanos conectados", placeholder="ej: 7", min_length=1, max_length=5)
     policias   = discord.ui.TextInput(
-        label="🚔 Policías (LSPD)", placeholder="ej: 8", min_length=1, max_length=5)
-    ems        = discord.ui.TextInput(
-        label="🏥 Sanitarios (EMS/LSMD)", placeholder="ej: 3", required=False, max_length=5)
-    mecanicos  = discord.ui.TextInput(
-        label="🔧 Mecánicos", placeholder="ej: 2", required=False, max_length=5)
+        label="🚔 Policías (LSPD)", placeholder="ej: 6", min_length=1, max_length=5)
+    admins     = discord.ui.TextInput(
+        label="🏥 EMS / Admins", placeholder="ej: 1", required=False, max_length=5)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
             ciu  = int(self.ciudadanos.value.strip() or 0)
             pol  = int(self.policias.value.strip()   or 0)
-            e    = int(self.ems.value.strip()        or 0)
-            mec  = int(self.mecanicos.value.strip()  or 0)
+            adm  = int(self.admins.value.strip()     or 0)
             ini  = self.iniciador.value.strip()
-            total = ciu + pol + e + mec
         except ValueError:
             return await interaction.response.send_message(
                 embed=embed_error("Los campos numéricos deben ser números."), ephemeral=True)
 
-        embed = discord.Embed(
-            title="🚨 ESTAMOS EN ROL 🚨",
-            description=f">>> Sesión iniciada a las {datetime.now().strftime('%H:%M')} 🇪🇸",
-            color=discord.Color.red(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="📌 Iniciador",      value=f"```{ini}```",   inline=False)
-        embed.add_field(name="👥 Ciudadanos",      value=f"```{ciu}```",   inline=True)
-        embed.add_field(name="🚔 LSPD",           value=f"```{pol}```",   inline=True)
-        embed.add_field(name="🏥 EMS",            value=f"```{e}```",     inline=True)
-        embed.add_field(name="🔧 Mecánicos",      value=f"```{mec}```",   inline=True)
-        embed.add_field(name="📊 Total Sesión",   value=f"```{total}```", inline=True)
-        if interaction.guild.icon:
-            embed.set_thumbnail(url=interaction.guild.icon.url)
-        embed.set_footer(
-            text=f"Publicado por {interaction.user.display_name} · NOVA AGORA",
-            icon_url=interaction.user.display_avatar.url
-        )
-        panel_view = PanelControlView()
-        await interaction.response.send_message(
-            content=f"<@&{ROL_USUARIO_ID}>",
-            embed=embed,
-            view=panel_view,
-            allowed_mentions=discord.AllowedMentions(roles=True)
-        )
+        embed = _build_status_embed(ini, ciu, pol, adm, interaction.guild, interaction.user)
+
+        # Enviar al canal de Avisos de Rol (ID fijo)
+        canal_avisos = interaction.guild.get_channel(CANAL_AVISOS_ROL_ID)
+        rol_ciudadanos = interaction.guild.get_role(ROL_USUARIO_ID)
+        mention = rol_ciudadanos.mention if rol_ciudadanos else f"<@&{ROL_USUARIO_ID}>"
+
+        if canal_avisos:
+            await canal_avisos.send(
+                content=mention,
+                embed=embed,
+                view=PanelControlView(),
+                allowed_mentions=discord.AllowedMentions(roles=True)
+            )
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="✅ Rol iniciado",
+                    description=f"El panel de rol se ha publicado en {canal_avisos.mention}.",
+                    color=0x00FF00
+                ), ephemeral=True
+            )
+        else:
+            # Fallback: enviar en el canal actual
+            await interaction.response.send_message(
+                content=mention,
+                embed=embed,
+                view=PanelControlView(),
+                allowed_mentions=discord.AllowedMentions(roles=True)
+            )
 
 # ────────────────────────────────────────────────────────────────
-# VIEW: Botón "Iniciar Rol!" (se añade a la votación al llegar a 10 ✅)
+# VIEW: Botón "🔹 Iniciar Rol" (verde, aparece al llegar a 10 ✅)
 # ────────────────────────────────────────────────────────────────
 class IniciarRolView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="🟢 Iniciar Rol!", style=discord.ButtonStyle.success,
+        label="🔹 Iniciar Rol", style=discord.ButtonStyle.success,
         custom_id="nova_iniciar_rol_v2"
     )
     async def btn_iniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not _vot_can_manage(interaction):
+        if not _solo_iniciador(interaction):
             return await interaction.response.send_message(
-                embed=embed_error("Solo el staff puede iniciar el rol."), ephemeral=True)
+                embed=embed_error("Solo los **Iniciadores de Rol** pueden iniciar el rol."),
+                ephemeral=True
+            )
         await interaction.response.send_modal(IniciarRolModal())
 
 # ────────────────────────────────────────────────────────────────
-# VIEW: Panel de Control (Reiniciar Rol / Cerrar Rol)
+# VIEW: Panel de Control (🔄 Actualizar / 🔴 Cerrar Rol)
 # ────────────────────────────────────────────────────────────────
 class PanelControlView(discord.ui.View):
     def __init__(self):
@@ -6666,49 +6962,64 @@ class PanelControlView(discord.ui.View):
         custom_id="nova_panel_reiniciar_v2"
     )
     async def btn_reiniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not _vot_can_manage(interaction):
+        if not _solo_iniciador(interaction):
             return await interaction.response.send_message(
-                embed=embed_error("Solo el staff puede actualizar el rol."), ephemeral=True)
-        await interaction.response.send_modal(IniciarRolModal())
+                embed=embed_error("Solo los **Iniciadores de Rol** pueden actualizar el panel."),
+                ephemeral=True
+            )
+        await interaction.response.send_modal(ActualizarStatusModal())
 
     @discord.ui.button(
         label="🔴 Cerrar Rol", style=discord.ButtonStyle.danger,
         custom_id="nova_panel_cerrar_v2"
     )
     async def btn_cerrar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not _vot_can_manage(interaction):
+        if not _solo_iniciador(interaction):
             return await interaction.response.send_message(
-                embed=embed_error("Solo el staff puede cerrar el rol."), ephemeral=True)
-        # Editar el panel actual → indicar rol cerrado
+                embed=embed_error("Solo los **Iniciadores de Rol** pueden cerrar el rol."),
+                ephemeral=True
+            )
+        # ── Embed de cierre (idéntico al -cierre-rol) ──
+        canal_votacion = interaction.guild.get_channel(CANAL_VOTACIONES_ID)
+        voto_txt = canal_votacion.mention if canal_votacion else f"<#{CANAL_VOTACIONES_ID}>"
+
         embed_cerrado = discord.Embed(
-            title="⛔ ROL CERRADO",
-            description=f">>> El rol ha finalizado. ¡Hasta mañana!\n\n🇪🇸 Próxima apertura: **16:00** (hora española)",
-            color=discord.Color.dark_gray(),
+            title="📢 CIERRE DE ROL",
+            description=(
+                "El rol de hoy ha finalizado. Se ha cerrado el rol por el momento.\n\n"
+                f"🗳️ **Vota aquí:** {voto_txt}"
+            ),
+            color=0x1A1A2E,
             timestamp=datetime.now()
-        )
-        embed_cerrado.set_footer(
-            text=f"Cerrado por {interaction.user.display_name} · NOVA AGORA",
-            icon_url=interaction.user.display_avatar.url
         )
         if interaction.guild.icon:
             embed_cerrado.set_thumbnail(url=interaction.guild.icon.url)
+        embed_cerrado.set_footer(
+            text=f"Cerrado por {interaction.user.display_name} · Nova Agora RP",
+            icon_url=interaction.user.display_avatar.url
+        )
         # Deshabilitar botones del panel
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(embed=embed_cerrado, view=self)
-        # Enviar botón de nueva votación
-        nueva_view = NuevaVotacionView()
+
+        # ── Ping @everyone en el canal actual con mención ──
+        rol_ciudadanos = interaction.guild.get_role(ROL_USUARIO_ID)
+        mention_ciu = rol_ciudadanos.mention if rol_ciudadanos else f"<@&{ROL_USUARIO_ID}>"
+        await interaction.followup.send(
+            content=f"@everyone {mention_ciu}",
+            embed=embed_cerrado,
+            allowed_mentions=discord.AllowedMentions(everyone=True, roles=True)
+        )
+        # ── Botón nueva votación ──
         nueva_embed = discord.Embed(
             title="📊 ¿Habrá rol mañana?",
-            description=(
-                ">>> Pulsa el botón para crear la votación del próximo rol.\n"
-                "¡Cuantos más votos, más actividad!"
-            ),
+            description=">>> Pulsa el botón para crear la votación del próximo rol.\n¡Cuantos más votos, más actividad!",
             color=0x2563EB
         )
         if interaction.guild.icon:
             nueva_embed.set_thumbnail(url=interaction.guild.icon.url)
-        await interaction.followup.send(embed=nueva_embed, view=nueva_view)
+        await interaction.followup.send(embed=nueva_embed, view=NuevaVotacionView())
 
 # ────────────────────────────────────────────────────────────────
 # MODAL: Nueva Votación (para el día siguiente)
@@ -6727,12 +7038,10 @@ class NuevaVotacionModal(discord.ui.Modal, title="📊 Nueva Votación de Rol"):
 
     async def on_submit(self, interaction: discord.Interaction):
         hora_txt = self.hora.value.strip()
-        # Añadir bandera de España a la hora
         if "🇪🇸" not in hora_txt:
             hora_txt = f"{hora_txt} 🇪🇸"
         datos = {"hora": hora_txt, "tema": self.tema.value.strip()}
         await interaction.response.defer()
-        # Publicar votación en el canal actual
         cog_soporte = interaction.client.cogs.get("Soporte")
         if cog_soporte:
             await cog_soporte._publicar_votacion(interaction.channel, interaction.user, datos)
@@ -6757,7 +7066,7 @@ class NuevaVotacionView(discord.ui.View):
         await interaction.response.send_modal(NuevaVotacionModal())
 
 # ── Lista global de persistent views para registrar al inicio ──
-PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView]  # EncuestaView/SorteoView se añaden en on_ready
+PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView]
 
 # ==================== COG: Soporte ====================
 class Soporte(BaseCog):
