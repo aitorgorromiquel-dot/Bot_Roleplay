@@ -1492,6 +1492,14 @@ class Database:
                                                (user_id, heist_id))
         return completed_count[0] >= total_preps if completed_count else False
 
+    async def _contar_preps_completadas(self, user_id: int, heist_id: str) -> int:
+        """Cuenta cuántas preparatorias de un atraco ha completado el usuario."""
+        row = await self.fetchone(
+            "SELECT COUNT(*) FROM heist_preparations WHERE user_id = ? AND heist_id = ? AND completed = 1",
+            (user_id, heist_id)
+        )
+        return row[0] if row else 0
+
     async def reset_heist_preparations(self, user_id, heist_id):
         await self.execute("DELETE FROM heist_preparations WHERE user_id = ? AND heist_id = ?", (user_id, heist_id))
 
@@ -2243,29 +2251,150 @@ class Principal(BaseCog):
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
-    async def move(self, ctx, item: str, cantidad: int, origen: str, destino: str):
+    async def move(self, ctx, *, args: str = None):
+        """
+        Mueve items entre inventarios.
+        Sintaxis: -mover <item> <cantidad> <destino>
+        Ejemplo:  -mover marihuana 5 mochila
+                  -mover "licencia de camion" 1 vehiculo
+                  -mover dinero 10000 banco
+        Destinos: personal | vehiculo | propiedad | negocios | banco
+        """
+        if not args:
+            return await ctx.send(embed=embed_help(
+                "mover",
+                "Mueve ítems entre los distintos inventarios.",
+                "-mover <item> <cantidad> <destino>",
+                "-mover marihuana 5 mochila  /  -mover dinero 10000 banco",
+                "Ciudadano"
+            ))
+
         uid = ctx.author.id
-        o, d = origen.lower(), destino.lower()
-        tipos_validos = ['personal', 'vehiculo', 'propiedad', 'negocios']
-        if o not in tipos_validos or d not in tipos_validos:
-            return await ctx.send(embed=embed_error("Tipos: personal, vehiculo, propiedad, negocios"))
-        inv_o = await db.get_inventory(uid, o)
-        if inv_o.get(item, 0) < cantidad:
-            return await ctx.send(embed=embed_error(f"No tienes {item} en {o}."))
-        await db.remove_item(uid, o, item, cantidad)
-        await db.add_item(uid, d, item, cantidad)
-        await ctx.send(embed=embed_success("✅ Movido", f"{cantidad}x {item} de {o} a {d}."))
+        TIPOS_VALIDOS = {"personal", "vehiculo", "propiedad", "negocios"}
+        ALIAS_DESTINO = {
+            "mochila": "personal", "bolsillo": "personal", "inv": "personal",
+            "coche":   "vehiculo", "carro":    "vehiculo", "car": "vehiculo",
+            "casa":    "propiedad", "piso":    "propiedad",
+            "negocio": "negocios",
+            "banco": "banco",  # caso especial: dinero → banco
+        }
+
+        # ── Parsear args: los últimos dos tokens son cantidad + destino ──
+        tokens = args.strip().split()
+        if len(tokens) < 3:
+            return await ctx.send(embed=embed_error(
+                "Formato incorrecto. Uso: `-mover <item> <cantidad> <destino>`\n"
+                "Ejemplo: `-mover marihuana 5 personal`"
+            ))
+
+        destino_raw  = tokens[-1].lower()
+        cantidad_raw = tokens[-2]
+        item_raw     = " ".join(tokens[:-2]).strip()
+
+        # ── Validar cantidad ──
+        try:
+            cantidad = int(cantidad_raw.replace(",", "").replace(".", ""))
+            if cantidad <= 0:
+                raise ValueError
+        except ValueError:
+            return await ctx.send(embed=embed_error(
+                f"La cantidad `{cantidad_raw}` no es válida. Escribe un número entero positivo."
+            ))
+
+        # ── Resolver destino ──
+        destino = ALIAS_DESTINO.get(destino_raw, destino_raw)
+
+        # ── Caso especial: mover dinero al banco ──
+        if item_raw.lower() in ("dinero", "cash", "efectivo") and destino == "banco":
+            eco = await db.get_economy(uid)
+            if eco["cash"] < cantidad:
+                return await ctx.send(embed=embed_error(
+                    f"Fondos insuficientes. Tienes `${eco['cash']:,}` en efectivo."
+                ))
+            await db.add_cash(uid, -cantidad)
+            await db.add_bank(uid, cantidad)
+            embed = discord.Embed(
+                title="🏦 Depósito realizado",
+                description=(
+                    f"💵 Has movido **${cantidad:,}** de tu efectivo al banco.\n"
+                    f"📊 Efectivo restante: `${eco['cash'] - cantidad:,}`\n"
+                    f"🏦 Saldo bancario:   `${eco['bank'] + cantidad:,}`"
+                ),
+                color=0x00FF88,
+                timestamp=datetime.now()
+            )
+            embed.set_footer(text=f"Nova Agora RP · Movimiento de fondos")
+            await ctx.send(embed=embed)
+            await self._del(ctx)
+            return
+
+        # ── Mover ítem entre inventarios ──
+        if destino not in TIPOS_VALIDOS:
+            return await ctx.send(embed=embed_error(
+                f"Destino `{destino_raw}` no reconocido.\n"
+                f"Opciones válidas: `personal`, `vehiculo`, `propiedad`, `negocios`\n"
+                f"Para dinero: `-mover dinero <cantidad> banco`"
+            ))
+
+        # El origen es siempre el inventario personal por defecto
+        origen = "personal"
+        item_key = item_raw.lower()
+
+        # Buscar el ítem en inventario (normalizar nombre)
+        inv = await db.get_inventory(uid, origen)
+        # Intentar match exacto primero, luego parcial
+        item_encontrado = None
+        for k in inv:
+            if k.lower() == item_key:
+                item_encontrado = k
+                break
+        if not item_encontrado:
+            for k in inv:
+                if item_key in k.lower():
+                    item_encontrado = k
+                    break
+
+        if not item_encontrado or inv.get(item_encontrado, 0) < cantidad:
+            disponible = inv.get(item_encontrado, 0) if item_encontrado else 0
+            return await ctx.send(embed=embed_error(
+                f"No tienes suficientes **{item_raw}** en tu inventario `{origen}`.\n"
+                f"Disponible: `{disponible}` | Requerido: `{cantidad}`"
+            ))
+
+        await db.remove_item(uid, origen, item_encontrado, cantidad)
+        await db.add_item(uid, destino, item_encontrado, cantidad)
+
+        embed = discord.Embed(
+            title="✅ Ítem movido",
+            description=(
+                f"**{cantidad}x {item_encontrado}** transferido con éxito.\n"
+                f"📤 Origen: `{origen}`\n"
+                f"📥 Destino: `{destino}`"
+            ),
+            color=0x00FF88,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Nova Agora RP · Sistema de Inventario")
+        await ctx.send(embed=embed)
         await self._del(ctx)
 
     @commands.command(name='trabajo')
     @check_encarcelado()
     @tiene_rol_usuario()
     async def trabajo_cmd(self, ctx):
+        emoji_work = await get_emoji('work')
         embed = discord.Embed(
-            title=f"{await get_emoji('work')} SISTEMA DE TRABAJO",
-            description="✅ **Entrar a trabajar** — Simula tu jornada laboral (sin remuneración, solo roleplay)\n⏹️ **Salir del trabajo** — Finaliza tu turno",
-            color=discord.Color.blue()
+            title=f"{emoji_work} SISTEMA DE TRABAJO — Nova Agora RP",
+            description=(
+                "Registra tu entrada y salida de turno.\n"
+                "Al finalizar, **abre un ticket de economía** para reclamar tu sueldo.\n\n"
+                "✅ **Entrar a trabajar** — Inicia tu jornada laboral\n"
+                "⏹️ **Salir del trabajo** — Finaliza el turno y ve tus horas"
+            ),
+            color=0x3498DB
         )
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_footer(text="Nova Agora RP · Registro de Jornada Laboral")
         view = TrabajoView()
         await ctx.send(embed=embed, view=view)
         await self._del(ctx)
@@ -2298,38 +2427,101 @@ class Principal(BaseCog):
                 pass  # El usuario tiene los DMs cerrados, no pasa nada
 
 class TrabajoView(discord.ui.View):
-    trabajo_data = {}
+    # ── Almacén de sesiones en memoria: {str(user_id): {'inicio': datetime}} ──
+    trabajo_data: dict = {}
+
+    def _formato_duracion(self, segundos: float) -> str:
+        """Convierte segundos en texto legible: Xh Ym Zs"""
+        segundos = int(segundos)
+        horas   = segundos // 3600
+        minutos = (segundos % 3600) // 60
+        segs    = segundos % 60
+        partes  = []
+        if horas:
+            partes.append(f"**{horas}h**")
+        if minutos:
+            partes.append(f"**{minutos}m**")
+        if segs or not partes:
+            partes.append(f"**{segs}s**")
+        return " ".join(partes)
 
     @discord.ui.button(label="Entrar a trabajar", style=discord.ButtonStyle.green, emoji="✅")
-    async def entrar_trabajo(self, interaction: discord.Interaction, button):
+    async def entrar_trabajo(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = str(interaction.user.id)
         enc = await db.get_user_state(interaction.user.id)
-        if enc.get('encarcelado_hasta') and datetime.fromisoformat(enc['encarcelado_hasta']) > datetime.now():
-            return await interaction.response.send_message(embed=embed_error("No puedes trabajar mientras estás encarcelado."), ephemeral=True)
-        if uid in self.trabajo_data and self.trabajo_data[uid]['estado'] == 'trabajando':
-            return await interaction.response.send_message(embed=embed_error("Ya estás trabajando."), ephemeral=True)
-        self.trabajo_data[uid] = {'estado': 'trabajando', 'inicio': datetime.now()}
+        if enc.get('encarcelado_hasta'):
+            try:
+                if datetime.fromisoformat(enc['encarcelado_hasta']) > datetime.now():
+                    return await interaction.response.send_message(
+                        embed=embed_error("No puedes trabajar mientras estás encarcelado."), ephemeral=True)
+            except Exception:
+                pass
+        if uid in self.trabajo_data:
+            inicio = self.trabajo_data[uid]['inicio']
+            transcurrido = self._formato_duracion((datetime.now() - inicio).total_seconds())
+            return await interaction.response.send_message(
+                embed=embed_error(
+                    f"Ya estás trabajando.\n"
+                    f"⏱️ Tiempo en turno: {transcurrido}"
+                ), ephemeral=True)
+        self.trabajo_data[uid] = {'inicio': datetime.now()}
+        hora_inicio = datetime.now().strftime("%H:%M")
         embed = discord.Embed(
-            title="✅ ¡BIENVENIDO AL TRABAJO!",
-            description="Estás en horario laboral (roleplay).\nPulsa **Salir** cuando termines tu jornada.",
-            color=discord.Color.green()
+            title="✅ TURNO INICIADO",
+            description=(
+                f"🕐 Hora de entrada: **{hora_inicio}**\n\n"
+                "Pulsa **Salir del trabajo** cuando termines tu jornada.\n"
+                "Al finalizar se mostrarán tus horas trabajadas."
+            ),
+            color=0x2ECC71,
+            timestamp=datetime.now()
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(text="Nova Agora RP · Jornada Laboral")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Salir del trabajo", style=discord.ButtonStyle.red, emoji="⏹️")
-    async def salir_trabajo(self, interaction: discord.Interaction, button):
+    async def salir_trabajo(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = str(interaction.user.id)
-        if uid not in self.trabajo_data or self.trabajo_data[uid]['estado'] != 'trabajando':
-            return await interaction.response.send_message(embed=embed_error("Primero debes entrar a trabajar."), ephemeral=True)
-        minutos = max(1, (datetime.now() - self.trabajo_data[uid]['inicio']).total_seconds() / 60)
+        if uid not in self.trabajo_data:
+            return await interaction.response.send_message(
+                embed=embed_error("Primero debes entrar a trabajar pulsando ✅."), ephemeral=True)
+
+        inicio   = self.trabajo_data.pop(uid)['inicio']
+        total_s  = max(1, (datetime.now() - inicio).total_seconds())
+        total_h  = total_s / 3600
+        duracion = self._formato_duracion(total_s)
+
+        # ── Construcción del embed de fin de turno ──
         embed = discord.Embed(
-            title="⌛ FIN DEL TURNO",
-            description=f"Has trabajado durante {minutos:.1f} minutos. ¡Gracias por tu esfuerzo! (Sin remuneración económica)",
-            color=discord.Color.gold()
+            title="⏹️ FIN DE TURNO",
+            color=0xF1C40F,
+            timestamp=datetime.now()
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        del self.trabajo_data[uid]
+        embed.add_field(
+            name="⏱️ Horas trabajadas",
+            value=f"Has trabajado {duracion}",
+            inline=False
+        )
+        embed.add_field(
+            name="📊 Resumen",
+            value=(
+                f"🕐 Entrada: `{inicio.strftime('%H:%M')}`\n"
+                f"🕑 Salida:  `{datetime.now().strftime('%H:%M')}`\n"
+                f"⏳ Total:   `{total_h:.2f}h` ({int(total_s // 60)} minutos)"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="💰 Reclamar tu sueldo",
+            value=(
+                "Ahora **abre un ticket de economía** y reclama tu sueldo.\n"
+                "Indica las horas trabajadas al staff para que procesen el pago."
+            ),
+            inline=False
+        )
+        embed.set_footer(text="Nova Agora RP · Jornada Laboral Finalizada")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class TiendaPaginator(discord.ui.View):
@@ -2525,16 +2717,22 @@ class Drogas(BaseCog):
     @droga.command(name='vender')
     @check_ban()
     @check_encarcelado()
-    @tiene_rol_mafia_admin()
+    @tiene_rol_usuario()
     async def drg_sell(self, ctx, tipo: str, cantidad: int = 1):
         uid = ctx.author.id
         tipo_norm = tipo.capitalize()
-        if tipo_norm not in EMOJIS_DROGA:
-            return await ctx.send(embed=embed_error(f"Tipos válidos: {', '.join(EMOJIS_DROGA.keys())}"))
+        # ── Buscar en la lista completa (base + custom) para evitar errores ──
+        if tipo_norm not in DROGAS_FULL:
+            validas = ", ".join(f"`{d}`" for d in DROGAS_FULL.keys())
+            return await ctx.send(embed=embed_error(f"Droga no encontrada. Tipos disponibles:\n{validas}"))
+        emoji_droga = EMOJIS_DROGA_FULL.get(tipo_norm, "💊")
 
         inv = await db.get_inventory(uid, "personal")
         if inv.get(tipo_norm, 0) < cantidad:
-            return await ctx.send(embed=embed_error(f"No tienes {cantidad}x {tipo_norm}."))
+            return await ctx.send(embed=embed_error(
+                f"No tienes **{cantidad}x {tipo_norm}** en tu inventario.\n"
+                f"Disponible: `{inv.get(tipo_norm, 0)}`"
+            ))
 
         contador = self.ventas_sin_fallo.get(uid, 0)
         forzar_fallo = (contador >= 5 and random.randint(0, 1) == 0) or contador >= 6
@@ -2559,23 +2757,28 @@ class Drogas(BaseCog):
             await db.add_drug_grams(uid, tipo_norm, unidades_vendidas)
             await db.actualizar_precio_droga(tipo_norm, unidades_vendidas)
             embed = discord.Embed(
-                title="✅ Venta realizada",
-                description=f"***Has vendido {unidades_vendidas} unidades de {tipo_norm}. Has acumulado {unidades_vendidas} gramos en tu inventario ilegal.***",
-                color=0x00FF00
+                title=f"✅ Venta realizada — {emoji_droga} {tipo_norm}",
+                description=(
+                    f"Has vendido **{unidades_vendidas} unidades** de {tipo_norm}.\n"
+                    f"Has acumulado **{unidades_vendidas} gramos** en tu inventario ilegal."
+                ),
+                color=0x00FF00,
+                timestamp=datetime.now()
             )
+            embed.set_footer(text="Nova Agora RP · Mercado ilegal")
             await ctx.send(embed=embed)
             await self.log("VENTA_DROGA_GRAMOS", f"{ctx.author.name}: {unidades_vendidas}x {tipo_norm} -> +{unidades_vendidas}g")
         else:
             rol_lspd = ctx.guild.get_role(ROL_LSPD_ID)
             if rol_lspd:
-                await ctx.send(rol_lspd.mention)
+                await ctx.send(rol_lspd.mention, allowed_mentions=discord.AllowedMentions(roles=True))
             embed = discord.Embed(
                 title="🚨 REPORTE CIUDADANO",
-                description="***🚨 POSIBLE ACTIVIDAD ILEGAL REPORTADA POR VARIOS CIUDADANOS EN LA ZONA.***",
+                description="🚨 **POSIBLE ACTIVIDAD ILEGAL REPORTADA** por varios ciudadanos en la zona.",
                 color=0xFF0000,
                 timestamp=datetime.now()
             )
-            embed.add_field(name="📍 Ubicación", value="***Zona de venta de drogas***", inline=False)
+            embed.add_field(name="📍 Ubicación", value="Zona de venta de drogas", inline=False)
             embed.set_footer(text="NOVA AGORA · Sistema de Vigilancia Ciudadana")
             await ctx.send(embed=embed)
             await self.log("VENTA_DROGA_FALLIDA", f"{ctx.author.name} intentó vender {tipo_norm} y activó alerta policial")
@@ -2921,7 +3124,7 @@ class Casino(BaseCog):
     @tiene_rol_usuario()
     async def casino(self, ctx):
         embed = discord.Embed(
-            title=f"{await get_emoji('casino')} Golden Coast · Legendary Casino's",
+            title=f"{await get_emoji('casino')} 💎 Diamond Agora Casino",
             description=(
                 f"**Apuestas:** **${APUESTA_MIN:,}** — **${APUESTA_MAX:,}**\n\n"
                 "`-casino slots <apuesta>` — Tragaperras\n"
@@ -3416,13 +3619,33 @@ class Preparatorias(BaseCog):
     async def preparacion(self, ctx):
         uid = ctx.author.id
         preps = await db.get_all_heist_preparations(uid)
-        embed = discord.Embed(title="📋 TUS PREPARATORIAS", color=0x00A8FF)
+
+        # ── Constantes para el diseño de la barra de progreso ──
+        HEISTS_PREMIUM = {"central", "pacific"}  # Requieren contactar a la Mafia
+
+        embed = discord.Embed(
+            title="📋 TUS PREPARATORIAS",
+            description="Estado actual de tus misiones de preparación:",
+            color=0x00A8FF,
+            timestamp=datetime.now()
+        )
         for heist_id, info in HEIST_DEFINITIONS.items():
             total = len(info["preparations"])
             completadas = len([p for p in preps.get(heist_id, {}).values() if p])
+            barra = "█" * completadas + "░" * (total - completadas)
+
+            # ── Heists premium: mostrar candado si 0 completadas ──
+            if heist_id in HEISTS_PREMIUM and completadas == 0:
+                estado = "🔒 `0/1` Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe"
+            else:
+                estado = (
+                    f"`{barra}` **{completadas}/{total}**\n"
+                    f"`-preparacion {heist_id} <1-{total}>` para realizar una preparatoria"
+                )
+
             embed.add_field(
-                name=f"{info['nombre']} ({completadas}/{total})",
-                value=f"`-preparacion {heist_id} <1-{total}>` para realizar una preparatoria",
+                name=f"{'🔒' if heist_id in HEISTS_PREMIUM and completadas == 0 else '📌'} {info['nombre']} ({completadas}/{total})",
+                value=estado,
                 inline=False
             )
         embed.set_footer(text="Usa -preparacion <atraco> <número> para comenzar una preparatoria")
@@ -3469,6 +3692,39 @@ class Preparatorias(BaseCog):
         if numero < 1 or numero > total_preps:
             return await ctx.send(embed=embed_error(f"Número de preparatoria inválido. Debe ser entre 1 y {total_preps}."))
 
+        # ── Bloqueo Mafia para Banco Central y Pacific ──────────────────────
+        HEISTS_MAFIA = {"central", "pacific"}
+        if heist_id in HEISTS_MAFIA and ctx.author.id not in OWNER_IDS:
+            completadas = await db._contar_preps_completadas(uid, heist_id)
+            if completadas == 0 and numero == 1:
+                embed_bloqueado = discord.Embed(
+                    title=f"🔒 ACCESO BLOQUEADO — {heist['nombre']}",
+                    description=(
+                        "Este golpe de alto nivel requiere autorización previa.\n\n"
+                        "**Progreso actual:**"
+                    ),
+                    color=0xFF4400,
+                    timestamp=datetime.now()
+                )
+                embed_bloqueado.add_field(
+                    name="📋 Misión Principal",
+                    value="`0/1` Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe",
+                    inline=False
+                )
+                embed_bloqueado.add_field(
+                    name="📌 ¿Cómo desbloquear?",
+                    value=(
+                        "1. Abre un **ticket con la Mafia** en el servidor.\n"
+                        "2. Negocia las condiciones del golpe.\n"
+                        "3. Una vez autorizado, podrás iniciar las preparatorias."
+                    ),
+                    inline=False
+                )
+                embed_bloqueado.set_thumbnail(url=heist.get('image', 'https://i.imgur.com/8Km9tLL.png'))
+                embed_bloqueado.set_footer(text="Nova Agora RP · Sistema de Preparatorias")
+                return await ctx.send(embed=embed_bloqueado)
+        # ────────────────────────────────────────────────────────────────────
+
         if not (ctx.author.id in OWNER_IDS or (ctx.guild.get_role(ROL_MAFIA_ID) in ctx.author.roles)):
             if numero > 1:
                 prev_completed = await db.is_preparation_completed(uid, heist_id, numero - 1)
@@ -3513,7 +3769,7 @@ class Preparatorias(BaseCog):
 
 # ==================== COG: Banco ====================
 class Banco(BaseCog):
-    @commands.group(name='banco', invoke_without_command=True)
+    @commands.group(name='banco', aliases=['bal', 'balance', 'saldo', 'dinero'], invoke_without_command=True)
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
@@ -3521,16 +3777,18 @@ class Banco(BaseCog):
         uid = ctx.author.id
         eco = await db.get_economy(uid)
         emoji_money = await get_emoji('money')
-        emoji_bank = await get_emoji('bank')
+        emoji_bank  = await get_emoji('bank')
         embed = discord.Embed(
-            title=f"{emoji_bank} BANCO CENTRAL",
+            title=f"{emoji_bank} BANCO CENTRAL — {ctx.author.display_name}",
             description=(
-                f"{emoji_money} Efectivo: **${eco['cash']:,}**\n"
-                f"{emoji_bank} En banco: **${eco['bank']:,}**\n"
-                f"💰 Total:    **${eco['cash'] + eco['bank']:,}**"
+                f"{emoji_money} **Efectivo:** `${eco['cash']:,}`\n"
+                f"{emoji_bank} **En banco:** `${eco['bank']:,}`\n"
+                f"💰 **Total:**    `${eco['cash'] + eco['bank']:,}`"
             ),
-            color=0x3498DB
+            color=0x3498DB,
+            timestamp=datetime.now()
         )
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
         if eco['black_money'] > 0:
             embed.add_field(
                 name=f"{await get_emoji('black_money')} Dinero negro",
@@ -3538,14 +3796,17 @@ class Banco(BaseCog):
                 inline=False
             )
         embed.add_field(
-            name="Comandos",
+            name="📌 Comandos rápidos",
             value=(
-                "`-banco ingresar <cantidad>`\n"
-                "`-banco retirar <cantidad>`\n"
-                "`-banco transferir @usuario <cantidad>`"
+                "`-dep <cantidad|all>` — Depositar al banco\n"
+                "`-with <cantidad|all>` — Retirar del banco\n"
+                "`-banco transferir @usuario <cantidad>` — Transferir\n"
+                "`-banco ingresar <cantidad|all>` — Alias depositar\n"
+                "`-banco retirar <cantidad|all>` — Alias retirar"
             ),
             inline=False
         )
+        embed.set_footer(text="Nova Agora RP · Banco Central")
         await ctx.send(embed=embed)
         await self._del(ctx)
 
@@ -3619,6 +3880,96 @@ class Banco(BaseCog):
         ))
         await self.log("BANCO_TRANSFERENCIA", f"{ctx.author.name} transfirió ${cantidad} a {usuario.name}")
         await self._del(ctx)
+
+    # ── Atajos rápidos de nivel superior: -dep y -with ─────────────────────
+    @commands.command(name='dep', aliases=['depositar', 'ingresar'])
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def dep(self, ctx, cantidad: str = None):
+        """Deposita dinero al banco. Uso: -dep <cantidad|all>"""
+        if not cantidad:
+            return await ctx.send(embed=embed_help(
+                "dep", "Deposita efectivo en el banco.",
+                "-dep <cantidad|all>",
+                "-dep 5000  |  -dep all", "Ciudadano"
+            ))
+        eco = await db.get_economy(ctx.author.id)
+        if cantidad.lower() in ("all", "todo", "todos"):
+            real = eco["cash"]
+        else:
+            try:
+                real = int(cantidad.replace(",", "").replace(".", "").replace("$", ""))
+            except ValueError:
+                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
+        if real <= 0:
+            return await ctx.send(embed=embed_error("No tienes efectivo para depositar."))
+        if eco["cash"] < real:
+            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['cash']:,}** en efectivo."))
+        await db.add_cash(ctx.author.id, -real)
+        await db.add_bank(ctx.author.id, real)
+        eco_new = await db.get_economy(ctx.author.id)
+        embed = discord.Embed(
+            title="🏦 Depósito realizado",
+            description=(
+                f"💵 Depositado: **${real:,}**\n"
+                f"💰 Efectivo restante: `${eco_new['cash']:,}`\n"
+                f"🏦 Saldo en banco:   `${eco_new['bank']:,}`"
+            ),
+            color=0x00FF88,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Nova Agora RP · Banco Central")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+    @commands.command(name='with', aliases=['retirar', 'sacar', 'withdraw'])
+    @check_ban()
+    @check_encarcelado()
+    @tiene_rol_usuario()
+    async def with_(self, ctx, cantidad: str = None):
+        """Retira dinero del banco. Uso: -with <cantidad|all>"""
+        if not cantidad:
+            return await ctx.send(embed=embed_help(
+                "with", "Retira dinero del banco a efectivo.",
+                "-with <cantidad|all>",
+                "-with 5000  |  -with all", "Ciudadano"
+            ))
+        eco = await db.get_economy(ctx.author.id)
+        if cantidad.lower() in ("all", "todo", "todos"):
+            real = eco["bank"]
+        else:
+            try:
+                real = int(cantidad.replace(",", "").replace(".", "").replace("$", ""))
+            except ValueError:
+                return await ctx.send(embed=embed_error("Cantidad inválida. Usa un número o `all`."))
+        if real <= 0:
+            return await ctx.send(embed=embed_error("No tienes dinero en el banco para retirar."))
+        if eco["bank"] < real:
+            return await ctx.send(embed=embed_error(f"Solo tienes **${eco['bank']:,}** en el banco."))
+        await db.add_bank(ctx.author.id, -real)
+        await db.add_cash(ctx.author.id, real)
+        eco_new = await db.get_economy(ctx.author.id)
+        embed = discord.Embed(
+            title="💵 Retiro realizado",
+            description=(
+                f"💵 Retirado: **${real:,}**\n"
+                f"💰 Efectivo actual:  `${eco_new['cash']:,}`\n"
+                f"🏦 Saldo en banco:  `${eco_new['bank']:,}`"
+            ),
+            color=0x00AAFF,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Nova Agora RP · Banco Central")
+        await ctx.send(embed=embed)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+    # ───────────────────────────────────────────────────────────────────────
 
     @commands.command(name='pay', aliases=['bizum', 'pagar', 'transferir'])
     @check_ban()
@@ -6107,26 +6458,64 @@ class Roleplay(BaseCog):
         await self._del(ctx)
 
     @commands.command(name='reparar')
-    @tiene_profesion("mecánico", "mecanico")
+    @check_ban()
+    @check_encarcelado()
     @tiene_rol_usuario()
     async def reparar(self, ctx, objetivo: discord.Member, *, descripcion: str = "Reparación completada."):
+        # ── Verificar rol de trabajo (ID: 1450592195047591996) ──
+        ROL_TRABAJO_ID = 1450592195047591996
+        rol_trabajo = ctx.guild.get_role(ROL_TRABAJO_ID)
+        es_owner = ctx.author.id in OWNER_IDS
+        if rol_trabajo and not es_owner and rol_trabajo not in ctx.author.roles:
+            return await ctx.send(embed=embed_error(
+                "🔧 Necesitas el **rol de Trabajo** para usar este comando.\n"
+                "Contacta con un administrador para obtenerlo."
+            ), delete_after=8)
         try:
             nombre_mec = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
             nombre_obj = await self.obtener_nombre_dni(objetivo.id) or objetivo.display_name
-            embed = discord.Embed(title="🔧 REPARACIÓN COMPLETADA", description=f"**{nombre_mec}** ha reparado el vehículo de **{nombre_obj}**.\n\n*{descripcion.strip()}*", color=0xE67E22, timestamp=datetime.now())
+            embed = discord.Embed(
+                title="🔧 REPARACIÓN COMPLETADA",
+                description=(
+                    f"**{nombre_mec}** ha reparado el vehículo de **{nombre_obj}**.\n\n"
+                    f"*{descripcion.strip()}*"
+                ),
+                color=0xE67E22,
+                timestamp=datetime.now()
+            )
+            embed.set_footer(text="Nova Agora RP · Servicio de Mecánica")
             await ctx.send(embed=embed)
             await self._del(ctx)
         except Exception as e:
             await ctx.send(embed=embed_error(f"Error al ejecutar -reparar: {str(e)[:100]}"))
 
     @commands.command(name='curar')
-    @tiene_profesion("médico", "medico", "doctor", "enfermero", "ems")
+    @check_ban()
+    @check_encarcelado()
     @tiene_rol_usuario()
     async def curar(self, ctx, objetivo: discord.Member, *, descripcion: str = "Tratamiento completado."):
+        # ── Verificar rol de trabajo (ID: 1450592195047591996) ──
+        ROL_TRABAJO_ID = 1450592195047591996
+        rol_trabajo = ctx.guild.get_role(ROL_TRABAJO_ID)
+        es_owner = ctx.author.id in OWNER_IDS
+        if rol_trabajo and not es_owner and rol_trabajo not in ctx.author.roles:
+            return await ctx.send(embed=embed_error(
+                "🏥 Necesitas el **rol de Trabajo** para usar este comando.\n"
+                "Contacta con un administrador para obtenerlo."
+            ), delete_after=8)
         try:
             nombre_med = await self.obtener_nombre_dni(ctx.author.id) or ctx.author.display_name
             nombre_obj = await self.obtener_nombre_dni(objetivo.id) or objetivo.display_name
-            embed = discord.Embed(title="🏥 CURACIÓN COMPLETADA", description=f"**{nombre_med}** ha atendido a **{nombre_obj}**.\n\n*{descripcion.strip()}*", color=0x2ECC71, timestamp=datetime.now())
+            embed = discord.Embed(
+                title="🏥 CURACIÓN COMPLETADA",
+                description=(
+                    f"**{nombre_med}** ha atendido a **{nombre_obj}**.\n\n"
+                    f"*{descripcion.strip()}*"
+                ),
+                color=0x2ECC71,
+                timestamp=datetime.now()
+            )
+            embed.set_footer(text="Nova Agora RP · Servicio Médico")
             await ctx.send(embed=embed)
             await self._del(ctx)
         except Exception as e:
@@ -6771,23 +7160,35 @@ class Soporte(BaseCog):
     @commands.command(name='cierre-rol')
     @tiene_rol_iniciador()
     async def cierre_rol(self, ctx):
-        # ── Mensaje original EXACTO ──
-        canal_votacion = ctx.guild.get_channel(1450592843751100622)
-        rol_usuario    = ctx.guild.get_role(ROL_USUARIO_ID)
-        mensaje = (
-            "@everyone\n\n"
-            "# 📢 CIERRE DE ROL\n\n"
-            "El rol de hoy ha finalizado.\n"
-            "Se ha cerrado el rol por el momento.\n\n"
-            f"🗳️ **Vota aquí:** {canal_votacion.mention if canal_votacion else 'Canal 1450592843751100622'}\n\n"
-            "Gracias por participar.\n\n"
-            "🇪🇸 Estate atento a las próximas aperturas programadas para las 16:00 (hora española).\n\n"
-            "Cuantos más usuarios participen, más actividad y rol tendremos mañana.\n\n"
-            f"{rol_usuario.mention if rol_usuario else '<@&1450592204849418294>'}"
-        )
-        await ctx.send(mensaje)
+        # ── Obtener canal de votación ──
+        canal_votacion = ctx.guild.get_channel(CANAL_VOTACIONES_ID)
+        voto_txt = canal_votacion.mention if canal_votacion else "<#1450592738184659034>"
 
-        # ── NUEVO: botón para lanzar la votación del día siguiente ──
+        # ── Embed único limpio y profesional ──
+        embed = discord.Embed(
+            title="📢 CIERRE DE ROL",
+            description=(
+                "El rol de hoy ha finalizado. Se ha cerrado el rol por el momento.\n\n"
+                f"🗳️ **Vota aquí:** {voto_txt}"
+            ),
+            color=0x1A1A2E,
+            timestamp=datetime.now()
+        )
+        if ctx.guild.icon:
+            embed.set_thumbnail(url=ctx.guild.icon.url)
+        embed.set_footer(
+            text="Nova Agora RP · Sistema de Rol",
+            icon_url=ctx.guild.icon.url if ctx.guild.icon else None
+        )
+
+        # ── Publicar embed principal con @everyone ──
+        await ctx.send(
+            content="@everyone",
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(everyone=True)
+        )
+
+        # ── Botón para la votación del día siguiente ──
         nueva_view  = NuevaVotacionView()
         nueva_embed = discord.Embed(
             title="📊 ¿Habrá rol mañana?",
@@ -6799,7 +7200,7 @@ class Soporte(BaseCog):
         await ctx.send(embed=nueva_embed, view=nueva_view)
 
         await self._del(ctx)
-        await self.log("CIERRE_ROL", f"{ctx.author.display_name if ctx.author else 'Desconocido'} cerró el rol")
+        await self.log("CIERRE_ROL", f"{ctx.author.display_name} cerró el rol")
 
 # ==================== COG: Ayuda ====================
 class Ayuda(BaseCog):
@@ -7778,13 +8179,43 @@ DROP_ZONAS = [
     {"zona": "Paleto Bay Río 3",     "emoji": "🌿", "desc": "Paleto Bay — Tramo río este, desembocadura",        "mapa": "paleto_rio_3.png"},
 ]
 
-# ── Kits con precios DEFCON 4 (mini evento) ──
+# ── Kits con niveles DEFCON dinámicos ──
+# DEFCON 2 = Poco riesgo / patrulla leve
+# DEFCON 4 = Alto riesgo / intervención total de las fuerzas de seguridad
 KITS_DROP = {
-    "marihuana":     {"label": "🌿 Kit Marihuana",                  "precio": 50000, "desc": "Hierba premium — evento especial."},
-    "armas_blancas": {"label": "🔪 Kit Armas Blancas",              "precio": 52000, "desc": "Arsenal blanco de alto calibre."},
-    "cortas":        {"label": "🔫 Kit Armas de Fuego Cortas",      "precio": 55000, "desc": "Pistolas y compactos de gama alta."},
-    "medianas":      {"label": "⚙️ Kit Armas de Fuego Medianas",    "precio": 58000, "desc": "SMGs y rifles — calidad evento."},
-    "largas":        {"label": "🪖 Kit Armas de Fuego Largas",      "precio": 65000, "desc": "Carabina / AK49 — armamento pesado."},
+    "marihuana":     {"label": "🌿 Kit Marihuana",                  "precio": 50000, "desc": "Hierba premium — evento especial.",         "defcon": 2},
+    "armas_blancas": {"label": "🔪 Kit Armas Blancas",              "precio": 52000, "desc": "Arsenal blanco de alto calibre.",            "defcon": 2},
+    "cortas":        {"label": "🔫 Kit Armas de Fuego Cortas",      "precio": 55000, "desc": "Pistolas y compactos de gama alta.",         "defcon": 3},
+    "medianas":      {"label": "⚙️ Kit Armas de Fuego Medianas",    "precio": 58000, "desc": "SMGs y rifles — calidad evento.",            "defcon": 3},
+    "largas":        {"label": "🪖 Kit Armas de Fuego Largas",      "precio": 65000, "desc": "Carabina / AK49 — armamento pesado.",        "defcon": 4},
+}
+
+# ── Datos visuales por nivel DEFCON ──
+DEFCON_DATA = {
+    2: {
+        "emoji":   "🟡",
+        "titulo":  "DEFCON 2 — Patrulla Leve",
+        "color":   0xFFD700,
+        "alerta":  "⚠️ **DEFCON 2** — Actividad sospechosa en la zona. Patrulla estándar.",
+        "riesgo":  "🟡 Poco riesgo — Patrulla leve",
+        "lspd_txt": "Se ha detectado actividad ilegal. Patrulla de rutina recomendada.",
+    },
+    3: {
+        "emoji":   "🟠",
+        "titulo":  "DEFCON 3 — Alerta Moderada",
+        "color":   0xFF8C00,
+        "alerta":  "🔶 **DEFCON 3** — Cargamento peligroso detectado. Refuerzos en camino.",
+        "riesgo":  "🟠 Riesgo moderado — Refuerzos en camino",
+        "lspd_txt": "Cargamento de armas detectado. Se requiere respuesta táctica.",
+    },
+    4: {
+        "emoji":   "🔴",
+        "titulo":  "DEFCON 4 — Intervención Total",
+        "color":   0xFF0000,
+        "alerta":  "🚨 **DEFCON 4** — INTERVENCIÓN TOTAL. Todas las unidades en alerta máxima.",
+        "riesgo":  "🔴 Alto riesgo — Intervención total de las fuerzas de seguridad",
+        "lspd_txt": "⚡ ALERTA MÁXIMA. Armamento pesado detectado. Intervención inmediata requerida.",
+    },
 }
 
 # ═══════════════════════════
@@ -7934,6 +8365,10 @@ class DropConfirmModal(discord.ui.Modal, title="📦 Confirmar Cargamento"):
                 ), ephemeral=True
             )
 
+        # ── DEFCON del kit ──
+        defcon_nivel = kit.get("defcon", 4)
+        defcon       = DEFCON_DATA[defcon_nivel]
+
         # Zona aleatoria con mapa
         zona_data = random.choice(DROP_ZONAS)
         es_banda  = "banda" in self.solo_banda.value.lower()
@@ -7947,24 +8382,25 @@ class DropConfirmModal(discord.ui.Modal, title="📦 Confirmar Cargamento"):
 
         # ── Embed principal (privado → comprador) ──
         embed_priv = discord.Embed(
-            title="⚠️ CARGAMENTO ASIGNADO — DEFCON 4",
+            title=f"{defcon['emoji']} CARGAMENTO ASIGNADO — {defcon['titulo']}",
             description=(
                 f">>> **Operación activa.** Tienes **15 minutos** para llegar.\n"
                 f"Esta información es **CONFIDENCIAL**. No la compartas."
             ),
-            color=0xFF4400,
+            color=defcon["color"],
             timestamp=datetime.now()
         )
-        embed_priv.add_field(name="🎒 Kit",          value=f"`{kit['label']}`",      inline=True)
-        embed_priv.add_field(name="💸 Pagado",        value=f"`${precio:,}`",             inline=True)
-        embed_priv.add_field(name="💰 Saldo restante",value=f"`${saldo-precio:,}`",       inline=True)
+        embed_priv.add_field(name="🎒 Kit",              value=f"`{kit['label']}`",           inline=True)
+        embed_priv.add_field(name="💸 Pagado",           value=f"`${precio:,}`",               inline=True)
+        embed_priv.add_field(name="💰 Saldo restante",   value=f"`${saldo-precio:,}`",         inline=True)
+        embed_priv.add_field(name="⚠️ Nivel de riesgo",  value=defcon["riesgo"],               inline=False)
         embed_priv.add_field(name=f"{zona_data['emoji']} Zona de entrega",
-                              value=f"**{zona_data['zona']}**\n{zona_data['desc']}",   inline=False)
+                              value=f"**{zona_data['zona']}**\n{zona_data['desc']}",           inline=False)
         embed_priv.add_field(name="👥 Modalidad",
-                              value=f"`{'Con banda: ' + banda_nom if es_banda else 'Solo'}`", inline=True)
-        embed_priv.add_field(name="⏰ Tiempo límite",  value="**15 minutos**",             inline=True)
+                              value=f"`{'Con banda: ' + banda_nom if es_banda else 'Solo'}`",  inline=True)
+        embed_priv.add_field(name="⏰ Tiempo límite",    value="**15 minutos**",               inline=True)
         embed_priv.set_footer(
-            text=f"NOVA AGORA · Operación confidencial",
+            text=f"NOVA AGORA · {defcon['titulo']} · Operación confidencial",
             icon_url=interaction.guild.icon.url if interaction.guild.icon else None
         )
 
@@ -7998,15 +8434,15 @@ class DropConfirmModal(discord.ui.Modal, title="📦 Confirmar Cargamento"):
         log_canal = guild.get_channel(DROP_LOG_CANAL_ID)
         if log_canal:
             embed_log = discord.Embed(
-                title="📦 LOG — Cargamento Vendido",
-                color=0x1A1A2E, timestamp=datetime.now()
+                title=f"📦 LOG — Cargamento Vendido [{defcon['titulo']}]",
+                color=defcon["color"], timestamp=datetime.now()
             )
-            embed_log.add_field(name="👤 Comprador",  value=f"{interaction.user.mention} (`{interaction.user.display_name}`)", inline=False)
-            embed_log.add_field(name="🎒 Kit",         value=kit["label"],              inline=True)
-            embed_log.add_field(name="💸 Monto",       value=f"${precio:,}",            inline=True)
-            embed_log.add_field(name="📍 Zona",        value=zona_data["zona"],          inline=True)
-            embed_log.add_field(name="👥 Modalidad",   value=f"{'Con banda: '+banda_nom if es_banda else 'Solo'}", inline=True)
-            # Mapa en el log también
+            embed_log.add_field(name="👤 Comprador",     value=f"{interaction.user.mention} (`{interaction.user.display_name}`)", inline=False)
+            embed_log.add_field(name="🎒 Kit",           value=kit["label"],              inline=True)
+            embed_log.add_field(name="💸 Monto",         value=f"${precio:,}",            inline=True)
+            embed_log.add_field(name="📍 Zona",          value=zona_data["zona"],          inline=True)
+            embed_log.add_field(name="⚠️ DEFCON",        value=defcon["riesgo"],           inline=True)
+            embed_log.add_field(name="👥 Modalidad",     value=f"{'Con banda: '+banda_nom if es_banda else 'Solo'}", inline=True)
             if files_priv:
                 f_log = discord.File(mapa_path, filename="mapa_log.png")
                 embed_log.set_image(url="attachment://mapa_log.png")
@@ -8014,21 +8450,22 @@ class DropConfirmModal(discord.ui.Modal, title="📦 Confirmar Cargamento"):
             else:
                 await log_canal.send(embed=embed_log)
 
-        # ── Alerta DEFCON 4 al LSPD (fuera del embed, mención directa) ──
+        # ── Alerta DEFCON al LSPD (nivel dinámico) ──
         lspd_role = guild.get_role(ROL_LSPD_ID)
         defcon_embed = discord.Embed(
-            title="🚨 DEFCON 4 — CARGAMENTO ACTIVO",
+            title=f"🚨 {defcon['titulo']} — CARGAMENTO ACTIVO",
             description=(
-                ">>> **Actividad ilegal detectada en el servidor.**\n"
-                f"Zona aproximada: **{zona_data['zona']}**\n\n"
-                "Se ha vendido un cargamento. Patrulla en alerta máxima.\n"
-                "⚡ **Nivel de alerta: DEFCON 4** — Mini Evento"
+                f">>> {defcon['alerta']}\n\n"
+                f"Zona aproximada: **{zona_data['zona']}**\n"
+                f"{defcon['lspd_txt']}"
             ),
-            color=0xFF0000,
+            color=defcon["color"],
             timestamp=datetime.now()
         )
+        defcon_embed.add_field(name="⚠️ Nivel DEFCON",  value=defcon["riesgo"],   inline=True)
+        defcon_embed.add_field(name="🎒 Cargamento",    value=kit["label"][:50],  inline=True)
         defcon_embed.set_footer(
-            text="NOVA AGORA · Alerta automática LSPD",
+            text=f"NOVA AGORA · Alerta automática LSPD · {defcon['titulo']}",
             icon_url=guild.icon.url if guild.icon else None
         )
         lspd_mention = lspd_role.mention if lspd_role else "<@&1450592202165321759>"
@@ -8334,15 +8771,16 @@ class EncuestasSorteosMafia(BaseCog):
     @check_ban()
     @tiene_rol_usuario()
     async def comprar(self, ctx, subcomando: str = None):
-        """Abre el menú de cargamentos ilegales (DEFCON 4 — Mini Evento). Uso: -drop"""
+        """Abre el menú de cargamentos ilegales (Sistema DEFCON). Uso: -drop"""
         kits_txt = "\n".join(
-            f"{v['label']} — **${v['precio']:,}**" for v in KITS_DROP.values()
+            f"{DEFCON_DATA[v['defcon']]['emoji']} {v['label']} — **${v['precio']:,}** "
+            f"[{DEFCON_DATA[v['defcon']]['titulo']}]"
+            for v in KITS_DROP.values()
         )
         embed = discord.Embed(
-            title="📦 🚨 CARGAMENTO — DEFCON 4",
+            title="📦 CARGAMENTOS ILEGALES — Sistema DEFCON",
             description=(
-                ">>> **Mini Evento activo.** Precios de emergencia.\n"
-                "Elige tu kit del menú desplegable.\n"
+                ">>> **Mini Evento activo.** Elige tu cargamento del menú.\n"
                 "El pago va directamente al **Banco de la Mafia**.\n\n"
                 + kits_txt
             ),
@@ -8350,22 +8788,31 @@ class EncuestasSorteosMafia(BaseCog):
             timestamp=datetime.now()
         )
         embed.add_field(
+            name="📊 Niveles DEFCON",
+            value=(
+                "`🟡 DEFCON 2` — Poco riesgo / patrulla leve\n"
+                "`🟠 DEFCON 3` — Riesgo moderado / refuerzos\n"
+                "`🔴 DEFCON 4` — Alto riesgo / intervención total"
+            ),
+            inline=False
+        )
+        embed.add_field(
             name="⚠️ Condiciones del evento",
             value=(
                 "`⏰` Tienes **15 minutos** desde la compra para llegar.\n"
                 "`🤝` Puedes ir solo o coordinar con tu banda.\n"
-                "`🚔` La **LSPD** será alertada automáticamente."
+                "`🚔` La **LSPD** será alertada automáticamente al nivel DEFCON del kit."
             ),
             inline=False
         )
         embed.set_footer(
-            text=f"Nova Agora RP · DEFCON 4 · Operación confidencial",
+            text=f"Nova Agora RP · Sistema DEFCON · Operación confidencial",
             icon_url=ctx.author.display_avatar.url
         )
         view = DropSelectView(ctx.author.id)
         await ctx.send(embed=embed, view=view)
         await self._del(ctx)
-        await self.log("DROP_MENU", f"{ctx.author.name} abrió el menú de cargamentos DEFCON4")
+        await self.log("DROP_MENU", f"{ctx.author.name} abrió el menú de cargamentos DEFCON")
 
     # ──────────────────────────────────────────────
     # BANCO MAFIA
