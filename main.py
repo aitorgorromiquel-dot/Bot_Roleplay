@@ -4154,32 +4154,6 @@ class Banco(BaseCog):
             await ctx.message.delete()
         except: pass
 
-    @commands.command(name='bal', aliases=['saldo','balance','dinero'])
-    @check_ban()
-    @tiene_rol_usuario()
-    async def bal(self, ctx, usuario: discord.Member = None):
-        """Muestra el saldo de un usuario."""
-        target = usuario or ctx.author
-        uid    = target.id
-        eco    = await db.get_economy(uid)
-        emoji_money = await get_emoji('money')
-        emoji_bank  = await get_emoji('bank')
-        embed = discord.Embed(
-            title=f"{emoji_money} Balance de {target.display_name}",
-            description=(
-                f"{emoji_money} Efectivo: **${eco['cash']:,}**\n"
-                f"{emoji_bank} Banco:    **${eco['bank']:,}**\n"
-                f"💰 Total:    **${eco['cash'] + eco['bank']:,}**"
-            ),
-            color=0x3498DB,
-            timestamp=datetime.now()
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
-        await ctx.send(embed=embed)
-        try:
-            await ctx.message.delete()
-        except: pass
-
 # ==================== COG: Multas ====================
 class Multas(BaseCog):
     @commands.group(name='multa', invoke_without_command=True)
