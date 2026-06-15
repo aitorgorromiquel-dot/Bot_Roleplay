@@ -3907,39 +3907,78 @@ class Banco(BaseCog):
     @check_ban()
     @check_encarcelado()
     @tiene_rol_usuario()
-    async def banco(self, ctx):
-        uid = ctx.author.id
+    async def banco(self, ctx, usuario: discord.Member = None):
+        # ── Inspección de otro usuario: solo staff / Equipo Especial / Owner ──
+        if usuario and usuario.id != ctx.author.id:
+            es_staff = (
+                ctx.author.id in OWNER_IDS
+                or ctx.author.guild_permissions.administrator
+                or any(r.id == ROL_EQUIPO_ESPECIAL_ID for r in ctx.author.roles)
+            )
+            if not es_staff:
+                embed_denied = discord.Embed(
+                    title="🔒 Acceso Denegado",
+                    description=(
+                        "No tienes permiso para ver la economía de otros jugadores.\n\n"
+                        "Esta función está reservada para **Equipo Especial** y **Owners**."
+                    ),
+                    color=0xFF0000,
+                    timestamp=datetime.now()
+                )
+                embed_denied.set_footer(text="Nova Agora RP · Control de Acceso")
+                return await ctx.send(embed=embed_denied)
+            target = usuario
+        else:
+            target = ctx.author
+
+        uid = target.id
         eco = await db.get_economy(uid)
         emoji_money = await get_emoji('money')
         emoji_bank  = await get_emoji('bank')
+
+        # ── Título diferente si el staff inspecciona a otro ──
+        if target.id != ctx.author.id:
+            titulo = f"{emoji_bank} INSPECCIÓN BANCARIA — {target.display_name}"
+            color  = 0xE67E22   # naranja para inspecciones
+        else:
+            titulo = f"{emoji_bank} BANCO CENTRAL — {target.display_name}"
+            color  = 0x3498DB
+
         embed = discord.Embed(
-            title=f"{emoji_bank} BANCO CENTRAL — {ctx.author.display_name}",
+            title=titulo,
             description=(
                 f"{emoji_money} **Efectivo:** `${eco['cash']:,}`\n"
                 f"{emoji_bank} **En banco:** `${eco['bank']:,}`\n"
                 f"💰 **Total:**    `${eco['cash'] + eco['bank']:,}`"
             ),
-            color=0x3498DB,
+            color=color,
             timestamp=datetime.now()
         )
-        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_thumbnail(url=target.display_avatar.url)
         if eco['black_money'] > 0:
             embed.add_field(
                 name=f"{await get_emoji('black_money')} Dinero negro",
-                value=f"Tienes **${eco['black_money']:,}** pendiente de blanquear. Usa `-blanquear` (solo Mafia).",
+                value=f"Tiene **${eco['black_money']:,}** pendiente de blanquear.",
                 inline=False
             )
-        embed.add_field(
-            name="📌 Comandos rápidos",
-            value=(
-                "`-dep <cantidad|all>` — Depositar al banco\n"
-                "`-with <cantidad|all>` — Retirar del banco\n"
-                "`-banco transferir @usuario <cantidad>` — Transferir\n"
-                "`-banco ingresar <cantidad|all>` — Alias depositar\n"
-                "`-banco retirar <cantidad|all>` — Alias retirar"
-            ),
-            inline=False
-        )
+        if target.id == ctx.author.id:
+            embed.add_field(
+                name="📌 Comandos rápidos",
+                value=(
+                    "`-dep <cantidad|all>` — Depositar al banco\n"
+                    "`-with <cantidad|all>` — Retirar del banco\n"
+                    "`-banco transferir @usuario <cantidad>` — Transferir\n"
+                    "`-banco ingresar <cantidad|all>` — Alias depositar\n"
+                    "`-banco retirar <cantidad|all>` — Alias retirar"
+                ),
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="🔍 Inspección realizada por",
+                value=f"{ctx.author.mention} · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+                inline=False
+            )
         embed.set_footer(text="Nova Agora RP · Banco Central")
         await ctx.send(embed=embed)
         await self._del(ctx)
@@ -5890,6 +5929,146 @@ class Admin(BaseCog):
         view.message = msg
         await self._del(ctx)
 
+    @commands.command(name='reset-ilegal')
+    async def reset_ilegal(self, ctx):
+        """
+        [Owner / Equipo Especial] Resetea MASIVAMENTE el dinero negro y
+        todas las drogas de los inventarios de todos los usuarios del servidor.
+        ACCIÓN IRREVERSIBLE — requiere confirmación.
+        """
+        # ── Verificación de permisos estricta: solo Owners y Equipo Especial ──
+        es_autorizado = (
+            ctx.author.id in OWNER_IDS
+            or ctx.author.guild_permissions.administrator
+            or any(r.id == ROL_EQUIPO_ESPECIAL_ID for r in ctx.author.roles)
+        )
+        if not es_autorizado:
+            embed_denied = discord.Embed(
+                title="🔒 Permisos Insuficientes",
+                description=(
+                    "No tienes autorización para ejecutar este comando.\n\n"
+                    "Esta acción masiva solo está disponible para:\n"
+                    "• **Owners / Fundadores** del servidor\n"
+                    "• Miembros con el rol **Equipo Especial**"
+                ),
+                color=0xFF0000,
+                timestamp=datetime.now()
+            )
+            embed_denied.set_footer(
+                text=f"Intento registrado · {ctx.author.display_name}",
+                icon_url=ctx.author.display_avatar.url
+            )
+            await self._del(ctx)
+            return await ctx.send(embed=embed_denied)
+
+        # ── Embed de confirmación con botones ──
+        class _ConfirmResetView(discord.ui.View):
+            def __init__(self_v):
+                super().__init__(timeout=30)
+                self_v.confirmado = False
+
+            @discord.ui.button(label="⚠️ CONFIRMAR RESET TOTAL", style=discord.ButtonStyle.danger)
+            async def _confirmar(self_v, interaction: discord.Interaction, button: discord.ui.Button):
+                if interaction.user.id != ctx.author.id:
+                    return await interaction.response.send_message(
+                        "Solo quien ejecutó el comando puede confirmar.", ephemeral=True
+                    )
+                self_v.confirmado = True
+                for child in self_v.children:
+                    child.disabled = True
+                await interaction.response.edit_message(
+                    embed=discord.Embed(
+                        title="⏳ Procesando reset masivo...",
+                        description="Reseteando dinero negro y drogas de todos los jugadores.\nEsto puede tardar unos segundos.",
+                        color=0xFFA500
+                    ),
+                    view=self_v
+                )
+                self_v.stop()
+
+            @discord.ui.button(label="❌ Cancelar", style=discord.ButtonStyle.secondary)
+            async def _cancelar(self_v, interaction: discord.Interaction, button: discord.ui.Button):
+                if interaction.user.id != ctx.author.id:
+                    return await interaction.response.send_message(
+                        "Solo quien ejecutó el comando puede cancelar.", ephemeral=True
+                    )
+                for child in self_v.children:
+                    child.disabled = True
+                await interaction.response.edit_message(
+                    embed=discord.Embed(description="✅ Reset cancelado.", color=0x3498DB),
+                    view=self_v
+                )
+                self_v.stop()
+
+        embed_warn = discord.Embed(
+            title="⚠️ RESET MASIVO DE ECONOMÍA ILEGAL",
+            description=(
+                "Esta acción realizará lo siguiente **de forma irreversible** en TODA la base de datos:\n\n"
+                "🖤 Fijar **dinero negro a `$0`** en todas las cuentas\n"
+                "💊 Eliminar **todas las drogas** de todos los inventarios\n\n"
+                "**¿Estás seguro de que quieres continuar?**\n"
+                "Tienes **30 segundos** para confirmar."
+            ),
+            color=0xFF6600,
+            timestamp=datetime.now()
+        )
+        embed_warn.set_footer(
+            text=f"Ejecutado por {ctx.author.display_name} · ACCIÓN IRREVERSIBLE",
+            icon_url=ctx.author.display_avatar.url
+        )
+
+        view = _ConfirmResetView()
+        msg = await ctx.send(embed=embed_warn, view=view)
+        await self._del(ctx)
+
+        await view.wait()
+
+        if not view.confirmado:
+            return  # cancelado o timeout
+
+        # ── Ejecutar reset masivo en una sola transacción para máxima velocidad ──
+        try:
+            async with aiosqlite.connect(db.db_path) as conn:
+                # 1. Poner black_money a 0 en toda la tabla economy
+                await conn.execute("UPDATE economy SET black_money = 0 WHERE black_money > 0")
+                # 2. Borrar todos los ítems de droga de inventarios personales
+                #    (gramos en drug_grams y también ítems de nombre de droga en inventory)
+                await conn.execute("DELETE FROM drug_grams")
+                # 3. Eliminar ítems cuyo nombre coincida con drogas conocidas del inventario
+                drogas_nombres = list(DROGAS_FULL.keys()) if 'DROGAS_FULL' in globals() else \
+                                 list(PRECIOS_DROGAS_BASE.keys())
+                for droga in drogas_nombres:
+                    await conn.execute(
+                        "DELETE FROM inventory WHERE LOWER(item) = LOWER(?)",
+                        (droga,)
+                    )
+                await conn.commit()
+            await db.invalidate_cache()
+        except Exception as e:
+            return await msg.edit(embed=discord.Embed(
+                title="❌ Error durante el reset",
+                description=f"```{str(e)[:500]}```",
+                color=0xFF0000
+            ))
+
+        embed_done = discord.Embed(
+            title="✅ RESET MASIVO COMPLETADO",
+            description=(
+                "Se ha ejecutado el reset de economía ilegal con éxito:\n\n"
+                "🖤 **Dinero negro** → `$0` en toda la base de datos\n"
+                "💊 **Drogas** → eliminadas de todos los inventarios\n\n"
+                f"🕐 {datetime.now().strftime('%d/%m/%Y a las %H:%M')}"
+            ),
+            color=0x00FF00,
+            timestamp=datetime.now()
+        )
+        embed_done.set_footer(
+            text=f"Ejecutado por {ctx.author.display_name} · Nova Agora RP",
+            icon_url=ctx.author.display_avatar.url
+        )
+        await msg.edit(embed=embed_done)
+        await self.log("RESET_ILEGAL", f"{ctx.author.name} ejecutó reset masivo de dinero negro y drogas")
+
 class EditarItemView(discord.ui.View):
     def __init__(self, user_id, item_name, item_data, message=None):
         super().__init__(timeout=120)
@@ -6774,6 +6953,7 @@ class Hosting(BaseCog):
 
 # ── Cache en memoria de votaciones activas ──
 CANAL_AVISOS_ROL_ID = 1450592845000872029   # Canal donde se publica "ESTAMOS EN ROL"
+VOTACIONES_ACTIVAS: dict = {}               # msg_id → datos votación (tracking de votos)
 
 def _solo_iniciador(interaction: discord.Interaction) -> bool:
     """True si el usuario tiene el rol Iniciador o es administrador/owner."""
@@ -7069,11 +7249,32 @@ class Soporte(BaseCog):
         embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
         embed.set_footer(text=f"Publicado por {ctx.author.display_name}  ·  NOVA AGORA", icon_url=ctx.author.display_avatar.url)
         await self._del(ctx)
-        await ctx.send(
-            content=f"<@&1450592126491558131>",
-            embed=embed,
-            allowed_mentions=discord.AllowedMentions(roles=True)
-        )
+
+        # ── Enviar al canal de Avisos de Rol con mención @Ciudadanos y botones ──
+        canal_avisos = ctx.guild.get_channel(CANAL_AVISOS_ROL_ID)
+        rol_ciudadanos = ctx.guild.get_role(ROL_USUARIO_ID)
+        mention = rol_ciudadanos.mention if rol_ciudadanos else f"<@&{ROL_USUARIO_ID}>"
+
+        if canal_avisos:
+            await canal_avisos.send(
+                content=mention,
+                embed=embed,
+                view=PanelControlView(),
+                allowed_mentions=discord.AllowedMentions(roles=True)
+            )
+            await ctx.send(
+                embed=discord.Embed(
+                    description=f"✅ Panel publicado en {canal_avisos.mention}.",
+                    color=0x00FF00
+                ), delete_after=8
+            )
+        else:
+            await ctx.send(
+                content=mention,
+                embed=embed,
+                view=PanelControlView(),
+                allowed_mentions=discord.AllowedMentions(roles=True)
+            )
         await self.log("STATUS", f"{ctx.author.name} — ID:{id_sesion} | {iniciador.display_name} | {ciudadanos}p {polis}pol {admins}adm")
 
     @commands.command(name='votacion')
@@ -7192,6 +7393,69 @@ class Soporte(BaseCog):
         await ctx.send(embed=embed_ok, delete_after=15)
         await self.log("FORZAR_INICIO", f"{ctx.author.name} inyectó botón en msg {msg_id} (canal: {canal_encontrado.name})")
         await self._del(ctx)
+
+    @commands.command(name='forzar-rol')
+    @tiene_rol_equipo_especial()
+    async def forzar_rol(self, ctx):
+        """
+        [Staff] Publica el panel ESTAMOS EN ROL directamente en el canal de avisos,
+        saltándose la votación de los 10 ticks. Abre el modal de datos al instante.
+        Uso: -forzar-rol
+        """
+        # ── Crear un View temporal con botón que abre el IniciarRolModal ──
+        class _ForzarView(discord.ui.View):
+            def __init__(self_v):
+                super().__init__(timeout=60)
+
+            @discord.ui.button(
+                label="🚀 Confirmar e Iniciar Rol",
+                style=discord.ButtonStyle.success
+            )
+            async def _confirmar(self_v, interaction: discord.Interaction, button: discord.ui.Button):
+                if interaction.user.id != ctx.author.id:
+                    return await interaction.response.send_message(
+                        "Solo quien ejecutó el comando puede confirmar.", ephemeral=True
+                    )
+                await interaction.response.send_modal(IniciarRolModal())
+                for child in self_v.children:
+                    child.disabled = True
+                try:
+                    await interaction.message.edit(view=self_v)
+                except Exception:
+                    pass
+                self_v.stop()
+
+            @discord.ui.button(label="❌ Cancelar", style=discord.ButtonStyle.secondary)
+            async def _cancelar(self_v, interaction: discord.Interaction, button: discord.ui.Button):
+                if interaction.user.id != ctx.author.id:
+                    return await interaction.response.send_message(
+                        "Solo quien ejecutó el comando puede cancelar.", ephemeral=True
+                    )
+                for child in self_v.children:
+                    child.disabled = True
+                await interaction.response.edit_message(
+                    embed=discord.Embed(description="❌ Inicio forzado cancelado.", color=0xFF0000),
+                    view=self_v
+                )
+                self_v.stop()
+
+        embed_confirm = discord.Embed(
+            title="⚙️ FORZAR INICIO DE ROL",
+            description=(
+                "Vas a iniciar el panel de rol **sin pasar por la votación**.\n\n"
+                "Al confirmar se abrirá el formulario para introducir los datos del rol.\n"
+                f"📡 El panel se publicará en <#{CANAL_AVISOS_ROL_ID}>."
+            ),
+            color=0xFFA500,
+            timestamp=datetime.now()
+        )
+        embed_confirm.set_footer(
+            text=f"Ejecutado por {ctx.author.display_name} · Solo staff",
+            icon_url=ctx.author.display_avatar.url
+        )
+        await ctx.send(embed=embed_confirm, view=_ForzarView())
+        await self._del(ctx)
+        await self.log("FORZAR_ROL", f"{ctx.author.name} forzó inicio de rol")
 
     async def _publicar_votacion(self, canal, autor, datos):
         """Publica la votación con diseño estilo imagen de referencia + 6 reacciones."""
