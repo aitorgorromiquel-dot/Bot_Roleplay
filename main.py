@@ -1937,18 +1937,28 @@ class Principal(BaseCog):
             return await ctx.send(embed=embed_error("No se puede comprar un artículo de valor infinito."))
         precio = precio_unitario * cantidad
         eco = await db.get_economy(uid)
-        use_black = item_norm.lower() in ILLEGAL_TIENDA_ITEMS
+        es_ilegal = item_norm.lower() in ILLEGAL_TIENDA_ITEMS
 
-        if use_black:
-            if eco['black_money'] < precio:
-                return await ctx.send(embed=embed_error(f"Necesitas **${precio:,}** en dinero negro. Tienes: **${eco['black_money']:,}**"))
+        # ── Tienda ilegal: acepta dinero negro O dinero normal ──
+        # Prioridad: dinero negro primero si tiene suficiente, sino efectivo
+        if es_ilegal and eco['black_money'] >= precio:
             await db.add_black(uid, -precio)
-            metodo = "dinero negro"
-        else:
-            if eco['cash'] < precio:
-                return await ctx.send(embed=embed_error(f"Necesitas **${precio:,}**. Tienes: **${eco['cash']:,}**"))
+            metodo = "💶 dinero negro"
+        elif eco['cash'] >= precio:
             await db.add_cash(uid, -precio)
-            metodo = "efectivo"
+            metodo = "💵 efectivo"
+        elif es_ilegal:
+            total_disponible = eco['black_money'] + eco['cash']
+            return await ctx.send(embed=embed_error(
+                f"Necesitas **${precio:,}** para comprar este ítem.\n"
+                f"💶 Dinero negro: **${eco['black_money']:,}**\n"
+                f"💵 Efectivo: **${eco['cash']:,}**\n"
+                f"Total disponible: **${total_disponible:,}**"
+            ))
+        else:
+            return await ctx.send(embed=embed_error(
+                f"Necesitas **${precio:,}** en efectivo. Tienes: **${eco['cash']:,}**"
+            ))
 
         await db.add_item(uid, "personal", item_norm, cantidad)
         embed = discord.Embed(
@@ -2206,7 +2216,15 @@ class Principal(BaseCog):
         )
         embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3124/3124564.png")
         embed.set_footer(text="⚠️ Usa -comprar <item> [cantidad] para adquirir | TOTALMENTE ANÓNIMO")
-        embed.add_field(name="⚠️ ADVERTENCIA", value="Estos items son para actividades ilegales. Trae dinero negro. 💶", inline=False)
+        embed.add_field(
+            name="💳 FORMAS DE PAGO",
+            value=(
+                "💶 **Dinero negro** *(prioridad si tienes suficiente)*\n"
+                "💵 **Efectivo normal** *(si no tienes dinero negro suficiente)*\n"
+                "→ Usa `-comprar <ítem> [cantidad]`"
+            ),
+            inline=False
+        )
 
         await ctx.send(embed=embed)
         await self.log("TIENDA_ILEGAL", f"{ctx.author.name} abrió la tienda ilegal")
@@ -3935,51 +3953,46 @@ class Banco(BaseCog):
         eco = await db.get_economy(uid)
         emoji_money = await get_emoji('money')
         emoji_bank  = await get_emoji('bank')
+        emoji_black = await get_emoji('black_money')
 
-        # ── Título diferente si el staff inspecciona a otro ──
-        if target.id != ctx.author.id:
-            titulo = f"{emoji_bank} INSPECCIÓN BANCARIA — {target.display_name}"
-            color  = 0xE67E22   # naranja para inspecciones
-        else:
-            titulo = f"{emoji_bank} BANCO CENTRAL — {target.display_name}"
-            color  = 0x3498DB
-
-        embed = discord.Embed(
-            title=titulo,
-            description=(
-                f"{emoji_money} **Efectivo:** `${eco['cash']:,}`\n"
-                f"{emoji_bank} **En banco:** `${eco['bank']:,}`\n"
-                f"💰 **Total:**    `${eco['cash'] + eco['bank']:,}`"
-            ),
-            color=color,
-            timestamp=datetime.now()
+        es_inspeccion = (target.id != ctx.author.id)
+        titulo = (
+            f"{emoji_bank} INSPECCIÓN BANCARIA — {target.display_name}"
+            if es_inspeccion else
+            f"{emoji_bank} BANCO CENTRAL — {target.display_name}"
         )
+        color = 0xE67E22 if es_inspeccion else 0x3498DB
+
+        total_limpio = eco['cash'] + eco['bank']
+        desc = (
+            f"{emoji_money} **Efectivo:**      **`${eco['cash']:,}`**\n"
+            f"{emoji_bank} **Banco:**          **`${eco['bank']:,}`**\n"
+            f"💰 **Total limpio:**  **`${total_limpio:,}`**\n"
+            f"───────────────────────\n"
+            f"{emoji_black} **Dinero negro:**  **`${eco['black_money']:,}`**"
+        )
+
+        embed = discord.Embed(title=titulo, description=desc, color=color, timestamp=datetime.now())
         embed.set_thumbnail(url=target.display_avatar.url)
-        if eco['black_money'] > 0:
+
+        if es_inspeccion:
             embed.add_field(
-                name=f"{await get_emoji('black_money')} Dinero negro",
-                value=f"Tiene **${eco['black_money']:,}** pendiente de blanquear.",
+                name="🔍 Inspección realizada por",
+                value=f"{ctx.author.mention} · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
                 inline=False
             )
-        if target.id == ctx.author.id:
+        else:
             embed.add_field(
                 name="📌 Comandos rápidos",
                 value=(
                     "`-dep <cantidad|all>` — Depositar al banco\n"
                     "`-with <cantidad|all>` — Retirar del banco\n"
                     "`-banco transferir @usuario <cantidad>` — Transferir\n"
-                    "`-banco ingresar <cantidad|all>` — Alias depositar\n"
-                    "`-banco retirar <cantidad|all>` — Alias retirar"
+                    "`-blanquear` — Blanquear dinero negro (solo Mafia)"
                 ),
                 inline=False
             )
-        else:
-            embed.add_field(
-                name="🔍 Inspección realizada por",
-                value=f"{ctx.author.mention} · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-                inline=False
-            )
-        embed.set_footer(text="Nova Agora RP · Banco Central")
+        embed.set_footer(text="Nova Agora RP · Banco Central", icon_url=target.display_avatar.url)
         await ctx.send(embed=embed)
         await self._del(ctx)
 
@@ -7226,28 +7239,48 @@ PERSISTENT_VIEWS = [IniciarRolView, PanelControlView, NuevaVotacionView]
 class Soporte(BaseCog):
     @commands.command(name='status')
     @tiene_rol_iniciador()
-    async def status(self, ctx, id_sesion: str = None, iniciador: discord.Member = None, ciudadanos: int = None, polis: int = None, admins: int = 0):
-        if id_sesion is None or iniciador is None or ciudadanos is None or polis is None:
+    async def status(self, ctx, *, args: str = None):
+        """
+        Publica el panel ESTAMOS EN ROL en el canal de avisos.
+        Uso: -status <NombreIC> <ciudadanos> <polis> [admins]
+        Ej:  -status Almiron_44 16 8 2
+        """
+        # ── Parseo manual: último(s) número(s) = conteos, todo antes = nombre IC ──
+        if not args:
             embed = embed_help(
                 "status",
-                "Publica el estado de la sesión de rol en el canal actual.",
-                "-status <id_sesion> <@iniciador> <ciudadanos> <polis> [admins]",
-                "-status #001 @Not3Aithor_ 10 5 2",
+                "Publica el panel de rol en el canal de avisos con botones de control.",
+                "-status <NombreIC> <ciudadanos> <polis> [admins]",
+                "-status Almiron_44 16 8 2",
                 "Iniciador de rol"
             )
             return await ctx.send(embed=embed)
+
+        partes = args.strip().split()
+        # Necesitamos mínimo 3 partes: nombre + ciudadanos + polis
+        # El nombre puede tener espacios → tomamos de atrás hacia delante los números
+        nums = []
+        nombre_partes = list(partes)
+        while nombre_partes and nombre_partes[-1].lstrip('-').isdigit():
+            nums.insert(0, int(nombre_partes.pop()))
+        iniciador = " ".join(nombre_partes).strip()
+
+        if len(nums) < 2 or not iniciador:
+            return await ctx.send(embed=embed_error(
+                "Formato incorrecto.\n"
+                "Uso: `-status <NombreIC> <ciudadanos> <polis> [admins]`\n"
+                "Ej: `-status Almiron_44 16 8 2`"
+            ))
+
+        ciudadanos = nums[0]
+        polis      = nums[1]
+        admins     = nums[2] if len(nums) >= 3 else 0
+
         if any(x < 0 for x in [ciudadanos, polis, admins]):
             return await ctx.send(embed=embed_error("Los números no pueden ser negativos."))
-        total = ciudadanos + polis + admins
-        embed = discord.Embed(title="🚨 ESTAMOS EN ROL 🚨", color=discord.Color.red(), timestamp=datetime.now())
-        embed.add_field(name="🆔 ID Sesión:",        value=f"```\n{id_sesion}\n```",              inline=False)
-        embed.add_field(name="📌 Iniciador:",         value=f"```\n{iniciador.display_name}\n```", inline=False)
-        embed.add_field(name="🧑 Ciudadanos en rol:", value=f"```\n{ciudadanos}\n```",             inline=False)
-        embed.add_field(name="🚔 Policías en rol:",   value=f"```\n{polis}\n```",                  inline=False)
-        embed.add_field(name="🛡️ Admins en rol:",    value=f"```\n{admins}\n```",                 inline=False)
-        embed.add_field(name="📊 Total en sesión:",   value=f"```\n{total}\n```",                  inline=False)
-        embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNzFwNGl2ajRzM3p4d2Zmd2Z5cGxvbjE2dHJlZnYxM2ZkMjZzNjZ5bCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/6T7IlHrbxl7MOye7Hn/giphy.gif")
-        embed.set_footer(text=f"Publicado por {ctx.author.display_name}  ·  NOVA AGORA", icon_url=ctx.author.display_avatar.url)
+
+        # ── Construir embed con _build_status_embed (igual que el modal) ──
+        embed = _build_status_embed(iniciador, ciudadanos, polis, admins, ctx.guild, ctx.author)
         await self._del(ctx)
 
         # ── Enviar al canal de Avisos de Rol con mención @Ciudadanos y botones ──
@@ -7275,7 +7308,7 @@ class Soporte(BaseCog):
                 view=PanelControlView(),
                 allowed_mentions=discord.AllowedMentions(roles=True)
             )
-        await self.log("STATUS", f"{ctx.author.name} — ID:{id_sesion} | {iniciador.display_name} | {ciudadanos}p {polis}pol {admins}adm")
+        await self.log("STATUS", f"{ctx.author.name} → {iniciador} | {ciudadanos}ciu {polis}pol {admins}adm")
 
     @commands.command(name='votacion')
     @tiene_rol_iniciador()
@@ -7488,20 +7521,36 @@ class Soporte(BaseCog):
             f"{e_no}  **No entraré a rol.**\n"
             f"{e_lspd}  **Entraré de LSPD.**\n"
             f"{e_lsmd}  **Entraré de LSMD.**\n"
-            f"{e_tarde}  **Entraré más tarde.**"
+            f"{e_tarde}  **Entraré más tarde.**\n"
+            f"{e_duda}  **No lo sé aún.**"
         )
 
         embed = discord.Embed(
-            title="📊 | VOTACION ROL",
-            description=f"```\n{desc_txt}\n```",
+            title="📊 | VOTACIÓN DE ROL",
+            description=(
+                f"```\n{desc_txt}\n```\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"**Reacciona abajo para votar**\n"
+                f"🎯 El rol se iniciará con **10 votos positivos** {e_si}"
+            ),
             color=0x2563EB,
             timestamp=datetime.now()
         )
-        embed.add_field(name="\u200b", value=opciones, inline=False)
+        embed.add_field(name="🗳️ Opciones", value=opciones, inline=False)
+        embed.add_field(
+            name="📈 Votos positivos",
+            value=f"**`0 / 10`** {e_si}",
+            inline=True
+        )
+        embed.add_field(
+            name="📉 Votos negativos",
+            value=f"**`0`** {e_no}",
+            inline=True
+        )
         if guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
         embed.set_footer(
-            text=f"Realizado por {autor.display_name}",
+            text=f"Realizado por {autor.display_name} · Nova Agora RP",
             icon_url=autor.display_avatar.url
         )
 
@@ -7522,6 +7571,7 @@ class Soporte(BaseCog):
             "iniciado":  False,
             "embed_ref": embed,
             "e_si":      e_si,
+            "e_no":      e_no,
         }
         for reaction_emoji in [e_si, e_no, e_lspd, e_lsmd, e_tarde, e_duda]:
             try:
@@ -7545,12 +7595,48 @@ class Soporte(BaseCog):
             return
         vot = VOTACIONES_ACTIVAS[msg_id]
         e_si = vot.get("e_si", "☑️")
-        if emoji in EMOJIS_SI or emoji == e_si:
+        e_no = vot.get("e_no", "❌")
+        es_si = emoji in EMOJIS_SI or emoji == e_si
+        es_no = emoji in {"❌", "🟥", "✗"} or emoji == e_no
+        if es_si:
             vot["votos_si"].add(payload.user_id)
-        elif emoji in {"❌", "🟥", "✗"}:
+        elif es_no:
             vot["votos_no"].add(payload.user_id)
         else:
             return
+
+        # ── Actualizar contadores en el embed en tiempo real ──
+        try:
+            guild  = self.bot.get_guild(payload.guild_id)
+            canal  = guild.get_channel(payload.channel_id)
+            msg    = await canal.fetch_message(msg_id)
+            n_si   = len(vot["votos_si"])
+            n_no   = len(vot["votos_no"])
+            if msg.embeds:
+                embed_actual = msg.embeds[0]
+                nuevos_fields = []
+                for f in embed_actual.fields:
+                    if "Votos positivos" in f.name:
+                        nuevos_fields.append(discord.EmbedField(
+                            name=f.name,
+                            value=f"**`{n_si} / 10`** {e_si}",
+                            inline=True
+                        ))
+                    elif "Votos negativos" in f.name:
+                        nuevos_fields.append(discord.EmbedField(
+                            name=f.name,
+                            value=f"**`{n_no}`** {e_no}",
+                            inline=True
+                        ))
+                    else:
+                        nuevos_fields.append(f)
+                embed_actual.clear_fields()
+                for f in nuevos_fields:
+                    embed_actual.add_field(name=f.name, value=f.value, inline=f.inline)
+                await msg.edit(embed=embed_actual)
+        except Exception:
+            pass  # Si no se puede editar, continuar igual
+
         # Verificar umbral de 10 votos positivos
         if len(vot["votos_si"]) >= 10 and not vot.get("iniciado"):
             vot["iniciado"] = True
