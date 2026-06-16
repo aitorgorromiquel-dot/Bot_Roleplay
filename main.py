@@ -391,13 +391,6 @@ APUESTA_MIN, APUESTA_MAX, MAX_DROGA_POR_COMPRA = 100, 50000, 27
 CANAL_LOG_ECONOMIA = CANAL_LOG_SANCIONES = 0
 ROL_MUTED = CATEGORIA_TICKETS = ROL_STAFF = TICKET_PANEL_CHANNEL = 0
 
-MENSAJES_POR_NIVEL = 300
-COOLDOWN_MENSAJE_XP = 500
-COOLDOWN_COMANDO_XP = 3000
-XP_POR_TIEMPO = 10
-DIAS_PARA_SUBIR_NIVEL = 14
-ROLES_POR_NIVEL = {5:0,10:0,15:0,20:0,25:0,30:0}
-
 MINERALES = {
     "Carbón":{"probabilidad":25,"valor":5,"emoji":"⚫"}, "Hierro":{"probabilidad":20,"valor":15,"emoji":"⚙️"},
     "Cobre":{"probabilidad":18,"valor":20,"emoji":"🔶"}, "Estaño":{"probabilidad":12,"valor":25,"emoji":"🔘"},
@@ -689,25 +682,6 @@ class Database:
                     staff_id INTEGER
                 )
             """)
-            # Niveles
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS niveles (
-                    user_id INTEGER PRIMARY KEY,
-                    xp INTEGER DEFAULT 0,
-                    nivel INTEGER DEFAULT 0,
-                    last_message_time TEXT,
-                    last_command_time TEXT,
-                    last_time_time TEXT,
-                    mensajes INTEGER DEFAULT 0,
-                    last_message_content TEXT,
-                    last_level_up TEXT
-                )
-            """)
-            # Migración: añadir columna last_level_up si no existe (DBs antiguas)
-            try:
-                await db.execute("ALTER TABLE niveles ADD COLUMN last_level_up TEXT")
-            except Exception:
-                pass  # Ya existe, ignorar
             # Blacklist y antiraid
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS blacklist (
@@ -815,7 +789,6 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_warnings_user ON warnings(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_niveles_nivel ON niveles(nivel)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_user ON antiraid_actions(user_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_antiraid_timestamp ON antiraid_actions(timestamp)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_drug_grams_user ON drug_grams(user_id)")
@@ -1329,50 +1302,6 @@ class Database:
 
     async def get_mercado_by_id(self, pub_id):
         return await self.fetchone("SELECT vendedor, item, precio FROM mercado WHERE id = ?", (pub_id,))
-
-    # Niveles
-    async def add_xp(self, user_id, xp, tipo="message"):
-        now = datetime.now().isoformat()
-        row = await self.fetchone("SELECT xp, nivel, last_level_up FROM niveles WHERE user_id = ?", (user_id,))
-        if not row:
-            await self.execute("INSERT INTO niveles (user_id, xp, nivel, last_level_up) VALUES (?, ?, 0, ?)", (user_id, xp, now))
-            xp_actual = xp
-            nivel_actual = 0
-            last_level_up = None
-        else:
-            xp_actual = row[0] + xp
-            nivel_actual = row[1]
-            last_level_up = row[2]
-            await self.execute("UPDATE niveles SET xp = ? WHERE user_id = ?", (xp_actual, user_id))
-            if tipo == "message":
-                await self.execute("UPDATE niveles SET last_message_time = ? WHERE user_id = ?", (now, user_id))
-            elif tipo == "command":
-                await self.execute("UPDATE niveles SET last_command_time = ? WHERE user_id = ?", (now, user_id))
-            elif tipo == "time":
-                await self.execute("UPDATE niveles SET last_time_time = ? WHERE user_id = ?", (now, user_id))
-
-        nuevo_nivel = int((xp_actual ** 0.5) / 10)
-        if nuevo_nivel > nivel_actual:
-            puede_subir = True
-            if last_level_up:
-                ultima_subida = datetime.fromisoformat(last_level_up)
-                if (datetime.now() - ultima_subida).days < DIAS_PARA_SUBIR_NIVEL:
-                    puede_subir = False
-            if puede_subir:
-                await self.execute("UPDATE niveles SET nivel = ?, last_level_up = ? WHERE user_id = ?", (nuevo_nivel, now, user_id))
-                return nuevo_nivel
-            else:
-                return None
-        return None
-
-    async def get_nivel(self, user_id):
-        row = await self.fetchone("SELECT xp, nivel, last_level_up FROM niveles WHERE user_id = ?", (user_id,))
-        if row:
-            return {"xp": row[0], "nivel": row[1], "last_level_up": row[2]}
-        return {"xp": 0, "nivel": 0, "last_level_up": None}
-
-    async def get_ranking_niveles(self, limit=10):
-        return await self.fetchall("SELECT user_id, xp, nivel FROM niveles ORDER BY xp DESC LIMIT ?", (limit,))
 
     # Blacklist
     async def add_to_blacklist(self, user_id, reason, banned_by):
