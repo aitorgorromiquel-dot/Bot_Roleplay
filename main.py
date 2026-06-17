@@ -16,6 +16,7 @@ import asyncio
 import json
 import threading
 import secrets
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple, Dict, Any
 import discord
@@ -274,7 +275,7 @@ def _reload_drogas():
 HEIST_DEFINITIONS = {
     "badu": {
         "nombre": "Badu", "cooldown": 600, "items": ["Bolsas Atraco", "Pasamontañas"],
-        "police": "2 policías", "reward": (1200,2800), "min_level":1, "description":"Atraco básico",
+        "police": "2 policías", "reward": (1200,2800), "description":"Atraco básico",
         "image":"https://i.imgur.com/6q1z4wP.png",
         "preparations": [
             "🚗 Roba un vehículo de huida."
@@ -282,7 +283,7 @@ HEIST_DEFINITIONS = {
     },
     "yellowjack": {
         "nombre": "Yellow Jack", "cooldown": 1800, "items": ["Mascaras", "Ganzúa"],
-        "police": "3 policías", "reward": (3000,5500), "min_level":5, "description":"Tienda nocturna",
+        "police": "3 policías", "reward": (3000,5500), "description":"Tienda nocturna",
         "image":"https://i.imgur.com/9BkYy3M.png",
         "preparations": [
             "🚗 Roba un vehículo de huida.",
@@ -291,7 +292,7 @@ HEIST_DEFINITIONS = {
     },
     "ammu": {
         "nombre": "Ammu-Nation", "cooldown": 3600, "items": ["Dispositivo de hackeo", "Gas lacrimógeno"],
-        "police": "4 policías", "reward": (6000,12000), "min_level":10, "description":"Tienda de armas",
+        "police": "4 policías", "reward": (6000,12000), "description":"Tienda de armas",
         "image":"https://i.imgur.com/5XkZq5p.png",
         "preparations": [
             "🚐 Roba una furgoneta.",
@@ -301,7 +302,7 @@ HEIST_DEFINITIONS = {
     },
     "vanilla": {
         "nombre": "Vanilla Unicorn", "cooldown": 7200, "items": ["Termita", "Pasamontañas"],
-        "police": "5 policías", "reward": (12000,18000), "min_level":15, "description":"Club nocturno",
+        "police": "5 policías", "reward": (12000,18000), "description":"Club nocturno",
         "image":"https://i.imgur.com/3pG7F2d.png",
         "preparations": [
             "🚗 Roba vehículo discreto.",
@@ -311,7 +312,7 @@ HEIST_DEFINITIONS = {
     },
     "yate": {
         "nombre": "Yate", "cooldown": 9000, "items": ["Tarjeta de crédito", "Mascaras"],
-        "police": "5 policías", "reward": (18000,26000), "min_level":20, "description":"Emboscada en alta mar",
+        "police": "5 policías", "reward": (18000,26000), "description":"Emboscada en alta mar",
         "image":"https://i.imgur.com/h8G7Y2V.png",
         "preparations": [
             "🚁 Roba un helicóptero.",
@@ -322,7 +323,7 @@ HEIST_DEFINITIONS = {
     },
     "centro": {
         "nombre": "Centro Comercial", "cooldown": 10800, "items": ["Termita", "Gas lacrimógeno", "Pasamontañas"],
-        "police": "6 policías", "reward": (22000,32000), "min_level":25, "description":"Centro comercial",
+        "police": "6 policías", "reward": (22000,32000), "description":"Centro comercial",
         "image":"https://i.imgur.com/JY4N7Qc.png",
         "preparations": [
             "🚐 Vehículo de carga.",
@@ -332,8 +333,8 @@ HEIST_DEFINITIONS = {
         ]
     },
     "joyeria": {
-        "nombre": "Joyería", "cooldown": 259200, "items": ["Ganzúa", "Termita", "Mascaras"],
-        "police": "7 policías", "reward": (45000,65000), "min_level":30, "description":"Joyería",
+        "nombre": "Joyería", "cooldown": 3600, "items": ["Ganzúa", "Termita", "Mascaras"],
+        "police": "7 policías", "reward": (45000,65000), "description":"Joyería",
         "image":"https://i.imgur.com/2aUxZcN.png",
         "preparations": [
             "🚗 Vehículo de huida.",
@@ -341,11 +342,12 @@ HEIST_DEFINITIONS = {
             "🔧 Herramientas de corte.",
             "💻 Equipo electrónico.",
             "🎭 Material para ocultar identidad."
-        ]
+        ],
+        "gemas": {"item": "Joya de Plata", "cantidad_min": 5, "cantidad_max": 17, "valor_min": 1541, "valor_max": 19130, "moneda": "negro"}
     },
     "paleto": {
         "nombre": "Banco Paleto", "cooldown": 1036800, "items": ["Dispositivo de hackeo", "Pasamontañas", "Bolsas Atraco"],
-        "police": "8 policías", "reward": (120000,160000), "min_level":50, "description":"Atraco rural",
+        "police": "8 policías", "reward": (120000,160000), "description":"Atraco rural",
         "image":"https://i.imgur.com/4XKlj8K.png",
         "preparations": [
             "🚐 Furgón de transporte.",
@@ -357,8 +359,8 @@ HEIST_DEFINITIONS = {
         ]
     },
     "central": {
-        "nombre": "Banco Central", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"],
-        "police": "10 policías", "reward": (180000,240000), "min_level":60, "description":"Operación final",
+        "nombre": "Banco Central", "cooldown": 43200, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"],
+        "police": "10 policías", "reward": (180000,240000), "description":"Operación final",
         "image":"https://i.imgur.com/7W6c3qB.png",
         "preparations": [
             "🚛 Vehículo blindado.",
@@ -370,9 +372,10 @@ HEIST_DEFINITIONS = {
             "📦 Material para extracción del dinero."
         ]
     },
-    "pacific": {
-        "nombre": "Pacific Bank", "cooldown": 1209600, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"],
-        "police": "10 policías", "reward": (250000,350000), "min_level":60, "description":"Golpe maestro",
+    "diamond-casino": {
+        "nombre": "Diamond Casino", "cooldown": 43200, "items": ["Dispositivo de hackeo", "Termita", "Tarjeta de crédito"],
+        "police": "Entre 5 y 8 policías en servicio", "atracadores": "Entre 4 y 7 atracadores",
+        "reward": (220000,300000), "description":"Golpe maestro al Diamond Casino",
         "image":"https://i.imgur.com/1rQn0pL.png",
         "preparations": [
             "🚛 Roba una furgoneta de asalto.",
@@ -383,9 +386,49 @@ HEIST_DEFINITIONS = {
             "📡 Intercepta comunicaciones.",
             "🗺️ Obtén planos internos.",
             "📦 Consigue equipo para transportar el dinero."
+        ],
+        "special": {"item": "Colgante de Rubí", "prob": 1/30, "min": 20000, "max": 20000, "moneda": "limpio"}
+    },
+    "lico": {
+        "nombre": "Licorería", "cooldown": 600, "items": [],
+        "police": "1 policía", "reward": (800,1000), "description":"Atraco a una licorería",
+        "preparations": [
+            "🗣️ Habla con la Mafia para conseguir nuevas misiones y poder hacer el golpe."
+        ]
+    },
+    "atm": {
+        "nombre": "ATM", "cooldown": 600, "items": [],
+        "police": "1 policía", "reward": (300,550), "description":"Asalto a un cajero automático",
+        "preparations": [
+            "🗣️ Habla con la Mafia para conseguir nuevas misiones y poder hacer el golpe."
+        ]
+    },
+    "casa": {
+        "nombre": "Casa", "cooldown": 600, "items": [],
+        "police": "1 policía", "reward": (300,550), "description":"Allanamiento de una vivienda",
+        "preparations": [
+            "🗣️ Habla con la Mafia para conseguir nuevas misiones y poder hacer el golpe."
+        ],
+        "special": {"item": "El Oro", "prob": 1/100, "min": 1750, "max": 2050, "moneda": "negro"}
+    },
+    "tienda-ropa": {
+        "nombre": "Tienda de Ropa", "cooldown": 600, "items": [],
+        "police": "2 policías", "reward": (650,1000), "description":"Atraco a una tienda de ropa",
+        "preparations": [
+            "🗣️ Habla con la Mafia para conseguir nuevas misiones y poder hacer el golpe."
+        ]
+    },
+    "peluqueria": {
+        "nombre": "Peluquería", "cooldown": 600, "items": [],
+        "police": "1 policía", "reward": (300,400), "description":"Atraco a una peluquería",
+        "preparations": [
+            "🗣️ Habla con la Mafia para conseguir nuevas misiones y poder hacer el golpe."
         ]
     }
 }
+
+# IDs de atracos que exigen autorización previa de la Mafia (ticket) antes de iniciar su primera preparatoria.
+HEISTS_PREMIUM = {"central", "diamond-casino"}
 
 APUESTA_MIN, APUESTA_MAX, MAX_DROGA_POR_COMPRA = 100, 50000, 27
 CANAL_LOG_ECONOMIA = CANAL_LOG_SANCIONES = 0
@@ -3510,8 +3553,8 @@ class Atracos(BaseCog):
     async def rob(self, ctx):
         embed = discord.Embed(title=f"{await get_emoji('rob')} SISTEMA PROFESIONAL DE ATRACOS", description="**Comandos disponibles:**", color=0xFF0000)
         for heist_name, info in HEIST_DEFINITIONS.items():
-            nivel = f"Lv.{info['min_level']}+"
             segundos = info['cooldown']
+            riesgo = "🔴" if segundos >= 86400 else "🟡" if segundos >= 3600 else "🟢"
             if segundos >= 86400:
                 cd = f"{segundos // 86400}d"
             elif segundos >= 3600:
@@ -3520,7 +3563,7 @@ class Atracos(BaseCog):
                 cd = f"{segundos // 60}m"
             embed.add_field(
                 name=f"`-rob {heist_name}` — {info['nombre']}",
-                value=f"{info['description']}\n💰 ${info['reward'][0]:,}–${info['reward'][1]:,} | ⏱️ {cd} | {nivel} | 📋 {len(info['preparations'])} preparatorias",
+                value=f"{info['description']}\n💰 ${info['reward'][0]:,}–${info['reward'][1]:,} | ⏱️ {cd} | {riesgo} | 📋 {len(info['preparations'])} preparatorias",
                 inline=False
             )
         embed.set_footer(text="Usa -rob <nombre> para iniciar | Requiere items en inventario y preparatorias completadas")
@@ -3531,10 +3574,8 @@ class Atracos(BaseCog):
     @tiene_rol_usuario()
     async def rob_status(self, ctx):
         uid = ctx.author.id
-        nivel = await db.get_nivel(uid)
         eco = await db.get_economy(uid)
         embed = discord.Embed(title="📊 Tu Estatus de Atracos", color=0x00FF00)
-        embed.add_field(name="Nivel", value=f"{nivel['nivel']}", inline=True)
         embed.add_field(name="Dinero Negro", value=f"${eco['black_money']:,}", inline=True)
         embed.add_field(name="Dinero Total", value=f"${eco['cash'] + eco['bank']:,}", inline=True)
         atracos = await db.fetchone("SELECT COUNT(*) FROM atracos_logs WHERE user_id = ?", (uid,))
@@ -3573,14 +3614,16 @@ class Atracos(BaseCog):
         )
         embed.set_thumbnail(url=heist.get('image', 'https://i.imgur.com/8Km9tLL.png'))
         embed.add_field(name="📍 Objetivo", value=heist['nombre'], inline=True)
-        embed.add_field(name="⚠️ Nivel de Riesgo", value=f"🔴 {'Alto' if heist['min_level'] >= 50 else 'Medio' if heist['min_level'] >= 20 else 'Bajo'}", inline=True)
+        embed.add_field(name="⚠️ Nivel de Riesgo", value="🔴 Alto" if heist['cooldown'] >= 86400 else "🟡 Medio" if heist['cooldown'] >= 3600 else "🟢 Bajo", inline=True)
         embed.add_field(name="💰 Recompensa Estimada", value=f"${heist['reward'][0]:,} - ${heist['reward'][1]:,}", inline=True)
         embed.add_field(name="⏱️ Tiempo Estimado", value=f"{heist['cooldown'] // 60} minutos", inline=True)
         embed.add_field(name="🚔 Participación Policial", value=heist['police'], inline=True)
+        if heist.get('atracadores'):
+            embed.add_field(name="🔫 Atracadores", value=heist['atracadores'], inline=True)
         embed.add_field(name="📝 Descripción", value=heist['description'], inline=False)
         if heist.get('items'):
             embed.add_field(name="🔧 Items Necesarios", value=", ".join(heist['items']), inline=False)
-        embed.add_field(name="📋 Preparatorias requeridas", value=f"{len(heist['preparations'])}/{len(heist['preparations'])} completadas" if await self._verificar_preparatorias(ctx, heist_name) else f"{await self._contar_preparatorias_completadas(ctx.author.id, heist_name)}/{len(heist['preparations'])} completadas", inline=False)
+        embed.add_field(name="📋 Preparatorias requeridas", value=f"{len(heist['preparations'])}/{len(heist['preparations'])} completadas", inline=False)
         embed.set_footer(text="Responde con ✅ para comenzar el atraco o ❌ para cancelar.")
         view = ConfirmView(ctx.author.id, timeout=30)
         await ctx.send(embed=embed, view=view)
@@ -3593,9 +3636,13 @@ class Atracos(BaseCog):
         total_preps = len(HEIST_DEFINITIONS[heist_name]["preparations"])
         if total_preps == 0:
             return True
-        completadas = await db.are_all_preparations_completed(ctx.author.id, heist_name, total_preps)
-        if not completadas:
-            await ctx.send(embed=embed_error(f"❌ Debes completar todas las preparatorias de **{HEIST_DEFINITIONS[heist_name]['nombre']}** antes de realizar el atraco.\nUsa `-preparacion {heist_name} <número>` para avanzar."))
+        completadas_n = await self._contar_preparatorias_completadas(ctx.author.id, heist_name)
+        if completadas_n < total_preps:
+            await ctx.send(embed=embed_error(
+                f"🔒 Preparatorias: **{completadas_n}/{total_preps}**\n\n"
+                f"**Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe**\n\n"
+                f"Usa `-preparacion {heist_name} <número>` para avanzar."
+            ))
             return False
         return True
 
@@ -3615,8 +3662,13 @@ class Atracos(BaseCog):
         uid = ctx.author.id
 
         if not (ctx.author.id in OWNER_IDS or (ctx.guild.get_role(ROL_MAFIA_ID) in ctx.author.roles)):
-            if not await db.are_all_preparations_completed(uid, heist_name, len(heist["preparations"])):
-                await ctx.send(embed=embed_error(f"❌ Debes completar todas las preparatorias de **{heist['nombre']}** antes de realizar el atraco."))
+            total_preps = len(heist["preparations"])
+            completadas_n = await self._contar_preparatorias_completadas(uid, heist_name)
+            if completadas_n < total_preps:
+                await ctx.send(embed=embed_error(
+                    f"🔒 Preparatorias: **{completadas_n}/{total_preps}**\n\n"
+                    f"**Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe**"
+                ))
                 return None, None
 
         ok, rest = await db.check_cooldown(uid, f"rob_{heist_name}", heist['cooldown'])
@@ -3633,6 +3685,16 @@ class Atracos(BaseCog):
                     return None, None
         return heist, uid
 
+    @staticmethod
+    def _texto_rehenes(heist_name: str) -> str:
+        """Genera el texto brillante de rehenes. ATM y Casa siempre tienen 0 rehenes fijos."""
+        rehenes = 0 if heist_name in ("atm", "casa") else random.randint(0, 4)
+        if rehenes == 0:
+            return "**no tienes rehenes**"
+        if rehenes == 1:
+            return "**tienes un rehen**"
+        return f"**ya tienes {rehenes} rehenes**"
+
     async def execute_heist(self, ctx, heist_name: str):
         if not await self._mostrar_info_atraco(ctx, heist_name):
             return
@@ -3642,20 +3704,46 @@ class Atracos(BaseCog):
             return
         msg = await ctx.send(embed=discord.Embed(title=f"🎭 {heist['nombre']}", description="⏳ **En progreso...**\nObtendré más información en breve.", color=0xFFA500))
         await asyncio.sleep(random.randint(2, 4))
-        exito = random.random() < 0.80
+        exito = random.random() < 0.5
         if exito:
             dinero = random.randint(heist['reward'][0], heist['reward'][1])
             items_bonus = []
+
+            # Botín especial probabilístico (ej: "El oro" en casa, "Colgante de Rubí" en diamond-casino)
+            special = heist.get('special')
+            if special and random.random() < special['prob']:
+                valor_especial = random.randint(special['min'], special['max'])
+                await db.add_item(uid, 'personal', special['item'], 1)
+                if special['moneda'] == 'limpio':
+                    await db.add_cash(uid, valor_especial)
+                    items_bonus.append(f"🏆 {special['item']} (+${valor_especial:,} dinero limpio)")
+                else:
+                    dinero += valor_especial
+                    items_bonus.append(f"🏆 {special['item']} (+${valor_especial:,} dinero negro)")
+
+            # Botín garantizado de gemas (Joyería)
+            gemas = heist.get('gemas')
+            if gemas:
+                cantidad_gemas = random.randint(gemas['cantidad_min'], gemas['cantidad_max'])
+                valor_gemas = sum(random.randint(gemas['valor_min'], gemas['valor_max']) for _ in range(cantidad_gemas))
+                await db.add_item(uid, 'personal', gemas['item'], cantidad_gemas)
+                dinero += valor_gemas
+                items_bonus.append(f"💍 {cantidad_gemas}x {gemas['item']} (+${valor_gemas:,} dinero negro)")
+
+            # Botín adicional de droga
             if random.random() < 0.15:
                 droga = random.choice(list(PRECIOS_DROGAS_BASE.keys()))
                 gramos = random.randint(3, 12)
                 await db.add_item(uid, 'personal', droga, gramos)
                 items_bonus.append(f"{gramos}g {droga}")
+
             await db.add_black(uid, dinero)
             await db.inc_estadistica('robos_totales')
             await db.add_heist_log(uid, heist_name, "success", dinero, dinero, json.dumps(items_bonus))
             await db.reset_heist_preparations(uid, heist_name)
-            descripcion = f"✅ **¡ATRACO EXITOSO!**\n\n💶 **+${dinero:,}** en dinero negro"
+
+            texto_rehenes = self._texto_rehenes(heist_name)
+            descripcion = f"✅ **¡ATRACO EXITOSO!**\n\n💶 **+${dinero:,}** en dinero negro\n🎭 {texto_rehenes}"
             if items_bonus:
                 descripcion += f"\n📦 **Botín adicional:** {', '.join(items_bonus)}"
             embed = discord.Embed(title=f"🏆 {heist['nombre']} — EXITOSO", description=descripcion, color=0x00FF00)
@@ -3684,12 +3772,22 @@ class Atracos(BaseCog):
     async def rob_centro(self, ctx): await self.execute_heist(ctx, 'centro')
     @rob.command(name='joyeria')
     async def rob_joyeria(self, ctx): await self.execute_heist(ctx, 'joyeria')
-    @rob.command(name='pacific')
-    async def rob_pacific(self, ctx): await self.execute_heist(ctx, 'pacific')
+    @rob.command(name='diamond-casino')
+    async def rob_diamond_casino(self, ctx): await self.execute_heist(ctx, 'diamond-casino')
     @rob.command(name='paleto')
     async def rob_paleto(self, ctx): await self.execute_heist(ctx, 'paleto')
     @rob.command(name='central')
     async def rob_central(self, ctx): await self.execute_heist(ctx, 'central')
+    @rob.command(name='lico')
+    async def rob_lico(self, ctx): await self.execute_heist(ctx, 'lico')
+    @rob.command(name='atm')
+    async def rob_atm(self, ctx): await self.execute_heist(ctx, 'atm')
+    @rob.command(name='casa')
+    async def rob_casa(self, ctx): await self.execute_heist(ctx, 'casa')
+    @rob.command(name='tienda-ropa')
+    async def rob_tienda_ropa(self, ctx): await self.execute_heist(ctx, 'tienda-ropa')
+    @rob.command(name='peluqueria')
+    async def rob_peluqueria(self, ctx): await self.execute_heist(ctx, 'peluqueria')
 
 # ==================== COG: Preparatorias ====================
 class Preparatorias(BaseCog):
@@ -3700,9 +3798,6 @@ class Preparatorias(BaseCog):
     async def preparacion(self, ctx):
         uid = ctx.author.id
         preps = await db.get_all_heist_preparations(uid)
-
-        # ── Constantes para el diseño de la barra de progreso ──
-        HEISTS_PREMIUM = {"central", "pacific"}  # Requieren contactar a la Mafia
 
         embed = discord.Embed(
             title="📋 TUS PREPARATORIAS",
@@ -3717,7 +3812,7 @@ class Preparatorias(BaseCog):
 
             # ── Heists premium: mostrar candado si 0 completadas ──
             if heist_id in HEISTS_PREMIUM and completadas == 0:
-                estado = "🔒 `0/1` Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe"
+                estado = "🔒 `0/1` **Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe**"
             else:
                 estado = (
                     f"`{barra}` **{completadas}/{total}**\n"
@@ -3760,9 +3855,24 @@ class Preparatorias(BaseCog):
     @preparacion.command(name='central')
     async def prep_central(self, ctx, numero: int):
         await self._realizar_preparacion(ctx, "central", numero)
-    @preparacion.command(name='pacific')
-    async def prep_pacific(self, ctx, numero: int):
-        await self._realizar_preparacion(ctx, "pacific", numero)
+    @preparacion.command(name='diamond-casino')
+    async def prep_diamond_casino(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "diamond-casino", numero)
+    @preparacion.command(name='lico')
+    async def prep_lico(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "lico", numero)
+    @preparacion.command(name='atm')
+    async def prep_atm(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "atm", numero)
+    @preparacion.command(name='casa')
+    async def prep_casa(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "casa", numero)
+    @preparacion.command(name='tienda-ropa')
+    async def prep_tienda_ropa(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "tienda-ropa", numero)
+    @preparacion.command(name='peluqueria')
+    async def prep_peluqueria(self, ctx, numero: int):
+        await self._realizar_preparacion(ctx, "peluqueria", numero)
 
     async def _realizar_preparacion(self, ctx, heist_id: str, numero: int):
         uid = ctx.author.id
@@ -3773,9 +3883,8 @@ class Preparatorias(BaseCog):
         if numero < 1 or numero > total_preps:
             return await ctx.send(embed=embed_error(f"Número de preparatoria inválido. Debe ser entre 1 y {total_preps}."))
 
-        # ── Bloqueo Mafia para Banco Central y Pacific ──────────────────────
-        HEISTS_MAFIA = {"central", "pacific"}
-        if heist_id in HEISTS_MAFIA and ctx.author.id not in OWNER_IDS:
+        # ── Bloqueo Mafia para atracos premium (Banco Central y Diamond Casino) ──
+        if heist_id in HEISTS_PREMIUM and ctx.author.id not in OWNER_IDS:
             completadas = await db._contar_preps_completadas(uid, heist_id)
             if completadas == 0 and numero == 1:
                 embed_bloqueado = discord.Embed(
@@ -3789,7 +3898,7 @@ class Preparatorias(BaseCog):
                 )
                 embed_bloqueado.add_field(
                     name="📋 Misión Principal",
-                    value="`0/1` Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe",
+                    value="`0/1` **Debes hablar con la Mafia, para nuevas misiones y poder hacer el golpe**",
                     inline=False
                 )
                 embed_bloqueado.add_field(
@@ -7843,122 +7952,8 @@ class Moderacion(BaseCog):
         await ctx.send(embed=embed)
         await self._del(ctx)
 
-# ==================== COG: Niveles ====================
-class Niveles(BaseCog):
-    def __init__(self, bot):
-        super().__init__(bot)
-        self.tiempo_task.start()
-
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        if message.author.bot or not message.guild:
-            return
-        uid = message.author.id
-        user_data = await db.fetchone("SELECT last_message_time, last_message_content FROM niveles WHERE user_id = ?", (uid,))
-        now = datetime.now()
-        if user_data and user_data[0]:
-            last_time = datetime.fromisoformat(user_data[0])
-            last_content = user_data[1] or ""
-            if (now - last_time).total_seconds() < COOLDOWN_MENSAJE_XP:
-                return
-            if message.content.lower() == last_content.lower():
-                return
-        result = await db.fetchone("SELECT mensajes FROM niveles WHERE user_id = ?", (uid,))
-        current_messages = result[0] if result else 0
-        new_messages = current_messages + 1
-        new_level = new_messages // MENSAJES_POR_NIVEL
-        old_level = current_messages // MENSAJES_POR_NIVEL
-        remainder = new_messages % MENSAJES_POR_NIVEL
-        next_remaining = MENSAJES_POR_NIVEL - remainder if remainder else MENSAJES_POR_NIVEL
-        if result is None:
-            await db.execute("INSERT OR IGNORE INTO niveles (user_id, mensajes, last_message_time, last_message_content) VALUES (?, ?, ?, ?)", (uid, 0, None, None))
-        await db.execute("UPDATE niveles SET mensajes = ?, last_message_time = ?, last_message_content = ? WHERE user_id = ?", (new_messages, now.isoformat(), message.content[:100], uid))
-        if new_level > old_level and new_level > 0:
-            nivel_data = {"xp": 0, "nivel": 0, "last_level_up": None}  # niveles desactivados
-            last_level_up = nivel_data.get('last_level_up')
-            puede_subir = True
-            if last_level_up:
-                ultima_subida = datetime.fromisoformat(last_level_up)
-                if (datetime.now() - ultima_subida).days < DIAS_PARA_SUBIR_NIVEL:
-                    puede_subir = False
-            if puede_subir:
-                await db.execute("UPDATE niveles SET nivel = ?, last_level_up = ? WHERE user_id = ?", (new_level, now.isoformat(), uid))
-                await self.verificar_recompensa_nivel(message.author, new_level)
-                await message.channel.send(f"🎉 {message.author.mention} ha subido al nivel **{new_level}** por actividad!\n💬 **{new_messages} mensajes** acumulados | Próximo nivel en **{next_remaining} mensajes**.")
-            else:
-                dias_restantes = DIAS_PARA_SUBIR_NIVEL - (datetime.now() - ultima_subida).days
-                await message.channel.send(f"⚠️ {message.author.mention}, has alcanzado el nivel **{new_level}** pero debes esperar **{dias_restantes} días** para subir (cooldown de 14 días entre niveles). Sigue ganando XP mientras tanto.")
-
-    @commands.Cog.listener()
-    async def on_command_completion(self, ctx):
-        if ctx.author.bot:
-            return
-        uid = ctx.author.id
-        now = datetime.now()
-        user_data = await db.fetchone("SELECT last_command_time FROM niveles WHERE user_id = ?", (uid,))
-        if user_data and user_data[0]:
-            last_time = datetime.fromisoformat(user_data[0])
-            if (now - last_time).total_seconds() < COOLDOWN_COMANDO_XP:
-                return
-        await db.execute("UPDATE niveles SET last_command_time = ? WHERE user_id = ?", (now.isoformat(), uid))
-
-    @tasks.loop(minutes=30)
-    async def tiempo_task(self):
-        for guild in self.bot.guilds:
-            for member in guild.members:
-                if member.bot:
-                    continue
-                user_state = await db.fetchone("SELECT last_time_time FROM niveles WHERE user_id = ?", (member.id,))
-                if user_state and user_state[0]:
-                    last = datetime.fromisoformat(user_state[0])
-                    if (datetime.now() - last).total_seconds() < 300:
-                        continue
-                xp = XP_POR_TIEMPO  # XP registrado pero niveles desactivados
-
-    async def verificar_recompensa_nivel(self, member: discord.Member, nivel: int):
-        for nivel_requerido, rol_id in ROLES_POR_NIVEL.items():
-            if nivel >= nivel_requerido and rol_id:
-                rol = member.guild.get_role(rol_id)
-                if rol and rol not in member.roles:
-                    await member.add_roles(rol, reason=f"Recompensa por nivel {nivel}")
-                    await self.log("NIVEL", f"{member} alcanzó nivel {nivel} y obtuvo rol {rol.name}")
-
-    @commands.command(name='nivel')
-    @tiene_rol_usuario()
-    async def ver_nivel(self, ctx, miembro: discord.Member = None):
-        miembro = miembro or ctx.author
-        data = await db.get_nivel(miembro.id)
-        embed = discord.Embed(title=f"📊 Nivel de {miembro.display_name}", color=discord.Color.blue())
-        embed.add_field(name="Nivel", value=data['nivel'], inline=True)
-        embed.add_field(name="XP total", value=data['xp'], inline=True)
-        xp_siguiente = ((data['nivel'] + 1) ** 2) * 100
-        embed.add_field(name="XP para siguiente nivel", value=f"{xp_siguiente - data['xp']}", inline=True)
-        if data['last_level_up']:
-            ultima_subida = datetime.fromisoformat(data['last_level_up'])
-            dias_restantes = DIAS_PARA_SUBIR_NIVEL - (datetime.now() - ultima_subida).days
-            if dias_restantes > 0:
-                embed.add_field(name="⏳ Cooldown", value=f"Puedes subir de nivel nuevamente en **{dias_restantes} días**.", inline=False)
-            else:
-                embed.add_field(name="✅ Cooldown", value="Ya puedes subir de nivel cuando alcances el XP necesario.", inline=False)
-        else:
-            embed.add_field(name="✅ Cooldown", value="Sin restricciones, sube de nivel cuando alcances el XP.", inline=False)
-        await ctx.send(embed=embed)
-        await self._del(ctx)
-
-    @commands.command(name='ranking')
-    @tiene_rol_usuario()
-    async def ranking_niveles(self, ctx):
-        top = await db.get_ranking_niveles(10)
-        embed = discord.Embed(title="🏆 Ranking de niveles", color=discord.Color.gold())
-        desc = ""
-        for i, (uid, xp, nivel) in enumerate(top, 1):
-            user = self.bot.get_user(uid)
-            nombre = user.display_name if user else f"Usuario {uid}"
-            desc += f"**#{i}** {nombre} - Nivel {nivel} ({xp} XP)\n"
-        embed.description = desc
-        await ctx.send(embed=embed)
-        await self._del(ctx)
-
+# ==================== COG: Informacion ====================
+class Informacion(BaseCog):
     def construir_server_embed(self, guild: discord.Guild) -> discord.Embed:
         owner_text = "\n".join([f"<@{oid}> (`{oid}`)" for oid in OWNER_IDS]) if OWNER_IDS else "No configurados"
         canales = len(guild.channels)
@@ -7992,10 +7987,6 @@ class Niveles(BaseCog):
     async def server_slash(self, interaction: discord.Interaction):
         embed = self.construir_server_embed(interaction.guild)
         await interaction.response.send_message(embed=embed)
-
-    @tiempo_task.before_loop
-    async def before_tiempo(self):
-        await self.bot.wait_until_ready()
 
 # ==================== COG: TicketSystem ====================
 class TicketModal(discord.ui.Modal, title="Valorar ticket"):
