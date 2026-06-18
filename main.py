@@ -2128,39 +2128,51 @@ class Principal(BaseCog):
     @commands.command(name='blanquear', aliases=['lavar'])
     @check_ban()
     @tiene_rol_mafia()
-    async def blanquear(self, ctx, tipo: str = None, gramos: int = None):
-        """Convierte gramos de droga en dinero limpio o negro.
-        Uso: -blanquear limpio <gramos>  o  -blanquear negro <gramos>"""
-        if tipo is None or gramos is None:
-            return await ctx.send(embed=embed_error("Error: -blanquear dinero limpio o dinero negro (gramos)"))
-        tipo = tipo.lower()
-        if tipo not in ['limpio', 'negro']:
-            return await ctx.send(embed=embed_error("Error: -blanquear dinero limpio o dinero negro (gramos)"))
-        if gramos <= 0:
-            return await ctx.send(embed=embed_error("La cantidad de gramos debe ser positiva."))
+    async def blanquear(self, ctx, nivel: str = None):
+        """Blanquea un porcentaje de tu dinero negro convirtiéndolo en dinero limpio.
+        Uso: -blanquear [0-4]  →  0=10% | 1=15% | 2=20% | 3=25% | 4=30%"""
+        PORCENTAJES = {'0': 10, '1': 15, '2': 20, '3': 25, '4': 30}
+        if nivel is None or nivel not in PORCENTAJES:
+            tabla = "\n".join(
+                f"`-blanquear {k}` → Blanquea el **{v}%** de tu dinero negro"
+                for k, v in PORCENTAJES.items()
+            )
+            embed = discord.Embed(
+                title="💱 BLANQUEO DE CAPITALES",
+                description=f"**Uso:** `-blanquear [0-4]`\n\n{tabla}",
+                color=0xFFAA00
+            )
+            embed.set_footer(text="⚠️ Exclusivo para la Mafia")
+            return await ctx.send(embed=embed)
+        porcentaje = PORCENTAJES[nivel]
         uid = ctx.author.id
-        drug_grams = await db.get_drug_grams(uid)
-        total_grams = sum(drug_grams.values())
-        if total_grams < gramos:
-            return await ctx.send(embed=embed_error(f"No tienes suficientes gramos. Disponibles: {total_grams} gramos."))
-        remaining = gramos
-        for drug, g in sorted(drug_grams.items(), key=lambda x: -x[1]):
-            if remaining <= 0:
-                break
-            take = min(g, remaining)
-            await db.remove_drug_grams(uid, drug, take)
-            remaining -= take
-        if tipo == 'limpio':
-            ganancia = gramos * 100
-            await db.add_cash(uid, ganancia)
-            mensaje = f"Has convertido {gramos} gramos en **${ganancia:,}** de dinero limpio."
-        else:
-            ganancia = gramos * 50
-            await db.add_black(uid, ganancia)
-            mensaje = f"Has convertido {gramos} gramos en **${ganancia:,}** de dinero negro."
-        embed = discord.Embed(title="💱 BLANQUEO DE GRAMOS", description=mensaje, color=0x00FF00)
+        eco = await db.get_economy(uid)
+        negro = eco.get('black_money', 0) if eco else 0
+        if negro <= 0:
+            return await ctx.send(embed=embed_error("❌ No tienes dinero negro para blanquear."))
+        ganancia = int(negro * porcentaje / 100)
+        if ganancia <= 0:
+            return await ctx.send(embed=embed_error("❌ La cantidad a blanquear es demasiado pequeña."))
+        await db.add_black(uid, -ganancia)
+        await db.add_cash(uid, ganancia)
+        negro_restante = negro - ganancia
+        embed = discord.Embed(
+            title="💱 BLANQUEO DE CAPITALES",
+            description=(
+                f"Operación completada al **{porcentaje}%**.\n\n"
+                f"💶 Dinero negro consumido: **-${ganancia:,}**\n"
+                f"💵 Dinero limpio obtenido: **+${ganancia:,}**\n"
+                f"🏦 Negro restante: **${negro_restante:,}**"
+            ),
+            color=0x00FF00,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(
+            text=f"Operación autorizada • {ctx.author.display_name}",
+            icon_url=ctx.author.display_avatar.url
+        )
         await ctx.send(embed=embed)
-        await self.log("BLANQUEO_GRAMOS", f"{ctx.author.name} convirtió {gramos}g en {tipo}: +${ganancia}")
+        await self.log("BLANQUEO", f"{ctx.author.name} blanqueó {porcentaje}% = ${ganancia:,} (negro: ${negro:,} → ${negro_restante:,})")
 
     @commands.command(name='tienda-ilegal', aliases=['ilegal-shop', 'tiendailegal'])
     @check_ban()
@@ -9027,7 +9039,7 @@ class MafiaBancoView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
 
-    @discord.ui.button(label="💸 Transferir Fondos", style=discord.ButtonStyle.danger, emoji="💸")
+    @discord.ui.button(label="Transferir a cuenta", style=discord.ButtonStyle.danger, emoji="💸")
     async def transferir(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(r.id == ROL_MAFIA_ID for r in interaction.user.roles) and interaction.user.id not in OWNER_IDS:
             return await interaction.response.send_message(
@@ -9273,11 +9285,11 @@ class EncuestasSorteosMafia(BaseCog):
         await self.log("DROP_MENU", f"{ctx.author.name} abrió el menú de cargamentos DEFCON")
 
     # ──────────────────────────────────────────────
-    # BANCO MAFIA
+    # BANCO MAFIA — EMBED LORE + TRANSFERENCIA
     # ──────────────────────────────────────────────
     @commands.command(name="mafia")
     async def mafia_banco(self, ctx):
-        """Solo accesible para el rol Mafia (ID: 1479210255564013588)."""
+        """Solo accesible para el rol Mafia."""
         mafia_role = ctx.guild.get_role(ROL_MAFIA_ID)
         if not mafia_role or (mafia_role not in ctx.author.roles and ctx.author.id not in OWNER_IDS):
             return await ctx.send(
@@ -9287,26 +9299,28 @@ class EncuestasSorteosMafia(BaseCog):
                 ),
                 delete_after=8
             )
-        """Muestra el banco de la Mafia (saldo + historial de transacciones)."""
-        saldo = await db.mafia_get_saldo()
-        txs   = await db.mafia_get_txs(10)
-
         embed = discord.Embed(
-            title="🏦 BANCO DE LA MAFIA",
-            description=f"```\nSaldo Total: ${saldo:,.0f}\n```",
+            title="🗂️ REGISTRO DE OPERACIONES — CIFRADO",
             color=0x1A1A2E,
             timestamp=datetime.now()
         )
-        if txs:
-            historial = "\n".join(
-                f"`{t[0]}` **{t[1]}** → {t[2]} — `${t[3]:,}` ({t[4]})"
-                for t in txs
-            )
-            embed.add_field(name="📋 Últimas transacciones", value=historial[:1024], inline=False)
-        else:
-            embed.add_field(name="📋 Historial", value="Sin transacciones registradas.", inline=False)
+        embed.add_field(
+            name="📋 Transacción autorizada",
+            value="22 de Agosto de 2025",
+            inline=False
+        )
+        embed.add_field(
+            name="📍 Coordenadas de origen",
+            value="29.685721, 52.524832 *(Base Militar de Irán)*",
+            inline=False
+        )
+        embed.add_field(
+            name="💰 Monto registrado",
+            value="**+14.000**",
+            inline=False
+        )
         embed.set_footer(
-            text=f"Consultado por {ctx.author.display_name} · Acceso restringido",
+            text=f"Acceso restringido · {ctx.author.display_name}",
             icon_url=ctx.author.display_avatar.url
         )
         view = MafiaBancoView()
@@ -10472,7 +10486,6 @@ async def main():
         await bot.add_cog(Soporte(bot))
         await bot.add_cog(Ayuda(bot))
         await bot.add_cog(Moderacion(bot))
-        await bot.add_cog(Niveles(bot))
         await bot.add_cog(TicketSystem(bot))
         await bot.add_cog(AntiRaid(bot))
         await bot.add_cog(CheckUsers(bot))
